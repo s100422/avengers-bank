@@ -1,0 +1,25 @@
+# 로컬 개발용 PostgreSQL. 접속 정보는 .env.example의 DATABASE_URL과 맞춰 둔다.
+#   docker compose up -d      # 시작
+#   docker compose down       # 중지 (데이터는 볼륨에 남음)
+#   docker compose down -v    # 중지 + 데이터 삭제
+services:
+  db:
+    # PostgreSQL 17 (pgvector 확장 포함 이미지, 기능은 일반 postgres:17과 같음)
+    image: pgvector/pgvector:pg17-trixie
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "1234"
+      POSTGRES_DB: avengers_bank
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d avengers_bank"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  db-data:
