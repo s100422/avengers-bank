@@ -34,6 +34,11 @@ class UserUpdate(BaseModel):
         return self
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128, repr=False)
+    new_password: str = Field(min_length=8, max_length=128, repr=False)
+
+
 class UserResponse(BaseModel):
     user_id: int
     login_id: str

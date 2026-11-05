@@ -125,6 +125,33 @@ class CardService:
             raise NotFoundException(code="CARD_NOT_FOUND", message="카드를 찾을 수 없습니다.")
         return card
 
+    # ── 정지·해지 (C-044) ─────────────────────────────────────────────
+
+    # 동작 → (바뀌기 전에 있어야 하는 상태, 바뀐 뒤 상태)
+    _TRANSITIONS = {
+        "suspend": ({"ACTIVE"}, "SUSPENDED"),
+        "resume": ({"SUSPENDED"}, "ACTIVE"),
+        "close": ({"ACTIVE", "SUSPENDED"}, "CLOSED"),
+    }
+
+    async def change_status(self, db: AsyncSession, type: str, card_id: int, action: str, user: UserResponse):
+        kind = KINDS[type]
+        allowed, new_status = self._TRANSITIONS[action]
+        async with db.begin():
+            await self.get_owned(db, kind, card_id, user)
+            card = await card_repository.lock_card(db, kind, card_id)  # 상태는 잠근 뒤에 확인한다 (결제와 동시에 와도)
+            if card.status not in allowed:
+                raise BadRequestException(
+                    code="INVALID_CARD_STATUS", message=f"현재 상태({card.status})에서는 할 수 없습니다."
+                )
+            # 미결제액에는 청구 전·청구서 미납이 모두 들어 있다. 갚기 전에 해지하면 빚이 남는다
+            if action == "close" and kind.name == "credit" and card.outstanding_amount > 0:
+                raise BadRequestException(
+                    code="CARD_HAS_OUTSTANDING", message="미결제액이 남아 있어 해지할 수 없습니다."
+                )
+            card.status = new_status
+        return to_response(kind, card)
+
     # ── 결제(사용) ────────────────────────────────────────────────────
 
     async def pay(
@@ -138,6 +165,7 @@ class CardService:
                 # 체크카드: 연결 계좌에서 바로 출금한다. 입출금 계좌 → 카드 순서로 잠근다.
                 (account,) = await account_repository.lock_checking_accounts(db, [card.checking_account_id])
                 card = await card_repository.lock_card(db, kind, card_id)
+                self._require_active(card)
                 if account.balance < amount:
                     raise BadRequestException(code="INSUFFICIENT_BALANCE", message="잔액이 부족합니다.")
                 account.balance -= amount
@@ -152,6 +180,7 @@ class CardService:
             else:
                 # 신용카드: 한도 안에서 미결제액만 늘린다 (돈은 청구서를 납부할 때 나간다)
                 card = await card_repository.lock_card(db, kind, card_id)
+                self._require_active(card)
                 if card.outstanding_amount + amount > card.credit_limit:
                     raise BadRequestException(code="CREDIT_LIMIT_EXCEEDED", message="신용 한도를 초과했습니다.")
                 card.outstanding_amount += amount
@@ -170,6 +199,11 @@ class CardService:
             place_of_use=history.place_of_use, used_amount=history.used_amount,
             time=history.time, **self._amount_fields(kind, card),
         )
+
+    @staticmethod
+    def _require_active(card) -> None:
+        if card.status != "ACTIVE":
+            raise BadRequestException(code="CARD_NOT_ACTIVE", message="사용할 수 없는 카드입니다(정지·해지).")
 
     @staticmethod
     def _amount_fields(kind: CardKind, card) -> dict:

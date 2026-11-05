@@ -292,3 +292,105 @@ async def test_login_blocked_per_ip_when_guessing_many_ids(client):
     for i in range(20):
         assert (await client.post("/users/login", json={"login_id": f"user{i:03d}", "password": "x" * 10})).status_code == 401
     assert (await client.post("/users/login", json={"login_id": "user999", "password": "x" * 10})).status_code == 429
+
+
+# ── 비밀번호 변경 (C-045) ─────────────────────────────────────────────
+
+
+async def _auth(client):
+    await client.post("/users/signup", json=SIGNUP)
+    response = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]})
+    return {"Authorization": f"Bearer {response.json()['data']['access_token']}"}
+
+
+async def test_change_password_then_login_with_new_one(client):
+    headers = await _auth(client)
+    response = await client.patch(
+        "/users/me/password", json={"current_password": SIGNUP["password"], "new_password": "newpassword99"}, headers=headers
+    )
+    assert response.status_code == 200 and response.json()["data"] is None
+
+    old = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]})
+    new = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": "newpassword99"})
+    assert (old.status_code, new.status_code) == (401, 200)
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ({"current_password": "wrong-password", "new_password": "newpassword99"}, (400, "INVALID_CURRENT_PASSWORD")),
+        ({"current_password": SIGNUP["password"], "new_password": SIGNUP["password"]}, (400, "SAME_PASSWORD")),
+        ({"current_password": SIGNUP["password"], "new_password": "short"}, (422, "VALIDATION_ERROR")),
+    ],
+    ids=["wrong_current", "same_as_current", "new_too_short"],
+)
+async def test_change_password_rejections_change_nothing(client, body, expected):
+    headers = await _auth(client)
+    response = await client.patch("/users/me/password", json=body, headers=headers)
+    assert (response.status_code, response.json()["error"]["code"]) == expected
+    ok = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]})
+    assert ok.status_code == 200  # 비밀번호는 그대로
+
+
+async def test_change_password_requires_login(client):
+    response = await client.patch("/users/me/password", json={"current_password": "x", "new_password": "newpassword99"})
+    assert response.status_code == 401
+
+
+async def test_change_password_wrong_current_is_rate_limited(client):
+    headers = await _auth(client)
+    bad = {"current_password": "wrong-password", "new_password": "newpassword99"}
+    for _ in range(5):
+        assert (await client.patch("/users/me/password", json=bad, headers=headers)).status_code == 400
+    blocked = await client.patch("/users/me/password", json=bad, headers=headers)
+    assert (blocked.status_code, blocked.json()["error"]["code"]) == (429, "TOO_MANY_LOGIN_ATTEMPTS")
+
+
+async def test_health_ok_and_db_failure(client, monkeypatch):
+    response = await client.get("/health")
+    assert (response.status_code, response.json()["data"]) == (200, {"status": "ok"})
+
+    from types import SimpleNamespace
+
+    import avengers_bank.main as main_module
+
+    def broken():
+        raise ConnectionError("secret-host:5432 refused")
+
+    monkeypatch.setattr(main_module, "engine", SimpleNamespace(connect=broken))
+    response = await client.get("/health")
+    assert (response.status_code, response.json()["error"]["code"]) == (503, "DB_UNAVAILABLE")
+    assert "secret-host" not in response.text  # 내부 오류 내용은 응답에 싣지 않는다
+
+
+def test_cors_origins_setting_parses_comma_separated_list():
+    from avengers_bank.core.config import Settings
+
+    base = {"database_url": "x", "jwt_secret_key": "k" * 32}
+    assert Settings(**base).cors_origin_list == ["http://127.0.0.1:5173", "http://localhost:5173"]
+    custom = Settings(**base, cors_origins=" https://bank.example.com , http://localhost:3000,, ")
+    assert custom.cors_origin_list == ["https://bank.example.com", "http://localhost:3000"]
+
+
+async def test_cors_allows_configured_origin_only(client):
+    allowed = await client.get("/", headers={"Origin": "http://localhost:5173"})
+    denied = await client.get("/", headers={"Origin": "https://evil.example.com"})
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert "access-control-allow-origin" not in denied.headers
+
+
+async def test_startup_warns_when_dev_endpoints_enabled(caplog, monkeypatch):
+    import avengers_bank.main as main_module
+
+    async def start():
+        async with main_module.lifespan(main_module.app):
+            pass
+
+    caplog.set_level("WARNING")
+    await start()  # tests/conftest.py가 ENABLE_DEV_ENDPOINTS=true로 시작한다
+    assert any("ENABLE_DEV_ENDPOINTS" in r.message for r in caplog.records)
+
+    caplog.clear()
+    monkeypatch.setattr(main_module, "get_settings", lambda: type("S", (), {"enable_dev_endpoints": False})())
+    await start()
+    assert not any("ENABLE_DEV_ENDPOINTS" in r.message for r in caplog.records)

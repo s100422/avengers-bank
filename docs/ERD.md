@@ -113,6 +113,7 @@ erDiagram
         bigint credit_limit "신용 한도"
         bigint outstanding_amount "미결제액, 0~credit_limit"
         smallint payment_date "매월 결제일 1~31"
+        string status "ACTIVE / SUSPENDED / CLOSED"
     }
 
     debit_cards {
@@ -122,6 +123,7 @@ erDiagram
         int checking_account_id FK "출금 계좌"
         string card_num UK
         bigint accumulated_amount
+        string status "ACTIVE / SUSPENDED / CLOSED"
     }
 
     credit_card_histories {

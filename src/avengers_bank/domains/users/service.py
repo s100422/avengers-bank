@@ -2,7 +2,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from avengers_bank.core.exceptions import ConflictException, UnauthorizedException
+from avengers_bank.core.exceptions import BadRequestException, ConflictException, UnauthorizedException
 from avengers_bank.core.security import (
     DUMMY_HASH,
     create_access_token,
@@ -12,7 +12,13 @@ from avengers_bank.core.security import (
 )
 from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.repository import user_repository
-from avengers_bank.domains.users.schemas import UserCreate, UserLogin, UserResponse, UserUpdate
+from avengers_bank.domains.users.schemas import (
+    PasswordChange,
+    UserCreate,
+    UserLogin,
+    UserResponse,
+    UserUpdate,
+)
 
 
 class UserService:
@@ -75,6 +81,22 @@ class UserService:
             for field, value in data.model_dump(exclude_unset=True).items():
                 setattr(user, field, value)
         return user
+
+    async def change_password(self, db: AsyncSession, current_user: UserResponse, data: PasswordChange) -> None:
+        if data.new_password == data.current_password:
+            raise BadRequestException(code="SAME_PASSWORD", message="새 비밀번호가 현재 비밀번호와 같습니다.")
+        new_hash = await run_in_threadpool(hash_password, data.new_password)
+        async with db.begin():
+            user = await user_repository.find_by_id(db, current_user.user_id)
+            if user is None:
+                raise UnauthorizedException(
+                    message="유효하지 않거나 만료된 토큰입니다.", code="INVALID_TOKEN"
+                )
+            if not await run_in_threadpool(verify_password, data.current_password, user.hashed_password):
+                raise BadRequestException(
+                    code="INVALID_CURRENT_PASSWORD", message="현재 비밀번호가 올바르지 않습니다."
+                )
+            user.hashed_password = new_hash
 
 
 user_service = UserService()

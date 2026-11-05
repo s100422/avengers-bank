@@ -36,17 +36,17 @@ def main():
          "insert into checking_accounts(user_id, product_id, account_num, balance, per_transfer_limit, daily_transfer_limit)"
          " values (:u, :ap, :n, 0, 1, 1)", "110-777-400002"),
         ("deposit_accounts", "account_num",
-         "insert into deposit_accounts(user_id, product_id, account_num, balance, maturity_date)"
-         " values (:u, :ap, :n, 0, date '2030-01-01')", "120-777-400001"),
+         "insert into deposit_accounts(user_id, product_id, account_num, balance, maturity_date, status)"
+         " values (:u, :ap, :n, 0, date '2030-01-01', 'ACTIVE')", "120-777-400001"),
         ("savings_accounts", "account_num",
-         "insert into savings_accounts(user_id, product_id, account_num, balance, monthly_payment, monthly_deposit_date, maturity_date)"
-         " values (:u, :ap, :n, 0, 1, 1, date '2030-01-01')", "220-777-400001"),
+         "insert into savings_accounts(user_id, product_id, account_num, balance, monthly_payment, monthly_deposit_date, maturity_date, status)"
+         " values (:u, :ap, :n, 0, 1, 1, date '2030-01-01', 'ACTIVE')", "220-777-400001"),
         ("credit_cards", "card_num",
-         "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, outstanding_amount, payment_date)"
-         " values (:u, :cp, :a, :n, 1000000, 0, 14)", "4000-9999-9999-9001"),
+         "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, outstanding_amount, payment_date, status)"
+         " values (:u, :cp, :a, :n, 1000000, 0, 14, 'ACTIVE')", "4000-9999-9999-9001"),
         ("debit_cards", "card_num",
-         "insert into debit_cards(user_id, product_id, checking_account_id, card_num, accumulated_amount)"
-         " values (:u, :dp, :a, :n, 0)", "5000-9999-9999-9001"),
+         "insert into debit_cards(user_id, product_id, checking_account_id, card_num, accumulated_amount, status)"
+         " values (:u, :dp, :a, :n, 0, 'ACTIVE')", "5000-9999-9999-9001"),
     ]
 
     passed = True

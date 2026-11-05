@@ -32,6 +32,7 @@ ERROR_EXAMPLES = {
     409: ("CONFLICT", "요청이 현재 상태와 충돌합니다."),
     422: ("VALIDATION_ERROR", "입력값을 확인해 주세요."),
     429: ("TOO_MANY_LOGIN_ATTEMPTS", "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+    503: ("DB_UNAVAILABLE", "데이터베이스에 연결할 수 없습니다."),
     500: ("INTERNAL_SERVER_ERROR", "서버에서 오류가 발생했습니다."),
 }
 

@@ -20,7 +20,7 @@ cp .env.example .env
 docker compose up -d --wait   # PostgreSQL 17을 127.0.0.1:5435에 띄움 (docker-compose.yml)
 ```
 
-`.env`에 `JWT_SECRET_KEY`(32자 이상)를 채웁니다. `DATABASE_URL`은 `docker-compose.yml`과 맞춰져 있습니다.
+`.env`에 `JWT_SECRET_KEY`(32자 이상)를 채웁니다. `POSTGRES_PASSWORD`(DB 비밀번호)는 `docker-compose.yml`이 읽고 `DATABASE_URL`의 비밀번호와 같아야 합니다(`.env.example`에 맞춰져 있음). **예전 `.env`를 쓰고 있다면 `POSTGRES_PASSWORD=1234`를 추가하세요**(없으면 `docker compose`가 오류를 냅니다).
 
 > **Windows 주의**
 > - `DATABASE_URL`의 호스트는 `localhost`가 아니라 `127.0.0.1`로 둡니다. `localhost`는 IPv6(`::1`)로 먼저 연결을 시도하는데, Windows에서 psycopg 비동기 연결이 거절된 `::1`에서 다음 주소로 넘어가지 못하고 멈춥니다.

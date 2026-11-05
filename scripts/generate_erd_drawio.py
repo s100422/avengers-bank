@@ -51,6 +51,7 @@ CHANGED = {
       for c in ("amount", "balance_after", "counterpart_account")},
     ("checking_account_histories", "counterpart_name"),
     *{(t, c) for t in ("deposit_accounts", "savings_accounts") for c in ("status", "closed_at")},
+    ("credit_cards", "status"), ("debit_cards", "status"),
 }
 
 W_MARK, W_NAME, W_TYPE, ROW_H, HEAD_H = 40, 190, 150, 30, 30

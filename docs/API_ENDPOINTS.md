@@ -24,6 +24,9 @@
 | 409 | 아이디·계좌번호 중복 | `ConflictException` |
 | 429 | 로그인 실패가 너무 많음 (C-040) | `TooManyAttemptsException` |
 | 422 | 입력값 형식 오류 (FastAPI 자동) | — |
+| 503 | `/health`에서 DB에 연결할 수 없음 (C-046) | `ApiException` |
+
+`GET /health`(로그인 불필요): DB에 `SELECT 1`을 보내 정상이면 `200 { "data": { "status": "ok" } }`, 연결할 수 없으면 `503 DB_UNAVAILABLE`(원인은 응답에 싣지 않고 서버 로그에만 남김). `GET /`는 인사말만 돌려줍니다.
 
 `code`는 `ACCOUNT_NOT_FOUND`, `DAILY_LIMIT_EXCEEDED`처럼 **대문자 스네이크 케이스**로 구체적으로 적습니다.
 
@@ -37,6 +40,7 @@
 | ✅ | POST | `/users/login` | | 로그인, JWT 발급 |
 | ✅ | GET | `/users/me` | 🔒 | 내 정보 조회 |
 | ✅ | PATCH | `/users/me` | 🔒 | 이름, 닉네임, 전화번호 수정 |
+| ✅ | PATCH | `/users/me/password` | 🔒 | 비밀번호 변경 |
 
 <details>
 <summary>요청·응답 예시</summary>
@@ -62,6 +66,10 @@
 - 실패 `401 INVALID_CREDENTIALS`. **같은 아이디를 같은 IP에서 15분 안에 5번 틀리거나, 한 IP에서 20번 틀리면 `429 TOO_MANY_LOGIN_ATTEMPTS`**(`Retry-After` 헤더에 남은 초). 한도가 차면 비밀번호가 맞아도 거절하고, 성공하면 그 아이디의 실패 횟수가 지워집니다. 프로세스 메모리로 세기 때문에 서버 재시작 시 초기화됩니다.
 
 `PATCH /users/me`: 보낸 필드만 바뀝니다. → `200`, 수정된 내 정보(`GET /users/me`와 같은 모양)
+
+`PATCH /users/me/password`: `{ "current_password": "...", "new_password": "..." }` (새 비밀번호 8~128자) → `200`, `data: null`
+- 현재 비밀번호가 틀리면 `400 INVALID_CURRENT_PASSWORD`(401은 로그아웃으로 오해될 수 있어 쓰지 않음), 새 비밀번호가 현재와 같으면 `400 SAME_PASSWORD`.
+- **현재 비밀번호를 틀린 횟수는 로그인 실패와 같은 한도로 센다**(5번 틀리면 `429`). 기존에 발급된 토큰은 비밀번호를 바꿔도 만료 전까지 유효합니다(토큰 폐기는 4-3).
 ```json
 { "name": "페퍼 포츠", "nick_name": "CEO", "phone": "010-9999-8888" }
 ```
@@ -184,6 +192,9 @@
 | ✅ | POST | `/cards/debit` | 🔒 | 체크카드 발급 (`checking_account_id` = 출금 계좌) |
 | ✅ | GET | `/cards/{type}/{card_id}` | 🔒 | 카드 상세 |
 | ✅ | GET | `/cards/{type}/{card_id}/histories` | 🔒 | 사용내역 |
+| ✅ | POST | `/cards/{type}/{card_id}/suspend` | 🔒 | 카드 정지 |
+| ✅ | POST | `/cards/{type}/{card_id}/resume` | 🔒 | 카드 정지 해제 |
+| ✅ | POST | `/cards/{type}/{card_id}/close` | 🔒 | 카드 해지 |
 | ✅ | POST | `/cards/{type}/{card_id}/payments` | 🔒 | 결제(사용) 등록. 체크카드는 연결 계좌에서 바로 출금, 신용카드는 한도 검사 후 미결제액 증가 |
 | ✅ | POST | `/cards/credit/{card_id}/bills` | 🔒 | 청구서 생성 (지난 달 미청구 사용내역 합산) |
 | ✅ | GET | `/cards/credit/{card_id}/bills` | 🔒 | 청구서 목록 |
@@ -218,6 +229,11 @@
 - 연결 계좌는 **내 입출금 계좌**여야 합니다(남의 계좌는 `404 ACCOUNT_NOT_FOUND`). 상품 종류가 다르면 `400 PRODUCT_TYPE_MISMATCH`.
 
 **조회**: `GET /cards`(신용 → 체크 순), `GET /cards/{type}/{card_id}`(종류별 필드가 다름: 신용은 `credit_limit`·`payment_date`), `GET /cards/{type}/{card_id}/histories?limit=50&offset=0`(최신순). 남의 카드와 없는 카드는 모두 `404 CARD_NOT_FOUND`.
+
+**정지·해지** `POST /cards/{type}/{card_id}/suspend`, `/resume`, `/close` (본문 없음) → `200`, 바뀐 카드(`GET /cards/{type}/{card_id}`와 같은 모양). 카드 응답에는 `status`(`ACTIVE`/`SUSPENDED`/`CLOSED`)가 있습니다.
+- 정지는 `ACTIVE`에서만, 해제는 `SUSPENDED`에서만, 해지는 `ACTIVE`·`SUSPENDED`에서 할 수 있습니다. 해지는 되돌릴 수 없고, 맞지 않는 상태에서 부르면 `400 INVALID_CARD_STATUS`.
+- **신용카드는 미결제액(`outstanding_amount`)이 0이어야 해지됩니다**(`400 CARD_HAS_OUTSTANDING`). 청구 전 사용액과 미납 청구서가 모두 미결제액에 들어 있습니다.
+- 정지·해지된 카드로 결제하면 `400 CARD_NOT_ACTIVE`. 정지 중에도 청구서 조회·납부는 됩니다.
 신용카드는 `outstanding_amount`(미결제액: 결제하면 늘고 청구서를 납부하면 줆), 체크카드는 `accumulated_amount`(누적 사용액)를 줍니다. `GET /cards` 목록과 결제 응답에서는 해당하지 않는 쪽이 `null`입니다. 체크카드 결제는 입출금 거래내역의 `counterpart_name`에 가맹점명이 남습니다.
 
 **결제(사용)** `POST /cards/{type}/{card_id}/payments`: `{ "place_of_use": "편의점", "used_amount": 30000 }` → `201`

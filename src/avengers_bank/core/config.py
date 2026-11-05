@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     db_echo: bool = False
     # 개발용 API(/dev/...)를 켠다. 운영 환경에서는 켜지 않는다.
     enable_dev_endpoints: bool = False
+    # CORS로 허용할 프론트 주소 (쉼표로 구분, C-047)
+    cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"

@@ -95,6 +95,23 @@ async def pay(type: CardType, card_id: int, data: CardPaymentCreate, db: DbSessi
     return SuccessResponse[CardPaymentResponse](data=result, message="결제가 등록되었습니다.")
 
 
+def _status_route(action: str, message: str):
+    @router.post(
+        f"/{{type}}/{{card_id}}/{action}",
+        response_model=SuccessResponse[CardResponse],
+        responses=error_responses(400, 404),
+        name=f"{action}_card",
+    )
+    async def change(type: CardType, card_id: int, db: DbSession, user: CurrentUser):
+        card = await card_service.change_status(db, type, card_id, action, user)
+        return SuccessResponse[CardResponse](data=card, message=message)
+
+
+_status_route("suspend", "카드가 정지되었습니다.")
+_status_route("resume", "카드 정지가 해제되었습니다.")
+_status_route("close", "카드가 해지되었습니다.")
+
+
 # ── 신용카드 청구서 ──────────────────────────────────────────────────
 
 

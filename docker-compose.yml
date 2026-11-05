@@ -4,11 +4,12 @@
 #   docker compose down -v    # 중지 + 데이터 삭제
 services:
   db:
-    # PostgreSQL 17 (pgvector 확장 포함 이미지, 기능은 일반 postgres:17과 같음)
-    image: pgvector/pgvector:pg17-trixie
+    # 공식 PostgreSQL 17. 이전 pgvector 이미지와 같은 Debian(trixie) 기반이라 기존 볼륨의 정렬 규칙(glibc)이 달라지지 않는다.
+    image: postgres:17-trixie
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "1234"
+      # .env의 POSTGRES_PASSWORD를 쓴다 (DATABASE_URL의 비밀번호와 같아야 한다). 처음 볼륨을 만들 때만 적용된다.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env에 POSTGRES_PASSWORD를 넣어 주세요 (.env.example 참고)}
       POSTGRES_DB: avengers_bank
     ports:
       - "127.0.0.1:5435:5432"

@@ -329,3 +329,66 @@ async def test_bill_owner_and_card_mismatch(client, world):
         assert error_of(response) == (404, "BILL_NOT_FOUND")
     assert error_of(await client.get(f"/cards/credit/{cid}/bills/999", headers=tony)) == (404, "BILL_NOT_FOUND")
     assert await checking_balance(client, tony) == 1_000_000
+
+
+# ── 정지·해지 (C-044) ─────────────────────────────────────────────────
+
+
+async def change(client, headers, kind, card_id, action):
+    return await client.post(f"/cards/{kind}/{card_id}/{action}", headers=headers)
+
+
+@pytest.mark.parametrize("kind", ["credit", "debit"])
+async def test_suspend_blocks_payment_and_resume_allows_it(client, world, kind):
+    tony = world["tony"]
+    card = await issue(client, tony, kind)
+    assert card["status"] == "ACTIVE"
+
+    response = await change(client, tony, kind, card["card_id"], "suspend")
+    assert (response.status_code, response.json()["data"]["status"]) == (200, "SUSPENDED")
+    assert error_of(await pay(client, tony, kind, card["card_id"], 1000)) == (400, "CARD_NOT_ACTIVE")
+    assert await checking_balance(client, tony) == 1_000_000  # 거절된 결제는 돈을 움직이지 않는다
+
+    assert (await change(client, tony, kind, card["card_id"], "resume")).json()["data"]["status"] == "ACTIVE"
+    assert (await pay(client, tony, kind, card["card_id"], 1000)).status_code == 201
+
+
+@pytest.mark.parametrize("kind", ["credit", "debit"])
+async def test_close_is_final_and_status_transitions_are_checked(client, world, kind):
+    tony = world["tony"]
+    cid = (await issue(client, tony, kind))["card_id"]
+    assert error_of(await change(client, tony, kind, cid, "resume")) == (400, "INVALID_CARD_STATUS")  # 정지 아님
+    assert (await change(client, tony, kind, cid, "close")).json()["data"]["status"] == "CLOSED"
+    for action in ("suspend", "resume", "close"):
+        assert error_of(await change(client, tony, kind, cid, action)) == (400, "INVALID_CARD_STATUS")
+    assert error_of(await pay(client, tony, kind, cid, 1000)) == (400, "CARD_NOT_ACTIVE")
+    assert error_of(await change(client, tony, kind, cid, "suspend")) == (400, "INVALID_CARD_STATUS")
+
+
+async def test_suspended_card_can_be_closed_and_shown_in_list(client, world):
+    tony = world["tony"]
+    cid = (await issue(client, tony, "debit"))["card_id"]
+    await change(client, tony, "debit", cid, "suspend")
+    assert (await change(client, tony, "debit", cid, "close")).status_code == 200
+    rows = (await client.get("/cards", headers=tony)).json()["data"]
+    assert [r["status"] for r in rows] == ["CLOSED"]
+
+
+async def test_credit_card_with_outstanding_cannot_be_closed_until_paid_off(client, world):
+    tony = world["tony"]
+    cid = (await issue(client, tony, "credit"))["card_id"]
+    await pay(client, tony, "credit", cid, 50_000)
+    assert error_of(await change(client, tony, "credit", cid, "close")) == (400, "CARD_HAS_OUTSTANDING")
+    assert (await get_status(client, tony, cid)) == "ACTIVE"
+    await change(client, tony, "credit", cid, "suspend")
+    assert error_of(await change(client, tony, "credit", cid, "close")) == (400, "CARD_HAS_OUTSTANDING")
+
+
+async def get_status(client, headers, card_id):
+    return (await client.get(f"/cards/credit/{card_id}", headers=headers)).json()["data"]["status"]
+
+
+async def test_other_users_card_status_change_is_404(client, world):
+    cid = (await issue(client, world["tony"], "debit"))["card_id"]
+    assert error_of(await change(client, world["bruce"], "debit", cid, "close")) == (404, "CARD_NOT_FOUND")
+    assert error_of(await change(client, world["tony"], "debit", 99, "suspend")) == (404, "CARD_NOT_FOUND")

@@ -41,8 +41,8 @@ def balance(key="A"):
 def new_credit(accumulated=0, limit=1_000_000) -> int:
     state["n"] += 1
     return one(
-        "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, outstanding_amount, payment_date)"
-        " values (:u, :p, :a, :num, :l, :acc, 14) returning credit_card_id",
+        "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, outstanding_amount, payment_date, status)"
+        " values (:u, :p, :a, :num, :l, :acc, 14, 'ACTIVE') returning credit_card_id",
         u=state["uid"], p=state["credit_product"], a=state["A"], num=f"4000-9999-9999-{state['n']:04d}",
         l=limit, acc=accumulated,
     )
@@ -51,8 +51,8 @@ def new_credit(accumulated=0, limit=1_000_000) -> int:
 def new_debit() -> int:
     state["n"] += 1
     return one(
-        "insert into debit_cards(user_id, product_id, checking_account_id, card_num, accumulated_amount)"
-        " values (:u, :p, :a, :num, 0) returning debit_card_id",
+        "insert into debit_cards(user_id, product_id, checking_account_id, card_num, accumulated_amount, status)"
+        " values (:u, :p, :a, :num, 0, 'ACTIVE') returning debit_card_id",
         u=state["uid"], p=state["debit_product"], a=state["A"], num=f"5000-9999-9999-{state['n']:04d}",
     )
 

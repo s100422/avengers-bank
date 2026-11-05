@@ -44,6 +44,7 @@ class CardSummaryResponse(BaseModel):
     card_id: int
     card_num: str
     checking_account_id: int
+    status: str  # ACTIVE / SUSPENDED / CLOSED
     outstanding_amount: int | None = None
     accumulated_amount: int | None = None
 
@@ -55,6 +56,7 @@ class _CardResponse(BaseModel):
     card_num: str
     product_id: int
     checking_account_id: int
+    status: str  # ACTIVE / SUSPENDED / CLOSED
 
 
 class CreditCardResponse(_CardResponse):

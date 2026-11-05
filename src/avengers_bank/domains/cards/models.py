@@ -26,6 +26,9 @@ class CreditCard(Base):
             "payment_date BETWEEN 1 AND 31", name="ck_credit_cards_payment_date_range"
         ),
         CheckConstraint("credit_limit > 0", name="ck_credit_cards_credit_limit_positive"),
+        CheckConstraint(
+            "status IN ('ACTIVE', 'SUSPENDED', 'CLOSED')", name="ck_credit_cards_status"
+        ),
         # 동시 결제로 서비스의 한도 검사가 뚫려도 한도 초과·음수 미결제액은 DB가 막는다.
         CheckConstraint(
             "outstanding_amount BETWEEN 0 AND credit_limit",
@@ -48,12 +51,18 @@ class CreditCard(Base):
     # 아직 갚지 않은 금액: 사용하면 증가, 청구서 납부하면 청구 금액만큼 감소
     outstanding_amount: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     payment_date: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 매월 결제일(1~31)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", nullable=False)  # ACTIVE / SUSPENDED / CLOSED
 
 
 class DebitCard(Base):
     """체크카드"""
 
     __tablename__ = "debit_cards"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ACTIVE', 'SUSPENDED', 'CLOSED')", name="ck_debit_cards_status"
+        ),
+    )
 
     debit_card_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -67,6 +76,7 @@ class DebitCard(Base):
     )
     card_num: Mapped[str] = mapped_column(String(19), unique=True, nullable=False)
     accumulated_amount: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", nullable=False)  # ACTIVE / SUSPENDED / CLOSED
 
 
 class CreditCardHistory(Base):
