@@ -28,8 +28,8 @@ class CreditCard(Base):
         CheckConstraint("credit_limit > 0", name="ck_credit_cards_credit_limit_positive"),
         # 동시 결제로 서비스의 한도 검사가 뚫려도 한도 초과·음수 미결제액은 DB가 막는다.
         CheckConstraint(
-            "accumulated_amount BETWEEN 0 AND credit_limit",
-            name="ck_credit_cards_accumulated_amount_within_limit",
+            "outstanding_amount BETWEEN 0 AND credit_limit",
+            name="ck_credit_cards_outstanding_amount_within_limit",
         ),
     )
 
@@ -46,7 +46,7 @@ class CreditCard(Base):
     card_num: Mapped[str] = mapped_column(String(19), unique=True, nullable=False)
     credit_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 신용 한도 (발급 때 상품 한도 복사)
     # 아직 갚지 않은 금액: 사용하면 증가, 청구서 납부하면 청구 금액만큼 감소
-    accumulated_amount: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    outstanding_amount: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     payment_date: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 매월 결제일(1~31)
 
 

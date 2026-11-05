@@ -45,7 +45,7 @@ async def test_charge_rejects_invalid_amount(client, headers, amount):
 async def test_charge_only_own_existing_checking_account(client, headers, make_user):
     other = await make_user("hulk")
     response = await client.post(CHARGE, json={"amount": 1000}, headers=other)
-    assert (response.status_code, response.json()["error"]["code"]) == (403, "ACCOUNT_FORBIDDEN")
+    assert (response.status_code, response.json()["error"]["code"]) == (404, "ACCOUNT_NOT_FOUND")
 
     response = await client.post("/dev/accounts/checking/999/charge", json={"amount": 1000}, headers=headers)
     assert (response.status_code, response.json()["error"]["code"]) == (404, "ACCOUNT_NOT_FOUND")

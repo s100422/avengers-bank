@@ -9,7 +9,6 @@ from avengers_bank.core.exceptions import (
     ApiException,
     BadRequestException,
     ConflictException,
-    ForbiddenException,
     NotFoundException,
 )
 from avengers_bank.core.timezone import kst_start_utc, today_kst
@@ -121,10 +120,9 @@ class CardService:
 
     async def get_owned(self, db: AsyncSession, kind: CardKind, card_id: int, user: UserResponse):
         card = await card_repository.find_by_id(db, kind, card_id)
-        if card is None:
+        # 남의 카드도 404로 알려서 ID가 존재하는지 드러나지 않게 한다 (C-031)
+        if card is None or card.user_id != user.user_id:
             raise NotFoundException(code="CARD_NOT_FOUND", message="카드를 찾을 수 없습니다.")
-        if card.user_id != user.user_id:
-            raise ForbiddenException(code="CARD_FORBIDDEN", message="본인의 카드가 아닙니다.")
         return card
 
     # ── 결제(사용) ────────────────────────────────────────────────────
@@ -148,15 +146,18 @@ class CardService:
                     CheckingAccountHistory(
                         checking_account_id=account.checking_account_id, amount=amount,
                         balance_after=account.balance, type=CARD_PAYMENT,
+                        counterpart_name=data.place_of_use,
                     ),
                 )
             else:
                 # 신용카드: 한도 안에서 미결제액만 늘린다 (돈은 청구서를 납부할 때 나간다)
                 card = await card_repository.lock_card(db, kind, card_id)
-                if card.accumulated_amount + amount > card.credit_limit:
+                if card.outstanding_amount + amount > card.credit_limit:
                     raise BadRequestException(code="CREDIT_LIMIT_EXCEEDED", message="신용 한도를 초과했습니다.")
+                card.outstanding_amount += amount
 
-            card.accumulated_amount += amount
+            if kind.name == "debit":
+                card.accumulated_amount += amount
             history = await card_repository.save_history(
                 db,
                 kind.history_model(
@@ -167,8 +168,14 @@ class CardService:
 
         return CardPaymentResponse(
             place_of_use=history.place_of_use, used_amount=history.used_amount,
-            time=history.time, accumulated_amount=card.accumulated_amount,
+            time=history.time, **self._amount_fields(kind, card),
         )
+
+    @staticmethod
+    def _amount_fields(kind: CardKind, card) -> dict:
+        if kind.name == "credit":
+            return {"outstanding_amount": card.outstanding_amount}
+        return {"accumulated_amount": card.accumulated_amount}
 
     # ── 신용카드 청구서 (본인이 직접 호출, C-010) ────────────────────
 
@@ -236,7 +243,7 @@ class CardService:
             )
             bill.status = "PAID"
             bill.paid_at = datetime.now(timezone.utc)
-            card.accumulated_amount -= bill.total_amount  # 미결제액에서 갚은 만큼 뺀다 (C-012)
+            card.outstanding_amount -= bill.total_amount  # 미결제액에서 갚은 만큼 뺀다 (C-012)
         return BillResponse.model_validate(bill)
 
     async def get_bills(self, db: AsyncSession, card_id: int, user: UserResponse) -> list[BillResponse]:

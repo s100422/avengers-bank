@@ -21,7 +21,7 @@ router = APIRouter(
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated[UserResponse, Depends(get_current_user)]
-FAILURES = error_responses(400, 403, 404)
+FAILURES = error_responses(400, 404)
 
 
 @router.post(

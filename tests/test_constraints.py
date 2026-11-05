@@ -33,12 +33,16 @@ async def _seed(db):
             user_id=u.user_id, product_id=p.product_id, account_num="1", balance=-1,
             per_transfer_limit=1, daily_transfer_limit=1,
         ),
+        lambda u, p: CheckingAccount(
+            user_id=u.user_id, product_id=p.product_id, account_num="3", balance=0,
+            per_transfer_limit=2, daily_transfer_limit=1,
+        ),
         lambda u, p: SavingsAccount(
             user_id=u.user_id, product_id=p.product_id, account_num="2", balance=0,
             monthly_payment=1, monthly_deposit_date=32, maturity_date=date(2030, 1, 1),
         ),
     ],
-    ids=["account_product_type", "card_product_type", "negative_balance", "deposit_date_32"],
+    ids=["account_product_type", "card_product_type", "negative_balance", "per_over_daily", "deposit_date_32"],
 )
 async def test_check_constraints_reject_invalid_rows(client, make_row):
     async with SessionLocal() as db:
@@ -104,11 +108,11 @@ async def _seed_credit_card(db):
     return card
 
 
-@pytest.mark.parametrize("accumulated_amount", [-1, 100_001])
-async def test_credit_card_outstanding_within_limit(client, accumulated_amount):
+@pytest.mark.parametrize("outstanding", [-1, 100_001])
+async def test_credit_card_outstanding_within_limit(client, outstanding):
     async with SessionLocal() as db:
         card = await _seed_credit_card(db)
-        card.accumulated_amount = accumulated_amount
+        card.outstanding_amount = outstanding
         with pytest.raises(IntegrityError):
             await db.flush()
 

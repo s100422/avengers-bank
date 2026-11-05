@@ -32,6 +32,11 @@ class AccountRepository:
         )
         return list(await db.scalars(stmt))
 
+    async def find_histories_by_type(self, db: AsyncSession, kind: AccountKind, account_id: int, type: str) -> list:
+        model = kind.history_model
+        stmt = select(model).where(getattr(model, kind.id_column) == account_id, model.type == type)
+        return list(await db.scalars(stmt))
+
     async def save_history(self, db: AsyncSession, history):
         db.add(history)
         await db.flush()

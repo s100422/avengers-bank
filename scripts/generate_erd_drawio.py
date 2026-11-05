@@ -45,10 +45,12 @@ TABLES = {
 NEW_TABLES = {"credit_card_bills"}
 CHANGED = {
     ("credit_card_histories", "bill_id"),
-    ("credit_cards", "credit_limit"), ("credit_cards", "accumulated_amount"),
+    ("credit_cards", "credit_limit"), ("credit_cards", "outstanding_amount"),
     ("card_products", "credit_limit"),
     *{(t, c) for t in ("checking_account_histories", "deposit_account_histories", "savings_account_histories")
       for c in ("amount", "balance_after", "counterpart_account")},
+    ("checking_account_histories", "counterpart_name"),
+    *{(t, c) for t in ("deposit_accounts", "savings_accounts") for c in ("status", "closed_at")},
 }
 
 W_MARK, W_NAME, W_TYPE, ROW_H, HEAD_H = 40, 190, 150, 30, 30
@@ -60,7 +62,7 @@ NOTE = (
     "원본 AvengersBankDiagram.drawio는 그대로 두었다. <b>노란 칸 = 팀 초기 설계에서 바뀌었거나 새로 생긴 것</b> (docs/DESIGN_CHANGES.md)<br>"
     "• credit_card_bills 테이블 신규, credit_card_histories.bill_id 추가 (C-010)<br>"
     "• credit_cards.credit_limit 추가 (C-011), card_products.credit_limit 추가 (C-013)<br>"
-    "• credit_cards.accumulated_amount의 뜻이 신용카드는 '미결제액'으로 바뀜 (C-012)<br>"
+    "• credit_cards.outstanding_amount(구 accumulated_amount)의 뜻이 신용카드는 '미결제액'으로 바뀜 (C-012)<br>"
     "• 거래내역: from_account / sending_account → counterpart_account (C-007), 금액 → amount(항상 양수) + balance_after (C-008)<br>"
     "기호: PK 기본키 · FK 외래키 · UK 유일 값. 관계선 끝의 까마귀발은 '여러 개', 시작쪽 ┃는 '반드시 하나', ○┃는 '없거나 하나'. "
     "인덱스와 CHECK 제약은 그리지 않았다 (C-003, C-004)."

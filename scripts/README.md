@@ -21,12 +21,14 @@ uv run python -m avengers_bank.seed      # 상품 데이터가 필요합니다
 | `pg_charge_concurrency.py` | 동시 충전 30건: 잠금이 있으면 합계가 맞고, 없으면 갱신이 사라진다 (C-021) |
 | `pg_transfer_concurrency.py` | 동시 이체: 잔액 경쟁, 1일 한도 경쟁, A→B / B→A 데드락 없음 (C-022) |
 | `pg_card_concurrency.py` | 동시 카드 결제: 신용 한도, 체크카드 잔액, 청구서 납부·생성의 "두 번 누름", 섞어서 동시에 (C-023) |
+| `pg_close_concurrency.py` | 동시 해지: 같은 예금을 20번 동시에 해지해도 한 번만 나가고, 해지와 입금이 섞여도 해지된 계좌에 돈이 남지 않는다 (C-043) |
 | `pg_unique_violation_message.py` | 계좌·카드번호 중복 때 `IntegrityError` 메시지에 `account_num`/`card_num`이 있는지(번호 재시도의 전제), 외래키 오류가 번호 충돌로 오인되지 않는지 (C-020, C-023) |
 
 ```bash
 uv run python scripts/pg_charge_concurrency.py
 uv run python scripts/pg_transfer_concurrency.py
 uv run python scripts/pg_card_concurrency.py
+uv run python scripts/pg_close_concurrency.py
 uv run python scripts/pg_unique_violation_message.py
 ```
 

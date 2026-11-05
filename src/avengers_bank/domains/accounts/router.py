@@ -8,6 +8,8 @@ from avengers_bank.core.dependencies import get_current_user
 from avengers_bank.core.responses import SuccessResponse, error_responses
 from avengers_bank.domains.accounts.kinds import AccountType
 from avengers_bank.domains.accounts.schemas import (
+    AccountCloseRequest,
+    AccountCloseResponse,
     AccountHistoryResponse,
     AccountResponse,
     AccountSummaryResponse,
@@ -73,7 +75,7 @@ async def open_savings(data: SavingsAccountCreate, db: DbSession, user: CurrentU
 @router.get(
     "/{type}/{account_id}",
     response_model=SuccessResponse[AccountResponse],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def get_account(type: AccountType, account_id: int, db: DbSession, user: CurrentUser):
     account = await account_service.get_account(db, type, account_id, user)
@@ -83,7 +85,7 @@ async def get_account(type: AccountType, account_id: int, db: DbSession, user: C
 @router.get(
     "/{type}/{account_id}/histories",
     response_model=SuccessResponse[list[AccountHistoryResponse]],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def get_histories(
     type: AccountType,
@@ -97,10 +99,22 @@ async def get_histories(
     return SuccessResponse[list[AccountHistoryResponse]](data=histories)
 
 
+@router.post(
+    "/{type}/{account_id}/close",
+    response_model=SuccessResponse[AccountCloseResponse],
+    responses=error_responses(400, 404),
+)
+async def close_account(
+    type: AccountType, account_id: int, data: AccountCloseRequest, db: DbSession, user: CurrentUser
+):
+    result = await account_service.close_account(db, type, account_id, data, user)
+    return SuccessResponse[AccountCloseResponse](data=result, message="계좌가 해지되었습니다.")
+
+
 @router.patch(
     "/{type}/{account_id}",
     response_model=SuccessResponse[AccountResponse],
-    responses=error_responses(400, 403, 404),
+    responses=error_responses(400, 404),
 )
 async def update_account(
     type: AccountType, account_id: int, data: AccountUpdate, db: DbSession, user: CurrentUser

@@ -19,6 +19,9 @@ TRANSFER_OUT = "TRANSFER_OUT"  # 입출금 → 입출금 이체, 보낸 쪽
 TRANSFER_IN = "TRANSFER_IN"  # 이체·납입을 받은 쪽 (입출금·예금·적금 공통)
 TO_SAVINGS = "TO_SAVINGS"  # 입출금 → 적금 납입, 입출금 쪽
 TO_DEPOSIT = "TO_DEPOSIT"  # 입출금 → 예금 입금, 입출금 쪽
+CLOSE_IN = "CLOSE_IN"  # 예금·적금 해지금을 받은 입출금 쪽 (C-043)
+INTEREST = "INTEREST"  # 해지 때 받은 이자 (예금·적금 쪽)
+CLOSE_OUT = "CLOSE_OUT"  # 해지로 나간 원금+이자 (예금·적금 쪽)
 
 
 @dataclass(frozen=True)

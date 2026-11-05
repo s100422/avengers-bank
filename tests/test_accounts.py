@@ -120,7 +120,7 @@ async def test_get_account_not_found_and_forbidden(client, headers, make_user):
     other = await make_user("hulk")
 
     assert error_of(await client.get("/accounts/checking/999", headers=headers)) == (404, "ACCOUNT_NOT_FOUND")
-    assert error_of(await client.get("/accounts/checking/1", headers=other)) == (403, "ACCOUNT_FORBIDDEN")
+    assert error_of(await client.get("/accounts/checking/1", headers=other)) == (404, "ACCOUNT_NOT_FOUND")
     assert (await client.get("/accounts/loan/1", headers=headers)).status_code == 422
 
 
@@ -130,7 +130,7 @@ async def test_histories_newest_first_with_paging(client, headers, make_user):
         db.add_all([
             CheckingAccountHistory(checking_account_id=1, amount=a, balance_after=b, type=t, counterpart_account=c)
             for a, b, t, c in [
-                (1000, 1000, "DEPOSIT", None),
+                (1000, 1000, "DEV_CHARGE", None),
                 (300, 700, "TRANSFER_OUT", "110-111-222222"),
                 (200, 500, "TRANSFER_OUT", None),
             ]
@@ -144,7 +144,7 @@ async def test_histories_newest_first_with_paging(client, headers, make_user):
     assert [r["balance_after"] for r in page.json()["data"]] == [700]
     assert (await client.get("/accounts/checking/1/histories", params={"limit": 0}, headers=headers)).status_code == 422
     other = await make_user("hulk")
-    assert (await client.get("/accounts/checking/1/histories", headers=other)).status_code == 403
+    assert (await client.get("/accounts/checking/1/histories", headers=other)).status_code == 404
 
 
 async def test_update_nickname_and_limits(client, headers):
@@ -169,6 +169,6 @@ async def test_update_rejects_invalid_requests(client, headers, make_user):
     response = await client.patch("/accounts/deposit/1", json={"per_transfer_limit": 1000}, headers=headers)
     assert error_of(response) == (400, "TRANSFER_LIMIT_NOT_SUPPORTED")
     other = await make_user("hulk")
-    assert (await client.patch("/accounts/checking/1", json={"nickname": "x"}, headers=other)).status_code == 403
+    assert (await client.patch("/accounts/checking/1", json={"nickname": "x"}, headers=other)).status_code == 404
     # 거절된 요청은 아무것도 바꾸지 않는다
     assert (await client.get("/accounts/checking/1", headers=headers)).json()["data"]["per_transfer_limit"] == 1_000_000

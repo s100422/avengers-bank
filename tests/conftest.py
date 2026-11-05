@@ -12,6 +12,7 @@ import avengers_bank.domains.accounts.models  # noqa: F401  모든 테이블을 
 import avengers_bank.domains.cards.models  # noqa: F401
 import avengers_bank.domains.products.models  # noqa: F401
 from avengers_bank.core.database import Base, engine
+from avengers_bank.core.login_limiter import login_limiter
 from avengers_bank.main import app
 
 
@@ -22,6 +23,7 @@ def anyio_backend():
 
 @pytest.fixture
 async def client():
+    login_limiter.clear()  # 테스트끼리 실패 횟수가 섞이지 않게 한다
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

@@ -54,7 +54,8 @@ async def checking_balance(client, headers):
 
 
 async def card_amount(client, headers, kind, card_id):
-    return (await client.get(f"/cards/{kind}/{card_id}", headers=headers)).json()["data"]["accumulated_amount"]
+    field = "outstanding_amount" if kind == "credit" else "accumulated_amount"
+    return (await client.get(f"/cards/{kind}/{card_id}", headers=headers)).json()["data"][field]
 
 
 # ── 발급 ──────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ async def test_issue_credit_copies_product_limit(client, world):
     card = await issue(client, world["tony"], "credit")
     assert card["card_type"] == "credit"
     assert card["card_num"].startswith("4000-") and len(card["card_num"]) == 19
-    assert (card["credit_limit"], card["accumulated_amount"], card["payment_date"]) == (LIMIT, 0, 14)
+    assert (card["credit_limit"], card["outstanding_amount"], card["payment_date"]) == (LIMIT, 0, 14)
     assert card["checking_account_id"] == 1
 
 
@@ -86,7 +87,7 @@ async def test_issue_errors(client, world):
     body = {"product_id": 999, "checking_account_id": 1}
     assert error_of(await client.post("/cards/debit", json=body, headers=tony)) == (404, "CARD_PRODUCT_NOT_FOUND")
     body = {"product_id": 2, "checking_account_id": 2}  # 남의 입출금 계좌에 연결
-    assert error_of(await client.post("/cards/debit", json=body, headers=tony)) == (403, "ACCOUNT_FORBIDDEN")
+    assert error_of(await client.post("/cards/debit", json=body, headers=tony)) == (404, "ACCOUNT_NOT_FOUND")
     body = {"product_id": 2, "checking_account_id": 999}
     assert error_of(await client.post("/cards/debit", json=body, headers=tony)) == (404, "ACCOUNT_NOT_FOUND")
     for payment_date in (0, 32):
@@ -122,7 +123,7 @@ async def test_list_and_detail(client, world):
     detail = (await client.get(f"/cards/credit/{credit['card_id']}", headers=tony)).json()["data"]
     assert detail["credit_limit"] == LIMIT and "credit_limit" not in (await client.get("/cards/debit/1", headers=tony)).json()["data"]
 
-    assert error_of(await client.get("/cards/credit/1", headers=bruce)) == (403, "CARD_FORBIDDEN")
+    assert error_of(await client.get("/cards/credit/1", headers=bruce)) == (404, "CARD_NOT_FOUND")
     assert error_of(await client.get("/cards/credit/999", headers=tony)) == (404, "CARD_NOT_FOUND")
     assert (await client.get("/cards/prepaid/1", headers=tony)).status_code == 422
 
@@ -136,8 +137,12 @@ async def test_debit_payment_withdraws_from_account(client, world):
     response = await pay(client, tony, "debit", card["card_id"], 30_000, place="편의점")
     assert response.status_code == 201
     assert response.json()["data"]["accumulated_amount"] == 30_000
+    assert response.json()["data"]["outstanding_amount"] is None
 
     assert await checking_balance(client, tony) == 970_000
+    # 입출금 거래내역에 가맹점명이 남는다 (C-035)
+    row = (await client.get("/accounts/checking/1/histories", headers=tony)).json()["data"][0]
+    assert (row["type"], row["counterpart_name"]) == ("CARD_PAYMENT", "편의점")
     history = (await client.get("/accounts/checking/1/histories", headers=tony)).json()["data"][0]
     assert (history["type"], history["amount"], history["balance_after"]) == ("CARD_PAYMENT", 30_000, 970_000)
     rows = (await client.get(f"/cards/debit/{card['card_id']}/histories", headers=tony)).json()["data"]
@@ -157,7 +162,7 @@ async def test_credit_payment_respects_limit_and_does_not_touch_account(client, 
     tony = world["tony"]
     card = await issue(client, tony, "credit")
     cid = card["card_id"]
-    assert (await pay(client, tony, "credit", cid, 600_000)).json()["data"]["accumulated_amount"] == 600_000
+    assert (await pay(client, tony, "credit", cid, 600_000)).json()["data"]["outstanding_amount"] == 600_000
     assert error_of(await pay(client, tony, "credit", cid, 400_001)) == (400, "CREDIT_LIMIT_EXCEEDED")
     assert (await pay(client, tony, "credit", cid, 400_000)).status_code == 201  # 딱 한도까지는 허용
     assert error_of(await pay(client, tony, "credit", cid, 1)) == (400, "CREDIT_LIMIT_EXCEEDED")
@@ -175,7 +180,7 @@ async def test_payment_validation_and_owner(client, world):
     for body in ({"place_of_use": "x", "used_amount": 0}, {"place_of_use": "", "used_amount": 10},
                  {"place_of_use": "x", "used_amount": 1_000_000_000_001}):
         assert (await client.post(f"/cards/debit/{cid}/payments", json=body, headers=tony)).status_code == 422
-    assert error_of(await pay(client, bruce, "debit", cid, 1000)) == (403, "CARD_FORBIDDEN")
+    assert error_of(await pay(client, bruce, "debit", cid, 1000)) == (404, "CARD_NOT_FOUND")
     assert error_of(await pay(client, tony, "debit", 999, 1000)) == (404, "CARD_NOT_FOUND")
     assert await checking_balance(client, tony) == 1_000_000
 
@@ -251,7 +256,7 @@ async def test_create_bill_errors(client, world):
 
     assert error_of(await create_bill(client, tony, cid, ym(today_kst()))) == (400, "BILLING_PERIOD_NOT_ENDED")
     assert error_of(await create_bill(client, tony, cid, "2000-01")) == (400, "NO_UNBILLED_USAGE")
-    assert error_of(await create_bill(client, bruce, cid, ym(last_start))) == (403, "CARD_FORBIDDEN")
+    assert error_of(await create_bill(client, bruce, cid, ym(last_start))) == (404, "CARD_NOT_FOUND")
     assert error_of(await create_bill(client, tony, 999, ym(last_start))) == (404, "CARD_NOT_FOUND")
     for bad in ("2026-13", "2026-1", "abcd-ef", "0000-01"):
         assert (await create_bill(client, tony, cid, bad)).status_code == 422
@@ -317,7 +322,7 @@ async def test_bill_owner_and_card_mismatch(client, world):
 
     for method, path in [("GET", f"/cards/credit/{cid}/bills"), ("GET", f"/cards/credit/{cid}/bills/{bid}"),
                          ("POST", f"/cards/credit/{cid}/bills/{bid}/payments")]:
-        assert error_of(await client.request(method, path, headers=bruce)) == (403, "CARD_FORBIDDEN")
+        assert error_of(await client.request(method, path, headers=bruce)) == (404, "CARD_NOT_FOUND")
     # 다른 카드의 청구서 번호로는 조회·납부할 수 없다
     for method, suffix in [("GET", ""), ("POST", "/payments")]:
         response = await client.request(method, f"/cards/credit/{other['card_id']}/bills/{bid}{suffix}", headers=tony)

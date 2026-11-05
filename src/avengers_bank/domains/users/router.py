@@ -1,10 +1,12 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.database import get_db
 from avengers_bank.core.dependencies import get_current_user
+from avengers_bank.core.exceptions import UnauthorizedException
+from avengers_bank.core.login_limiter import login_limiter
 from avengers_bank.core.responses import SuccessResponse, error_responses
 from avengers_bank.domains.users.schemas import (
     TokenResponse,
@@ -32,12 +34,19 @@ async def signup(data: UserCreate, db: Annotated[AsyncSession, Depends(get_db)])
 @router.post(
     "/login",
     response_model=SuccessResponse[TokenResponse],
-    responses=error_responses(401),
+    responses=error_responses(401, 429),
 )
 async def login(
-    data: UserLogin, db: Annotated[AsyncSession, Depends(get_db)], response: Response
+    data: UserLogin, db: Annotated[AsyncSession, Depends(get_db)], response: Response, request: Request
 ):
-    access_token = await user_service.login(db, data)
+    ip = request.client.host if request.client else "unknown"
+    login_limiter.check(data.login_id, ip)  # 한도를 넘었으면 비밀번호 검증 전에 429
+    try:
+        access_token = await user_service.login(db, data)
+    except UnauthorizedException:
+        login_limiter.record_failure(data.login_id, ip)
+        raise
+    login_limiter.reset(data.login_id, ip)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return SuccessResponse[TokenResponse](data=TokenResponse(access_token=access_token))

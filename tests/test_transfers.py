@@ -2,8 +2,11 @@ from datetime import timedelta
 
 import pytest
 
+from sqlalchemy import update
+
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.timezone import today_kst, today_start_utc
+from avengers_bank.domains.accounts.kinds import KINDS
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
 
 pytestmark = pytest.mark.anyio
@@ -132,7 +135,7 @@ async def test_transfer_target_and_owner_errors(client, world):
     deposit = (await client.post("/accounts/deposit", json={"product_id": 2, "maturity_date": FUTURE}, headers=bruce)).json()["data"]
     assert error_of(await client.post("/transfers", json=transfer_body(world, 1000, to=deposit["account_num"]), headers=tony)) == (404, "ACCOUNT_NOT_FOUND")
     # 남의 계좌에서 보내기 / 없는 계좌에서 보내기
-    assert error_of(await client.post("/transfers", json=transfer_body(world, 1000), headers=bruce)) == (403, "ACCOUNT_FORBIDDEN")
+    assert error_of(await client.post("/transfers", json=transfer_body(world, 1000), headers=bruce)) == (404, "ACCOUNT_NOT_FOUND")
     missing = {**transfer_body(world, 1000), "from_checking_account_id": 999}
     assert error_of(await client.post("/transfers", json=missing, headers=tony)) == (404, "ACCOUNT_NOT_FOUND")
     assert await balance(client, tony, "checking", 1) == 1_000_000
@@ -169,7 +172,7 @@ async def test_pay_savings(client, world):
     other = (await client.post("/accounts/savings", json=body, headers=bruce)).json()["data"]
     assert other["account_id"] == 2
     forbidden = {"from_checking_account_id": 1, "savings_account_id": 2, "amount": 1000}
-    assert error_of(await client.post("/transfers/savings", json=forbidden, headers=tony)) == (403, "ACCOUNT_FORBIDDEN")
+    assert error_of(await client.post("/transfers/savings", json=forbidden, headers=tony)) == (404, "ACCOUNT_NOT_FOUND")
     missing = {"from_checking_account_id": 1, "savings_account_id": 99, "amount": 1000}
     assert error_of(await client.post("/transfers/savings", json=missing, headers=tony)) == (404, "ACCOUNT_NOT_FOUND")
     assert await balance(client, tony, "checking", 1) == 900_000
@@ -190,4 +193,26 @@ async def test_pay_deposit(client, world):
 
     # 남이 내 예금에 넣을 수 없고, 내 계좌가 아닌 곳에서 보낼 수도 없다
     stolen = {"from_checking_account_id": 1, "deposit_account_id": 1, "amount": 1000}
-    assert error_of(await client.post("/transfers/deposit", json=stolen, headers=bruce)) == (403, "ACCOUNT_FORBIDDEN")
+    assert error_of(await client.post("/transfers/deposit", json=stolen, headers=bruce)) == (404, "ACCOUNT_NOT_FOUND")
+
+
+@pytest.mark.parametrize("kind, path, key", [("deposit", "deposit", "deposit_account_id"), ("savings", "savings", "savings_account_id")])
+async def test_payment_rejected_from_maturity_day(client, world, kind, path, key):
+    tony = world["tony"]
+    body = {
+        "deposit": {"product_id": 2, "maturity_date": FUTURE},
+        "savings": {"product_id": 3, "monthly_payment": 100_000, "monthly_deposit_date": 25, "maturity_date": FUTURE},
+    }[kind]
+    await client.post(f"/accounts/{kind}", json=body, headers=tony)
+    pay = {"from_checking_account_id": 1, key: 1, "amount": 1000}
+
+    async def set_maturity(day):
+        async with SessionLocal() as db, db.begin():
+            await db.execute(update(KINDS[kind].model).values(maturity_date=day))
+
+    await set_maturity(today_kst())  # 만기일 당일부터 거절
+    assert error_of(await client.post(f"/transfers/{path}", json=pay, headers=tony)) == (400, "ACCOUNT_MATURED")
+    assert await balance(client, tony, "checking", 1) == 1_000_000
+
+    await set_maturity(today_kst() + timedelta(days=1))  # 만기 전날까지는 가능
+    assert (await client.post(f"/transfers/{path}", json=pay, headers=tony)).status_code == 201

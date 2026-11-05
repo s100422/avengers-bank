@@ -61,6 +61,12 @@ class AccountUpdate(BaseModel):
     daily_transfer_limit: Amount | None = None
 
 
+class AccountCloseRequest(BaseModel):
+    """예금·적금 해지: 원금+이자를 받을 내 입출금 계좌 (C-043)"""
+
+    to_checking_account_id: int
+
+
 # ── 응답 ──────────────────────────────────────────────────────────────
 
 
@@ -73,6 +79,7 @@ class AccountSummaryResponse(BaseModel):
     balance: int
     nickname: str | None
     created_at: datetime
+    status: str | None = None  # 예금·적금만: ACTIVE / CLOSED (입출금은 null)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,6 +102,8 @@ class CheckingAccountResponse(_AccountResponse):
 class DepositAccountResponse(_AccountResponse):
     account_type: Literal["deposit"] = "deposit"
     maturity_date: date
+    status: str
+    closed_at: datetime | None
 
 
 class SavingsAccountResponse(_AccountResponse):
@@ -102,6 +111,8 @@ class SavingsAccountResponse(_AccountResponse):
     monthly_payment: int
     monthly_deposit_date: int
     maturity_date: date
+    status: str
+    closed_at: datetime | None
 
 
 AccountResponse = Annotated[
@@ -116,11 +127,24 @@ RESPONSES = {
 }
 
 
+class AccountCloseResponse(BaseModel):
+    account_type: str
+    account_id: int
+    principal: int  # 해지 전 잔액
+    interest: int
+    total_amount: int  # principal + interest, 입출금 계좌로 들어간 금액
+    early_close: bool  # 만기 전 중도 해지 (이자가 금리의 절반)
+    closed_at: datetime
+    to_account_num: str
+    to_balance_after: int
+
+
 class AccountHistoryResponse(BaseModel):
     date: datetime
     amount: int  # 항상 양수, 입금/출금은 type으로 구분
     balance_after: int
     type: str
     counterpart_account: str | None
+    counterpart_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True)

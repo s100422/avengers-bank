@@ -258,3 +258,37 @@ async def test_responses_never_expose_password(client):
         assert not {"password", "hashed_password"} & set(response.json()["data"])
         assert SIGNUP["password"] not in response.text
     assert "$argon2" not in signup.text + login.text + me.text + patched.text
+
+
+async def test_login_blocked_after_repeated_failures(client):
+    await client.post("/users/signup", json=SIGNUP)
+    bad = {"login_id": SIGNUP["login_id"], "password": "wrong-password"}
+    for _ in range(5):
+        assert (await client.post("/users/login", json=bad)).status_code == 401
+
+    blocked = await client.post("/users/login", json=bad)
+    assert (blocked.status_code, blocked.json()["error"]["code"]) == (429, "TOO_MANY_LOGIN_ATTEMPTS")
+    assert int(blocked.headers["Retry-After"]) > 0
+    # 맞는 비밀번호도 잠금 중에는 거절된다
+    good = {"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]}
+    assert (await client.post("/users/login", json=good)).status_code == 429
+    # 다른 아이디는 영향이 없다 (실패 5번은 이 아이디에만 쌓였다)
+    other = await client.post("/users/login", json={"login_id": "nobody-here", "password": "x" * 10})
+    assert other.status_code == 401
+
+
+async def test_login_success_clears_failures(client):
+    await client.post("/users/signup", json=SIGNUP)
+    bad = {"login_id": SIGNUP["login_id"], "password": "wrong-password"}
+    good = {"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]}
+    for _ in range(4):
+        await client.post("/users/login", json=bad)
+    assert (await client.post("/users/login", json=good)).status_code == 200
+    for _ in range(4):  # 성공으로 초기화돼서 다시 4번까지는 막히지 않는다
+        assert (await client.post("/users/login", json=bad)).status_code == 401
+
+
+async def test_login_blocked_per_ip_when_guessing_many_ids(client):
+    for i in range(20):
+        assert (await client.post("/users/login", json={"login_id": f"user{i:03d}", "password": "x" * 10})).status_code == 401
+    assert (await client.post("/users/login", json={"login_id": "user999", "password": "x" * 10})).status_code == 429

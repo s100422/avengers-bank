@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.exceptions import BadRequestException, NotFoundException
-from avengers_bank.core.timezone import today_start_utc
+from avengers_bank.core.timezone import today_kst, today_start_utc
 from avengers_bank.domains.accounts.kinds import (
     KINDS,
     TO_DEPOSIT,
@@ -93,10 +93,15 @@ class TransferService:
         # 적금·예금은 본인 계좌에만 넣을 수 있다. 1회·1일 이체 한도는 입출금→입출금 이체에만 적용한다.
         async with db.begin():
             await account_service.get_owned(db, KINDS["checking"], from_id, user)
-            await account_service.get_owned(db, to_kind, to_id, user)
+            target = await account_service.get_owned(db, to_kind, to_id, user)
+            # 만기일은 바뀌지 않는 정보라 잠그기 전에 확인한다. 만기일 당일부터 거절한다 (C-033)
+            if target.maturity_date <= today_kst():
+                raise BadRequestException(code="ACCOUNT_MATURED", message="만기가 지난 계좌에는 입금할 수 없습니다.")
 
             (sender,) = await account_repository.lock_checking_accounts(db, [from_id])  # 입출금 먼저
             target = await account_repository.lock_account(db, to_kind, to_id)  # 그다음 예금·적금
+            if target.status == "CLOSED":  # 잠근 뒤에 확인해야 해지와 동시에 와도 해지된 계좌에 돈이 남지 않는다
+                raise BadRequestException(code="ACCOUNT_CLOSED", message="해지된 계좌에는 입금할 수 없습니다.")
 
             _require_funds(sender, amount)
             sender.balance -= amount

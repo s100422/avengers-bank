@@ -42,7 +42,7 @@ def main():
          "insert into savings_accounts(user_id, product_id, account_num, balance, monthly_payment, monthly_deposit_date, maturity_date)"
          " values (:u, :ap, :n, 0, 1, 1, date '2030-01-01')", "220-777-400001"),
         ("credit_cards", "card_num",
-         "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, accumulated_amount, payment_date)"
+         "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, outstanding_amount, payment_date)"
          " values (:u, :cp, :a, :n, 1000000, 0, 14)", "4000-9999-9999-9001"),
         ("debit_cards", "card_num",
          "insert into debit_cards(user_id, product_id, checking_account_id, card_num, accumulated_amount)"

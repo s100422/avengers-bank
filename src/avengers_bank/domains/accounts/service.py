@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,13 +7,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from avengers_bank.core.exceptions import (
     ApiException,
     BadRequestException,
-    ForbiddenException,
     NotFoundException,
 )
-from avengers_bank.domains.accounts.kinds import KINDS, AccountKind
+from avengers_bank.core.timezone import KST, today_kst
+from avengers_bank.domains.accounts.interest import calc_interest
+from avengers_bank.domains.accounts.kinds import (
+    CLOSE_IN,
+    CLOSE_OUT,
+    INTEREST,
+    KINDS,
+    TRANSFER_IN,
+    AccountKind,
+)
+from avengers_bank.domains.accounts.models import CheckingAccountHistory
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.accounts.schemas import (
     RESPONSES,
+    AccountCloseRequest,
+    AccountCloseResponse,
     AccountHistoryResponse,
     AccountSummaryResponse,
     AccountUpdate,
@@ -35,6 +47,13 @@ def _as_dict(kind: AccountKind, account) -> dict:
 
 def to_response(kind: AccountKind, account):
     return RESPONSES[kind.name].model_validate(_as_dict(kind, account))
+
+
+def _kst_date(moment: datetime):
+    """저장된 UTC 시각의 KST 날짜. SQLite는 시간대 없이 돌려줘서 UTC로 본다."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(KST).date()
 
 
 class AccountService:
@@ -129,12 +148,61 @@ class AccountService:
                 setattr(account, field, value)
         return to_response(kind, account)
 
+    async def close_account(
+        self, db: AsyncSession, type: str, account_id: int, data: AccountCloseRequest, user: UserResponse
+    ) -> AccountCloseResponse:
+        """예금·적금 해지: 원금+이자를 내 입출금 계좌로 보낸다 (C-043). 잠금 순서는 입출금 → 예금·적금."""
+        kind = KINDS[type]
+        if kind.name == "checking":
+            raise BadRequestException(code="CLOSE_NOT_SUPPORTED", message="예금·적금만 해지할 수 있습니다.")
+        async with db.begin():
+            await self.get_owned(db, kind, account_id, user)
+            await self.get_owned(db, KINDS["checking"], data.to_checking_account_id, user)
+
+            (checking,) = await account_repository.lock_checking_accounts(db, [data.to_checking_account_id])
+            account = await account_repository.lock_account(db, kind, account_id)
+            if account.status == "CLOSED":  # 잠근 뒤에 확인해야 동시에 두 번 눌러도 한 번만 해지된다
+                raise BadRequestException(code="ACCOUNT_CLOSED", message="이미 해지된 계좌입니다.")
+
+            today = today_kst()
+            product = await product_service.get_account_product(db, account.product_id)
+            deposits = [
+                (_kst_date(h.date), h.amount)
+                for h in await account_repository.find_histories_by_type(db, kind, account_id, TRANSFER_IN)
+            ]
+            interest = calc_interest(deposits, product.interest_rate, today, account.maturity_date)
+            principal = account.balance
+            total = principal + interest
+
+            if interest > 0:
+                await account_repository.save_history(db, kind.history_model(
+                    **{kind.id_column: account_id}, amount=interest, balance_after=total, type=INTEREST,
+                ))
+            if total > 0:
+                await account_repository.save_history(db, kind.history_model(
+                    **{kind.id_column: account_id}, amount=total, balance_after=0, type=CLOSE_OUT,
+                    counterpart_account=checking.account_num,
+                ))
+                checking.balance += total
+                await account_repository.save_history(db, CheckingAccountHistory(
+                    checking_account_id=checking.checking_account_id, amount=total,
+                    balance_after=checking.balance, type=CLOSE_IN, counterpart_account=account.account_num,
+                ))
+            account.balance = 0
+            account.status = "CLOSED"
+            account.closed_at = datetime.now(timezone.utc)
+
+        return AccountCloseResponse(
+            account_type=kind.name, account_id=account_id, principal=principal, interest=interest,
+            total_amount=total, early_close=today < account.maturity_date, closed_at=account.closed_at,
+            to_account_num=checking.account_num, to_balance_after=checking.balance,
+        )
+
     async def get_owned(self, db: AsyncSession, kind: AccountKind, account_id: int, user: UserResponse):
         account = await account_repository.find_by_id(db, kind, account_id)
-        if account is None:
+        # 남의 계좌도 404로 알려서 ID가 존재하는지 드러나지 않게 한다 (C-031)
+        if account is None or account.user_id != user.user_id:
             raise NotFoundException(code="ACCOUNT_NOT_FOUND", message="계좌를 찾을 수 없습니다.")
-        if account.user_id != user.user_id:
-            raise ForbiddenException(code="ACCOUNT_FORBIDDEN", message="본인의 계좌가 아닙니다.")
         return account
 
 

@@ -20,9 +20,9 @@
 |---|---|---|
 | 400 | 잔액 부족, 한도 초과 등 처리 불가 | `BadRequestException` |
 | 401 | 로그인 안 함, 토큰 만료 | `UnauthorizedException` |
-| 403 | 남의 계좌·카드에 접근 | `ForbiddenException` |
-| 404 | 계좌·카드·상품 없음 | `NotFoundException` |
+| 404 | 계좌·카드·상품 없음 (남의 계좌·카드도 404, C-031) | `NotFoundException` |
 | 409 | 아이디·계좌번호 중복 | `ConflictException` |
+| 429 | 로그인 실패가 너무 많음 (C-040) | `TooManyAttemptsException` |
 | 422 | 입력값 형식 오류 (FastAPI 자동) | — |
 
 `code`는 `ACCOUNT_NOT_FOUND`, `DAILY_LIMIT_EXCEEDED`처럼 **대문자 스네이크 케이스**로 구체적으로 적습니다.
@@ -59,6 +59,8 @@
 { "data": { "access_token": "eyJhbGciOi...", "token_type": "bearer" }, "message": null }
 ```
 
+- 실패 `401 INVALID_CREDENTIALS`. **같은 아이디를 같은 IP에서 15분 안에 5번 틀리거나, 한 IP에서 20번 틀리면 `429 TOO_MANY_LOGIN_ATTEMPTS`**(`Retry-After` 헤더에 남은 초). 한도가 차면 비밀번호가 맞아도 거절하고, 성공하면 그 아이디의 실패 횟수가 지워집니다. 프로세스 메모리로 세기 때문에 서버 재시작 시 초기화됩니다.
+
 `PATCH /users/me`: 보낸 필드만 바뀝니다. → `200`, 수정된 내 정보(`GET /users/me`와 같은 모양)
 ```json
 { "name": "페퍼 포츠", "nick_name": "CEO", "phone": "010-9999-8888" }
@@ -90,6 +92,7 @@
 | ✅ | GET | `/accounts/{type}/{account_id}` | 🔒 | 계좌 상세 |
 | ✅ | GET | `/accounts/{type}/{account_id}/histories` | 🔒 | 거래내역 |
 | ✅ | PATCH | `/accounts/{type}/{account_id}` | 🔒 | 별칭, 이체 한도(입출금만) 변경 |
+| ✅ | POST | `/accounts/{type}/{account_id}/close` | 🔒 | 예금·적금 해지 (원금+이자를 내 입출금 계좌로) |
 
 <details>
 <summary>요청·응답 예시</summary>
@@ -114,11 +117,11 @@
 계좌번호는 서버가 발급합니다: 입출금 `110-`, 예금 `120-`, 적금 `220-`로 시작 (`110-048-767128`).
 개설 실패 예시: `400 PRODUCT_TYPE_MISMATCH`, `404 ACCOUNT_PRODUCT_NOT_FOUND`
 
-`GET /accounts/{type}/{account_id}`는 종류별로 필드가 다릅니다(`account_type`으로 구분). 입출금은 `per_transfer_limit`·`daily_transfer_limit`, 예금은 `maturity_date`, 적금은 `monthly_payment`·`monthly_deposit_date`·`maturity_date`가 더 있습니다. 실패: `403 ACCOUNT_FORBIDDEN`, `404 ACCOUNT_NOT_FOUND`
+`GET /accounts/{type}/{account_id}`는 종류별로 필드가 다릅니다(`account_type`으로 구분). 입출금은 `per_transfer_limit`·`daily_transfer_limit`, 예금은 `maturity_date`, 적금은 `monthly_payment`·`monthly_deposit_date`·`maturity_date`가 더 있습니다. 실패: `404 ACCOUNT_NOT_FOUND`(없는 계좌와 남의 계좌를 구분하지 않음)
 
 `GET /accounts/{type}/{account_id}/histories?limit=50&offset=0`: 최신순, `limit` 1~200
 ```json
-{ "data": [ { "date": "...", "amount": 300, "balance_after": 700, "type": "TRANSFER_OUT", "counterpart_account": "110-111-222222" } ], "message": null }
+{ "data": [ { "date": "...", "amount": 300, "balance_after": 700, "type": "TRANSFER_OUT", "counterpart_account": "110-111-222222", "counterpart_name": null } ], "message": null }
 ```
 
 `PATCH /accounts/{type}/{account_id}`: 보낸 필드만 바뀝니다. `nickname`에 `null`을 보내면 별칭을 지웁니다.
@@ -127,6 +130,15 @@
 ```
 실패 예시: `400 INVALID_TRANSFER_LIMIT`(1회 > 1일), `400 TRANSFER_LIMIT_NOT_SUPPORTED`(예금·적금에 한도)
 </details>
+
+**해지** `POST /accounts/{deposit|savings}/{account_id}/close`: `{ "to_checking_account_id": 1 }` (내 입출금 계좌) → `200`
+```json
+{ "data": { "account_type": "deposit", "account_id": 1, "principal": 300000, "interest": 3000, "total_amount": 303000, "early_close": false, "closed_at": "...", "to_account_num": "110-139-957374", "to_balance_after": 803000 }, "message": "계좌가 해지되었습니다." }
+```
+- 원금과 이자를 합쳐 받을 입출금 계좌로 보냅니다. 입출금 계좌는 해지할 수 없습니다(`400 CLOSE_NOT_SUPPORTED`). 이미 해지했으면 `400 ACCOUNT_CLOSED`. 남의 계좌나 없는 계좌는 `404 ACCOUNT_NOT_FOUND`.
+- **이자(단리, 일할):** 입금 한 건마다 `금액 × 연금리 × 경과일 / 365`를 합산하고 원 미만은 버립니다. 경과일은 입금일(KST)부터 해지일까지이고 **만기일까지만** 셉니다(만기 뒤에는 이자가 늘지 않음). **만기일 당일 이후 해지는 전체 금리, 만기 전 해지(`early_close: true`)는 금리의 절반**입니다.
+- 해지 계좌 거래내역에는 `INTEREST`(+이자), `CLOSE_OUT`(−원금+이자, 잔액 0)가, 입출금 계좌 거래내역에는 `CLOSE_IN`이 남습니다(잔액이 0이면 내역 없이 해지만 됩니다).
+- 해지하면 예금·적금의 `status`가 `CLOSED`, `closed_at`이 채워집니다(`GET /accounts` 목록에도 `status`가 보임, 입출금은 null). 해지한 계좌에는 입금할 수 없습니다(`400 ACCOUNT_CLOSED`). 조회와 거래내역 조회는 계속 됩니다.
 
 ## transfers: 돈 이동 (`domains/transfers`)
 
@@ -143,22 +155,22 @@
 ```json
 { "from_checking_account_id": 1, "to_account_num": "110-555-000111", "amount": 10000 }
 ```
-실패 예시: `400 INSUFFICIENT_BALANCE`, `400 SAME_ACCOUNT_TRANSFER`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `403 ACCOUNT_FORBIDDEN`, `404 ACCOUNT_NOT_FOUND`
+실패 예시: `400 INSUFFICIENT_BALANCE`, `400 SAME_ACCOUNT_TRANSFER`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `404 ACCOUNT_NOT_FOUND`
 
 `POST /transfers` → `201`
 ```json
 { "data": { "from_account_num": "110-139-957374", "to_account_num": "110-729-269723", "amount": 300000, "balance_after": 700000 }, "message": "이체가 완료되었습니다." }
 ```
 - 받는 계좌는 **입출금 계좌번호**(`110-...`)만 가능합니다. 예금·적금 번호는 `404 ACCOUNT_NOT_FOUND`.
-- 검사 순서: 본인 계좌(403) → 받는 계좌(404) → 같은 계좌(400) → 잔액 → 1회 한도 → 1일 한도.
+- 검사 순서: 내 계좌(남의 계좌도 404) → 받는 계좌(404) → 같은 계좌(400) → 잔액 → 1회 한도 → 1일 한도.
 - **1일 한도**는 오늘 00:00 KST부터 이 계좌에서 나간 *이체*(`TRANSFER_OUT`)의 합계입니다. 들어온 돈과 적금·예금으로 보낸 돈은 세지 않습니다.
 
 `POST /transfers/savings`: `{ "from_checking_account_id": 1, "savings_account_id": 1, "amount": 100000 }` → `201`, 같은 모양의 응답
 `POST /transfers/deposit`: `{ "from_checking_account_id": 1, "deposit_account_id": 1, "amount": 200000 }` → `201`
-- 적금·예금은 **내 계좌**에만 넣을 수 있습니다(남의 계좌 `403`). 1회·1일 이체 한도는 적용하지 않고 잔액만 검사합니다.
+- 적금·예금은 **내 계좌**에만 넣을 수 있습니다(남의 계좌는 `404`). 1회·1일 이체 한도는 적용하지 않고 잔액만 검사합니다. 만기일 당일부터는 `400 ACCOUNT_MATURED`로 거절합니다.
 
 거래내역에는 보낸 쪽과 받은 쪽에 한 줄씩 남습니다(`type`): 이체 `TRANSFER_OUT` / `TRANSFER_IN`, 적금 납입 입출금 쪽 `TO_SAVINGS`, 예금 입금 입출금 쪽 `TO_DEPOSIT`, 받은 적금·예금 쪽 `TRANSFER_IN`.
-실패 예시: `400 INSUFFICIENT_BALANCE`, `400 SAME_ACCOUNT_TRANSFER`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `403 ACCOUNT_FORBIDDEN`, `404 ACCOUNT_NOT_FOUND`
+실패 예시: `400 INSUFFICIENT_BALANCE`, `400 SAME_ACCOUNT_TRANSFER`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `400 ACCOUNT_MATURED`, `404 ACCOUNT_NOT_FOUND`
 </details>
 
 ## cards: 카드 (`domains/cards`)
@@ -203,14 +215,14 @@
 `POST /cards/credit` → `201`: `{ "product_id": 1, "checking_account_id": 1, "payment_date": 25 }`. 신용 한도는 요청으로 받지 않고 **상품의 한도가 카드로 복사**됩니다(응답에 `credit_limit`).
 `POST /cards/debit` → `201`: `{ "product_id": 3, "checking_account_id": 1 }`
 - 카드번호는 서버가 발급합니다: 신용 `4000-`, 체크 `5000-`로 시작 (`4000-1234-5678-9012`).
-- 연결 계좌는 **내 입출금 계좌**여야 합니다(남의 계좌 `403 ACCOUNT_FORBIDDEN`). 상품 종류가 다르면 `400 PRODUCT_TYPE_MISMATCH`.
+- 연결 계좌는 **내 입출금 계좌**여야 합니다(남의 계좌는 `404 ACCOUNT_NOT_FOUND`). 상품 종류가 다르면 `400 PRODUCT_TYPE_MISMATCH`.
 
-**조회**: `GET /cards`(신용 → 체크 순), `GET /cards/{type}/{card_id}`(종류별 필드가 다름: 신용은 `credit_limit`·`payment_date`), `GET /cards/{type}/{card_id}/histories?limit=50&offset=0`(최신순). 남의 카드 `403 CARD_FORBIDDEN`, 없는 카드 `404 CARD_NOT_FOUND`.
-`accumulated_amount`의 뜻은 카드마다 다릅니다: **신용카드는 미결제액**(결제하면 늘고 청구서를 납부하면 줆), **체크카드는 누적 사용액**.
+**조회**: `GET /cards`(신용 → 체크 순), `GET /cards/{type}/{card_id}`(종류별 필드가 다름: 신용은 `credit_limit`·`payment_date`), `GET /cards/{type}/{card_id}/histories?limit=50&offset=0`(최신순). 남의 카드와 없는 카드는 모두 `404 CARD_NOT_FOUND`.
+신용카드는 `outstanding_amount`(미결제액: 결제하면 늘고 청구서를 납부하면 줆), 체크카드는 `accumulated_amount`(누적 사용액)를 줍니다. `GET /cards` 목록과 결제 응답에서는 해당하지 않는 쪽이 `null`입니다. 체크카드 결제는 입출금 거래내역의 `counterpart_name`에 가맹점명이 남습니다.
 
 **결제(사용)** `POST /cards/{type}/{card_id}/payments`: `{ "place_of_use": "편의점", "used_amount": 30000 }` → `201`
 ```json
-{ "data": { "place_of_use": "편의점", "used_amount": 30000, "time": "...", "accumulated_amount": 30000 }, "message": "결제가 등록되었습니다." }
+{ "data": { "place_of_use": "편의점", "used_amount": 30000, "time": "...", "outstanding_amount": null, "accumulated_amount": 30000 }, "message": "결제가 등록되었습니다." }
 ```
 - **체크카드:** 연결 계좌에서 바로 출금하고, 입출금 거래내역에 `CARD_PAYMENT`이 남습니다. 잔액이 부족하면 `400 INSUFFICIENT_BALANCE`. 1회·1일 이체 한도는 적용하지 않습니다.
 - **신용카드:** 돈은 나가지 않고 미결제액만 늡니다. `미결제액 + 결제 금액`이 한도를 넘으면 `400 CREDIT_LIMIT_EXCEEDED`(딱 한도까지는 허용).
@@ -228,7 +240,7 @@
 | ✅ | POST | `/dev/accounts/checking/{account_id}/charge` | 🔒 | 내 입출금 계좌 잔액 충전 |
 
 `POST /dev/accounts/checking/1/charge`: `{ "amount": 100000 }` → `200`, 갱신된 입출금 계좌(상세 응답과 같은 모양). 거래내역에는 `type` = `DEV_CHARGE`, `balance_after`와 함께 남습니다.
-실패 예시: `403 ACCOUNT_FORBIDDEN`, `404 ACCOUNT_NOT_FOUND`, `422`(금액 0 이하 또는 1조 원 초과)
+실패 예시: `404 ACCOUNT_NOT_FOUND`, `422`(금액 0 이하 또는 1조 원 초과)
 
 ---
 

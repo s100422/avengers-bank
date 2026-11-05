@@ -40,7 +40,7 @@ async def list_my_cards(db: DbSession, user: CurrentUser):
     "/credit",
     response_model=SuccessResponse[CreditCardResponse],
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(400, 403, 404),
+    responses=error_responses(400, 404),
 )
 async def issue_credit(data: CreditCardCreate, db: DbSession, user: CurrentUser):
     card = await card_service.issue_credit(db, data, user)
@@ -51,7 +51,7 @@ async def issue_credit(data: CreditCardCreate, db: DbSession, user: CurrentUser)
     "/debit",
     response_model=SuccessResponse[DebitCardResponse],
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(400, 403, 404),
+    responses=error_responses(400, 404),
 )
 async def issue_debit(data: DebitCardCreate, db: DbSession, user: CurrentUser):
     card = await card_service.issue_debit(db, data, user)
@@ -61,7 +61,7 @@ async def issue_debit(data: DebitCardCreate, db: DbSession, user: CurrentUser):
 @router.get(
     "/{type}/{card_id}",
     response_model=SuccessResponse[CardResponse],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def get_card(type: CardType, card_id: int, db: DbSession, user: CurrentUser):
     return SuccessResponse[CardResponse](data=await card_service.get_card(db, type, card_id, user))
@@ -70,7 +70,7 @@ async def get_card(type: CardType, card_id: int, db: DbSession, user: CurrentUse
 @router.get(
     "/{type}/{card_id}/histories",
     response_model=SuccessResponse[list[CardHistoryResponse]],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def get_histories(
     type: CardType,
@@ -88,7 +88,7 @@ async def get_histories(
     "/{type}/{card_id}/payments",
     response_model=SuccessResponse[CardPaymentResponse],
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(400, 403, 404),
+    responses=error_responses(400, 404),
 )
 async def pay(type: CardType, card_id: int, data: CardPaymentCreate, db: DbSession, user: CurrentUser):
     result = await card_service.pay(db, type, card_id, data, user)
@@ -102,7 +102,7 @@ async def pay(type: CardType, card_id: int, data: CardPaymentCreate, db: DbSessi
     "/credit/{card_id}/bills",
     response_model=SuccessResponse[BillResponse],
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(400, 403, 404, 409),
+    responses=error_responses(400, 404, 409),
 )
 async def create_bill(card_id: int, data: BillCreate, db: DbSession, user: CurrentUser):
     bill = await card_service.create_bill(db, card_id, data, user)
@@ -112,7 +112,7 @@ async def create_bill(card_id: int, data: BillCreate, db: DbSession, user: Curre
 @router.get(
     "/credit/{card_id}/bills",
     response_model=SuccessResponse[list[BillResponse]],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def list_bills(card_id: int, db: DbSession, user: CurrentUser):
     return SuccessResponse[list[BillResponse]](data=await card_service.get_bills(db, card_id, user))
@@ -121,7 +121,7 @@ async def list_bills(card_id: int, db: DbSession, user: CurrentUser):
 @router.get(
     "/credit/{card_id}/bills/{bill_id}",
     response_model=SuccessResponse[BillDetailResponse],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def get_bill(card_id: int, bill_id: int, db: DbSession, user: CurrentUser):
     return SuccessResponse[BillDetailResponse](data=await card_service.get_bill(db, card_id, bill_id, user))
@@ -130,7 +130,7 @@ async def get_bill(card_id: int, bill_id: int, db: DbSession, user: CurrentUser)
 @router.post(
     "/credit/{card_id}/bills/{bill_id}/payments",
     response_model=SuccessResponse[BillResponse],
-    responses=error_responses(400, 403, 404, 409),
+    responses=error_responses(400, 404, 409),
 )
 async def pay_bill(card_id: int, bill_id: int, db: DbSession, user: CurrentUser):
     bill = await card_service.pay_bill(db, card_id, bill_id, user)

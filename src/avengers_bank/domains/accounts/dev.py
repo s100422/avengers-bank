@@ -51,7 +51,7 @@ async def charge_checking(
 @router.post(
     "/accounts/checking/{account_id}/charge",
     response_model=SuccessResponse[CheckingAccountResponse],
-    responses=error_responses(403, 404),
+    responses=error_responses(404),
 )
 async def charge(
     account_id: int,

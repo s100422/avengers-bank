@@ -54,6 +54,8 @@ erDiagram
         date maturity_date
         string nickname "NULL"
         datetime created_at
+        string status "ACTIVE / CLOSED"
+        datetime closed_at "NULL, 해지 시각"
     }
 
     savings_accounts {
@@ -67,6 +69,8 @@ erDiagram
         date maturity_date
         string nickname "NULL"
         datetime created_at
+        string status "ACTIVE / CLOSED"
+        datetime closed_at "NULL, 해지 시각"
     }
 
     checking_account_histories {
@@ -77,6 +81,7 @@ erDiagram
         bigint balance_after "거래 후 잔액"
         string type
         string counterpart_account "NULL, 상대 계좌번호"
+        string counterpart_name "NULL, 가맹점명(체크카드 결제)"
     }
 
     deposit_account_histories {
@@ -106,7 +111,7 @@ erDiagram
         int checking_account_id FK "결제 계좌"
         string card_num UK
         bigint credit_limit "신용 한도"
-        bigint accumulated_amount "미결제액, 0~credit_limit"
+        bigint outstanding_amount "미결제액, 0~credit_limit"
         smallint payment_date "매월 결제일 1~31"
     }
 
@@ -192,7 +197,7 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
 1. **계좌번호는 종류별 앞자리로 발급:** 입출금 `110-`, 예금 `120-`, 적금 `220-`로 시작합니다(`110-XXX-XXXXXX`). 앞자리가 달라서 테이블 사이에서 겹치지 않습니다. 계좌번호는 `accounts.service`에서만 발급하고, 같은 테이블 안에서 겹치면(unique 제약 `IntegrityError`) 새 번호로 재시도합니다.
 2. **돈 이동은 한 트랜잭션으로:** 이체, 적금 납입, 체크카드 결제, 신용카드 청구서 납부는 잔액 변경과 History 저장(양쪽 모두)을 `async with db.begin():` 블록 하나 안에서 처리합니다.
 3. **상품 종류 검증:** 계좌를 개설하거나 카드를 발급할 때 상품의 `type`이 계좌·카드 종류와 맞는지 확인합니다. 신용카드를 발급할 때는 상품의 `credit_limit`을 카드의 `credit_limit`으로 복사합니다.
-4. **`accumulated_amount` 동기화:** 카드 History를 저장할 때 이 값도 같이 증가시킵니다. 신용카드에서는 **미결제액**이라서 청구서를 납부하면 청구 금액만큼 줄이고, 결제 때 `미결제액 + 결제 금액 <= credit_limit`을 검사합니다. (체크카드는 누적 사용액 그대로)
+4. **`outstanding_amount`(신용)·`accumulated_amount`(체크) 동기화:** 카드 History를 저장할 때 이 값도 같이 증가시킵니다. 신용카드의 `outstanding_amount`는 **미결제액**이라서 청구서를 납부하면 청구 금액만큼 줄이고, 결제 때 `미결제액 + 결제 금액 <= credit_limit`을 검사합니다. (체크카드는 누적 사용액 그대로)
 5. **금액은 정수(원):** 금액 컬럼은 모두 `BIGINT`입니다. 실수형(`float`)은 쓰지 않습니다.
 6. **거래내역 금액은 양수, 방향은 `type`:** 계좌 거래내역의 `amount`는 항상 양수(CHECK 제약)이고 입금·출금은 `type`으로 구분합니다. `balance_after`에는 그 거래를 반영한 뒤의 계좌 잔액을 같은 트랜잭션에서 기록합니다. `counterpart_account`는 입금이면 보낸 계좌, 출금이면 받는 계좌의 번호입니다.
 7. **하루 기준은 KST:** 1일 이체 한도의 "오늘"은 한국 시간(Asia/Seoul) 00:00부터입니다. 코드에서 오늘 00:00 KST를 UTC 시각으로 바꿔 `date >= 그 시각`으로 조회합니다.

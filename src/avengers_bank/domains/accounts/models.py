@@ -22,6 +22,9 @@ class CheckingAccount(Base):
     __tablename__ = "checking_accounts"
     __table_args__ = (
         CheckConstraint("balance >= 0", name="ck_checking_accounts_balance_non_negative"),
+        CheckConstraint(
+            "per_transfer_limit <= daily_transfer_limit", name="ck_checking_accounts_limit_order"
+        ),
     )
 
     checking_account_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -47,6 +50,10 @@ class DepositAccount(Base):
     __tablename__ = "deposit_accounts"
     __table_args__ = (
         CheckConstraint("balance >= 0", name="ck_deposit_accounts_balance_non_negative"),
+        CheckConstraint("status IN ('ACTIVE', 'CLOSED')", name="ck_deposit_accounts_status"),
+        CheckConstraint(
+            "(status = 'CLOSED') = (closed_at IS NOT NULL)", name="ck_deposit_accounts_closed_at_matches_status"
+        ),
     )
 
     deposit_account_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -63,6 +70,8 @@ class DepositAccount(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", nullable=False)  # ACTIVE / CLOSED
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SavingsAccount(Base):
@@ -71,6 +80,10 @@ class SavingsAccount(Base):
     __tablename__ = "savings_accounts"
     __table_args__ = (
         CheckConstraint("balance >= 0", name="ck_savings_accounts_balance_non_negative"),
+        CheckConstraint("status IN ('ACTIVE', 'CLOSED')", name="ck_savings_accounts_status"),
+        CheckConstraint(
+            "(status = 'CLOSED') = (closed_at IS NOT NULL)", name="ck_savings_accounts_closed_at_matches_status"
+        ),
         CheckConstraint(
             "monthly_deposit_date BETWEEN 1 AND 31",
             name="ck_savings_accounts_monthly_deposit_date_range",
@@ -93,6 +106,8 @@ class SavingsAccount(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", nullable=False)  # ACTIVE / CLOSED
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CheckingAccountHistory(Base):
@@ -106,6 +121,7 @@ class CheckingAccountHistory(Base):
         CheckConstraint(
             "balance_after >= 0", name="ck_checking_account_histories_balance_after_non_negative"
         ),
+        CheckConstraint("type IN ('TRANSFER_OUT', 'TRANSFER_IN', 'TO_SAVINGS', 'TO_DEPOSIT', 'CARD_PAYMENT', 'CARD_BILL_PAYMENT', 'DEV_CHARGE', 'CLOSE_IN')", name="ck_checking_account_histories_type"),
     )
 
     checking_account_history_id: Mapped[int] = mapped_column(
@@ -123,6 +139,8 @@ class CheckingAccountHistory(Base):
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # 입금/출금/이체/카드결제 등
     # 상대 계좌번호: 입금이면 보낸 계좌, 출금이면 받는 계좌
     counterpart_account: Mapped[str | None] = mapped_column(String(20))
+    # 상대 이름: 체크카드 결제의 가맹점명 (C-035)
+    counterpart_name: Mapped[str | None] = mapped_column(String(100))
 
 
 class DepositAccountHistory(Base):
@@ -134,6 +152,9 @@ class DepositAccountHistory(Base):
         CheckConstraint("amount > 0", name="ck_deposit_account_histories_amount_positive"),
         CheckConstraint(
             "balance_after >= 0", name="ck_deposit_account_histories_balance_after_non_negative"
+        ),
+        CheckConstraint(
+            "type IN ('TRANSFER_IN', 'INTEREST', 'CLOSE_OUT')", name="ck_deposit_account_histories_type"
         ),
     )
 
@@ -163,6 +184,9 @@ class SavingsAccountHistory(Base):
         CheckConstraint("amount > 0", name="ck_savings_account_histories_amount_positive"),
         CheckConstraint(
             "balance_after >= 0", name="ck_savings_account_histories_balance_after_non_negative"
+        ),
+        CheckConstraint(
+            "type IN ('TRANSFER_IN', 'INTEREST', 'CLOSE_OUT')", name="ck_savings_account_histories_type"
         ),
     )
 

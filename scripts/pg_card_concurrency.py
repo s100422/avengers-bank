@@ -41,7 +41,7 @@ def balance(key="A"):
 def new_credit(accumulated=0, limit=1_000_000) -> int:
     state["n"] += 1
     return one(
-        "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, accumulated_amount, payment_date)"
+        "insert into credit_cards(user_id, product_id, checking_account_id, card_num, credit_limit, outstanding_amount, payment_date)"
         " values (:u, :p, :a, :num, :l, :acc, 14) returning credit_card_id",
         u=state["uid"], p=state["credit_product"], a=state["A"], num=f"4000-9999-9999-{state['n']:04d}",
         l=limit, acc=accumulated,
@@ -123,7 +123,7 @@ async def no_lock_accounts(db, ids):
 
 
 def accumulated(card_table, id_column, card_id):
-    return one(f"select accumulated_amount from {card_table} where {id_column} = :c", c=card_id)
+    return one(f"select {"outstanding_amount" if card_table == "credit_cards" else "accumulated_amount"} from {card_table} where {id_column} = :c", c=card_id)
 
 
 async def amain(user):
