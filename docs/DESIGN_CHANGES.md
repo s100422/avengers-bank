@@ -1,7 +1,7 @@
 # 설계 변경 기록
 
 팀 초기 설계(docs/ERD.md, API_ENDPOINTS.md, PROJECT_STRUCTURE.md 및 원본 코드)를 바탕으로 **개인으로 작업하면서** 바꾼 것, 구현한 것, 앞으로 할 것을 모아 둔 문서다.
-팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-05, 변경 항목 C-001 ~ C-051)
+팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-06, 변경 항목 C-001 ~ C-053)
 
 | 알고 싶은 것 | 볼 곳 |
 |---|---|
@@ -145,6 +145,8 @@
 | 마이그레이션 파일은 `날짜_시각-리비전ID_설명.py` 이름, DB `server_default`는 필요할 때 | 2026-11-05 | C-049 |
 | 개발용 API가 켜져 있으면 시작 때 경고(막지는 않음) / Windows `fastapi run`은 README 안내로 충분 | 2026-11-05 | C-050 |
 | 동시성 검증 스크립트는 수동 실행 유지, 원본 drawio(v1)는 그대로 | 2026-11-05 | C-051 |
+| 배포는 Docker 이미지 + Caddy(자동 HTTPS) + 외부 DB, API 포트는 내부 네트워크에만 열고 워커는 1개 | 2026-11-05 | C-052 |
+| 첫 배포는 도메인 없이 HTTP(`DOMAIN=:80`), DB는 RDS PostgreSQL | 2026-11-06 | C-053 |
 
 ---
 
@@ -2715,6 +2717,71 @@ POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env에 POSTGRES_PASSWORD를 넣어 주�
 
 ---
 
+### C-052. AWS 배포용 Dockerfile·Caddy·운영 compose 추가 (배포 준비)
+
+- **날짜:** 2026-11-05
+- **분류:** 구조
+- **상태:** 적용 (AWS에는 아직 올리지 않음)
+- **바뀐 파일:** `Dockerfile`, `.dockerignore`, `docker-compose.prod.yml`, `deploy/Caddyfile`, `.env.prod.example`, `.gitignore`, `docs/RETROSPECTIVE.md`(새 문서)
+
+#### 변경 전
+운영용 이미지·프록시 설정이 없었다. `docker-compose.yml`은 로컬 DB만 띄운다.
+
+#### 변경 후
+- **`Dockerfile`:** `python:3.13-slim` + `uv sync --frozen --no-dev`. 비루트 사용자(`app`)로 실행하고 `HEALTHCHECK`는 `GET /health`를 쓴다. `uvicorn ... --proxy-headers --forwarded-allow-ips '*'`, 워커 1개. 마이그레이션과 시드를 같은 이미지에서 `alembic upgrade head`, `python -m avengers_bank.seed`로 일회성 실행할 수 있게 `alembic`을 포함했다.
+- **`docker-compose.prod.yml`:** `api`(포트를 공개하지 않음)와 `caddy`(80/443, 인증서는 볼륨에 보관). DB는 포함하지 않는다(RDS 등을 `DATABASE_URL`로 연결). `--env-file .env.prod`로 실행한다.
+- **`deploy/Caddyfile`:** `{$DOMAIN}`에 대해 `reverse_proxy api:8000`. 도메인만 적으면 인증서가 자동 발급·갱신된다.
+- **`.env.prod.example`:** 운영 환경변수 예시(`DOMAIN`, `DATABASE_URL`, `JWT_SECRET_KEY`, `ENABLE_DEV_ENDPOINTS=false`, `CORS_ORIGINS`). `.gitignore`가 `.env.*`를 막고 예시 파일만 허용한다.
+- **회고록:** `docs/RETROSPECTIVE.md`를 새로 만들고 첫 항목으로 "nginx 대신 Caddy를 쓴 이유"를 적었다.
+
+#### 이유
+- AWS(EC2)에 Docker로 올리려면 이미지와 HTTPS 프록시가 필요했다. ALB 대신 Caddy를 쓰는 이유는 회고록에 정리했다.
+- `--forwarded-allow-ips '*'`는 `api` 포트를 Caddy와 같은 내부 네트워크에만 두는 전제에서만 안전하다. 그래서 compose에서 `ports` 대신 `expose`만 썼다. 이 포트를 인터넷에 열면 누구나 `X-Forwarded-For`를 조작해 로그인 실패 제한을 우회할 수 있다.
+
+#### 영향 범위
+- 앱 코드·DB·테스트 변경 없음. 개발 환경(`docker-compose.yml`, `uv run fastapi dev`)은 그대로다.
+- 이미지 크기는 약 664MB다(줄이는 작업은 하지 않았다).
+
+#### 검증
+- `docker build` 성공. 로컬 컨테이너를 로컬 개발 DB에 연결해 실행: `/health` 200, `/dev/...` 404(`ENABLE_DEV_ENDPOINTS=false`), `alembic current`가 최신(head), 컨테이너 상태 `healthy`, 실행 사용자는 `app`. `X-Forwarded-For: 203.0.113.9`를 보내면 로그에 그 IP가 찍혀 프록시 헤더가 적용됨을 확인했다.
+- `caddy validate`로 Caddyfile이 유효함을 확인했고, `docker compose config`로 compose가 변수를 채워 렌더링되고 `DOMAIN`이 없으면 안내와 함께 멈추는 것을 확인했다.
+- **확인하지 못한 것:** Caddy를 포함한 전체 스택(`up`)을 실제로 띄워 보지 않았고, 실제 도메인에서의 인증서 발급, ARM(Graviton) 인스턴스에서의 빌드, RDS 연결은 해 보지 못했다.
+
+#### 팀 논의 포인트
+- 도메인이 없으면 Let's Encrypt가 인증서를 주지 않는다. 도메인 마련 방법(구매 또는 CloudFront)을 정해야 한다.
+- DB를 RDS로 할지, 같은 EC2의 컨테이너로 할지. → C-053에서 결정
+
+---
+
+### C-053. 첫 배포는 도메인 없이 HTTP(`DOMAIN=:80`), DB는 RDS PostgreSQL
+
+- **날짜:** 2026-11-06
+- **분류:** 구조
+- **상태:** 적용 (설정 예시만 바뀜, AWS에는 아직 올리지 않음)
+- **바뀐 파일:** `.env.prod.example`
+
+#### 변경 전
+C-052의 Caddy 설정은 도메인이 있다는 전제였고, DB 위치는 정하지 않았다.
+
+#### 변경 후
+- **HTTP만:** 도메인 없이 EC2 IP로 접속한다. `.env.prod`에 `DOMAIN=:80`을 넣으면 Caddy가 인증서 없이 80번 포트에서 HTTP로만 프록시한다. Caddyfile·compose는 그대로다.
+- **DB:** RDS PostgreSQL(무료티어 인스턴스)을 쓰고, 퍼블릭 접근은 끄고 EC2에서만 접속한다.
+- `.env.prod.example`에 `DOMAIN=:80` 사용법과 `DATABASE_URL` 비밀번호 URL 인코딩 주의를 주석으로 적었다.
+
+#### 이유
+- 도메인 마련보다 먼저 서버가 실제로 뜨는지 확인하는 게 목적이다. 도메인이 생기면 `DOMAIN`만 바꾸고 다시 띄우면 HTTPS로 바뀐다.
+- RDS는 백업·관리가 자동이고, EC2가 망가져도 데이터가 남는다.
+
+#### 영향 범위
+- 코드 변경 없음.
+- **HTTP라서 로그인 비밀번호와 JWT가 암호화되지 않고 오간다.** 시연·확인용으로만 쓰고 실제 비밀번호는 넣지 않는다. 보안 그룹에서 443은 열지 않아도 된다.
+
+#### 검증
+- `caddy adapt`에 `DOMAIN=:80`을 넣어 보니 `:80`만 listen하고 `api:8000`으로 프록시하는 설정이 만들어졌다(TLS 없음).
+- **확인하지 못한 것:** 실제 EC2·RDS에서의 실행.
+
+---
+
 ## 부록 A. 초기 리뷰(2026-11-04) 항목 처리 현황
 
 처음 코드 리뷰에서 나온 9개 항목의 처리 결과다. 취소선은 처리 완료이고 오른쪽이 처리한 항목 번호다. **9개 모두 처리됐다**(9번은 보류했다가 C-026에서 처리).
@@ -2786,6 +2853,8 @@ POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env에 POSTGRES_PASSWORD를 넣어 주�
 | C-049 | 2026-11-05 | 구조 | 마이그레이션 파일 이름에 날짜·시각 추가 (4-7) | 적용 |
 | C-050 | 2026-11-05 | 보안 | 개발용 API가 켜져 있으면 시작 때 경고 로그, Windows `fastapi run`은 안내만 (4-9, 4-8) | 적용 |
 | C-051 | 2026-11-05 | 구조 | 동시성 검증 수동 유지, 원본 drawio 그대로 (4-10, 4-12) | 적용 |
+| C-052 | 2026-11-05 | 구조 | AWS 배포용 Dockerfile·Caddy·운영 compose 추가 | 적용 |
+| C-053 | 2026-11-06 | 구조 | 첫 배포는 HTTP(`DOMAIN=:80`), DB는 RDS PostgreSQL | 적용 |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`

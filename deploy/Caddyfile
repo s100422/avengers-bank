@@ -1,0 +1,6 @@
+# DOMAIN 환경변수(.env.prod)에 도메인을 적으면 Let's Encrypt 인증서를 자동으로 받고 갱신한다.
+# DOMAIN=localhost 이면 로컬 시험용 인증서를 쓴다.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy api:8000
+}
