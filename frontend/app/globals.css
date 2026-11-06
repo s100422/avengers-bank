@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  --porcelain: #eef1f4;
+  --paper: #ffffff;
+  --ink: #14213d;
+  --slate: #5b6478;
+  --line: #d5dae2;
+  --seal: #c8102e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --porcelain: #0f1626;
+    --paper: #18213a;
+    --ink: #e6eaf2;
+    --slate: #9aa3b8;
+    --line: #2c3654;
+    --seal: #e5484d;
+  }
+}
+
+@theme inline {
+  --color-porcelain: var(--porcelain);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-slate: var(--slate);
+  --color-line: var(--line);
+  --color-seal: var(--seal);
+  --font-sans: var(--font-plex);
+}
+
+body {
+  background: var(--porcelain);
+  color: var(--ink);
+}
+
+/* 은행 도장(인감) 모양: 브랜드 표시와 완료 표시에 같이 쓴다 */
+.seal {
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid var(--seal);
+  color: var(--seal);
+  border-radius: 4px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stamp {
+  animation: stamp 260ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  transform: rotate(-8deg);
+}
+
+@keyframes stamp {
+  from {
+    opacity: 0;
+    transform: rotate(-8deg) scale(1.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stamp {
+    animation: none;
+  }
+}

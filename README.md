@@ -35,6 +35,18 @@ uv run fastapi dev
 
 최초 마이그레이션(`alembic/versions/6e15576e9ff5_create_initial_tables.py`)은 저장소에 들어 있으므로 `upgrade head`만 실행합니다.
 
+### 프론트엔드 (Next.js)
+
+API 서버를 띄운 상태에서 다른 터미널로 실행하고 http://localhost:5173 을 엽니다. 포트를 5173으로 고정해서 API의 CORS 기본값과 맞췄습니다.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+다른 API(예: 배포 서버)를 부르려면 `frontend/.env.example`을 `.env.local`로 복사해 `NEXT_PUBLIC_API_BASE_URL`을 바꿉니다.
+
 ### 개발용 잔액 충전
 
 외부 입금 기능이 없어서, 이체·결제를 시험하려면 잔액을 채워야 합니다. `.env`의 `ENABLE_DEV_ENDPOINTS=true`일 때만 열리는 개발용 API를 씁니다(`.env.example`에 켜져 있음, 운영 환경에서는 끄기).
