@@ -24,6 +24,14 @@ export function AssistantGate() {
 
 let nextId = 1;
 
+// 넓은 화면에서 패널 폭(px). 왼쪽 가장자리를 끌거나 ←→ 키로 바꾸고, 이 브라우저에 기억한다
+const WIDTH_KEY = "avengers_bank_assistant_width";
+const DEFAULT_W = 340;
+const MIN_W = 300;
+const MAX_W = 720;
+// 왼쪽 메뉴(240px)와 본문 최소 폭(320px)은 남긴다
+const clampWidth = (w: number) => Math.round(Math.max(MIN_W, Math.min(w, MAX_W, window.innerWidth - 560)));
+
 function Assistant() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -36,6 +44,24 @@ function Assistant() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
+  const [width, setWidth] = useState(DEFAULT_W);
+  const [resizing, setResizing] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(WIDTH_KEY));
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage는 마운트 뒤에만 읽을 수 있다
+      if (saved) setWidth(clampWidth(saved));
+    } catch {}
+  }, []);
+
+  function resizeTo(w: number) {
+    const next = clampWidth(w);
+    setWidth(next);
+    try {
+      localStorage.setItem(WIDTH_KEY, String(next));
+    } catch {}
+  }
 
   // 열면 입력창으로, 닫으면 여는 버튼으로 포커스를 옮긴다
   useEffect(() => {
@@ -47,8 +73,15 @@ function Assistant() {
   // 넓은 화면에서 본문을 패널 폭만큼 밀어낸다 (globals.css). 로그아웃으로 사라질 때도 지운다
   useEffect(() => {
     document.body.toggleAttribute("data-assistant-open", open);
-    return () => document.body.removeAttribute("data-assistant-open");
-  }, [open]);
+    document.body.toggleAttribute("data-assistant-resizing", resizing);
+    // 나중에 창을 줄여도 본문 자리가 남도록 CSS에서도 한 번 더 제한한다
+    document.body.style.setProperty("--assistant-w", `clamp(${MIN_W}px, ${width}px, 100vw - 560px)`);
+    return () => {
+      document.body.removeAttribute("data-assistant-open");
+      document.body.removeAttribute("data-assistant-resizing");
+      document.body.style.removeProperty("--assistant-w");
+    };
+  }, [open, width, resizing]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -114,8 +147,40 @@ function Assistant() {
           role="dialog"
           aria-label="AI 금융 비서"
           onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-          className="fixed inset-0 z-30 flex flex-col bg-porcelain text-sm lg:left-auto lg:w-[340px] lg:border-l lg:border-line"
+          className="fixed inset-0 z-30 flex flex-col bg-porcelain text-sm lg:left-auto lg:w-(--assistant-w) lg:border-l lg:border-line"
         >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="AI 금융 비서 폭 조절"
+            aria-valuenow={width}
+            aria-valuemin={MIN_W}
+            aria-valuemax={MAX_W}
+            tabIndex={0}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              setResizing(true);
+            }}
+            onPointerMove={(e) => resizing && setWidth(clampWidth(window.innerWidth - e.clientX))}
+            onPointerUp={(e) => {
+              e.currentTarget.releasePointerCapture(e.pointerId);
+              setResizing(false);
+              resizeTo(window.innerWidth - e.clientX);
+            }}
+            onKeyDown={(e) => {
+              // 패널이 오른쪽에 붙어 있어서 ←는 넓히기, →는 좁히기
+              if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                e.preventDefault();
+                resizeTo(width + (e.key === "ArrowLeft" ? 24 : -24));
+              }
+            }}
+            className={`group absolute inset-y-0 -left-1.5 z-10 hidden w-3 cursor-col-resize touch-none lg:block focus-visible:outline-none`}
+          >
+            <span
+              aria-hidden
+              className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors group-hover:bg-coral group-focus-visible:bg-coral ${resizing ? "bg-coral" : "bg-transparent"}`}
+            />
+          </div>
           <header className="flex items-center gap-1 border-b border-line bg-paper px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
             <h2 className="flex-1 px-1 text-base font-bold">AI 금융 비서</h2>
             <button type="button" onClick={reset} aria-label="새 대화 시작" className="min-h-11 rounded-full px-3 text-sm text-slate hover:bg-coral-soft hover:text-ink">

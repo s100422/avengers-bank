@@ -63,12 +63,18 @@ body {
 /* AI 금융 비서가 열리면 넓은 화면에서는 패널 폭만큼 화면을 왼쪽으로 민다 (좁으면 패널이 전체 화면) */
 @media (min-width: 64rem) {
   body[data-assistant-open] {
-    padding-right: 340px;
+    padding-right: var(--assistant-w, 340px);
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  body {
+  body:not([data-assistant-resizing]) {
     transition: padding-right 200ms ease-out;
   }
+}
+
+/* 폭을 끄는 동안 글자가 선택되지 않게 한다 */
+body[data-assistant-resizing] {
+  user-select: none;
+  cursor: col-resize;
 }
