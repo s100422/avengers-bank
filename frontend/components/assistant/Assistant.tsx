@@ -44,6 +44,12 @@ function Assistant() {
     wasOpen.current = open;
   }, [open]);
 
+  // 넓은 화면에서 본문을 패널 폭만큼 밀어낸다 (globals.css). 로그아웃으로 사라질 때도 지운다
+  useEffect(() => {
+    document.body.toggleAttribute("data-assistant-open", open);
+    return () => document.body.removeAttribute("data-assistant-open");
+  }, [open]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages, sending, failed]);
@@ -94,9 +100,9 @@ function Assistant() {
           aria-label="AI 금융 비서 열기"
           aria-haspopup="dialog"
           onClick={() => setOpen(true)}
-          className="fixed right-4 bottom-24 z-20 flex min-h-12 items-center gap-2 rounded-full bg-coral px-4 font-semibold text-paper shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral md:right-8 md:bottom-8"
+          className="fixed right-4 bottom-24 z-20 flex min-h-11 items-center gap-1.5 rounded-full bg-coral px-3.5 text-sm font-semibold text-paper shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral md:right-8 md:bottom-8"
         >
-          <svg viewBox="0 0 24 24" className="size-5 fill-none stroke-current stroke-[1.8]" aria-hidden>
+          <svg viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]" aria-hidden>
             <path d="M5 5h14v10H9l-4 4z" strokeLinejoin="round" />
           </svg>
           AI 금융 비서
@@ -108,10 +114,10 @@ function Assistant() {
           role="dialog"
           aria-label="AI 금융 비서"
           onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-          className="fixed inset-0 z-30 flex flex-col bg-porcelain md:inset-y-0 md:right-0 md:left-auto md:w-[400px] md:border-l md:border-line md:shadow-2xl"
+          className="fixed inset-0 z-30 flex flex-col bg-porcelain text-sm lg:left-auto lg:w-[340px] lg:border-l lg:border-line"
         >
           <header className="flex items-center gap-1 border-b border-line bg-paper px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
-            <h2 className="flex-1 px-1 text-lg font-bold">AI 금융 비서</h2>
+            <h2 className="flex-1 px-1 text-base font-bold">AI 금융 비서</h2>
             <button type="button" onClick={reset} aria-label="새 대화 시작" className="min-h-11 rounded-full px-3 text-sm text-slate hover:bg-coral-soft hover:text-ink">
               새 대화
             </button>
@@ -133,7 +139,7 @@ function Assistant() {
                         type="button"
                         onClick={() => send(q)}
                         disabled={sending}
-                        className="min-h-11 rounded-full border border-line bg-paper px-4 text-sm hover:border-coral disabled:opacity-50"
+                        className="min-h-11 rounded-full border border-line bg-paper px-3 text-[13px] hover:border-coral disabled:opacity-50"
                       >
                         {q}
                       </button>
@@ -145,13 +151,13 @@ function Assistant() {
 
             {messages.map((m) =>
               m.role === "user" ? (
-                <p key={m.id} className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-coral px-4 py-2.5 whitespace-pre-wrap text-paper">
+                <p key={m.id} className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-coral px-3.5 py-2 whitespace-pre-wrap text-paper">
                   <span className="sr-only">나: </span>
                   {m.text}
                 </p>
               ) : (
                 <div key={m.id} className="max-w-[90%] space-y-2">
-                  <p className="w-fit rounded-2xl rounded-bl-sm border border-line bg-paper px-4 py-2.5 whitespace-pre-wrap">
+                  <p className="w-fit rounded-2xl rounded-bl-sm border border-line bg-paper px-3.5 py-2 whitespace-pre-wrap">
                     <span className="sr-only">AI 비서: </span>
                     {m.text}
                   </p>
@@ -162,7 +168,7 @@ function Assistant() {
               ),
             )}
 
-            {sending && <p className="w-fit rounded-2xl border border-line bg-paper px-4 py-2.5 text-slate">답변을 만드는 중…</p>}
+            {sending && <p className="w-fit rounded-2xl border border-line bg-paper px-3.5 py-2 text-slate">답변을 만드는 중…</p>}
 
             {failed && (
               <div role="alert" className="flex items-center gap-2 rounded-2xl border border-seal/40 bg-paper px-4 py-2 text-sm text-seal">
