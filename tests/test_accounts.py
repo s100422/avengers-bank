@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 
 from avengers_bank.core.database import SessionLocal
-from avengers_bank.core.timezone import today_kst
+from avengers_bank.core.timezone import kst_start_utc, today_kst
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
 from avengers_bank.domains.accounts.service import account_service
 
@@ -145,6 +145,47 @@ async def test_histories_newest_first_with_paging(client, headers, make_user):
     assert (await client.get("/accounts/checking/1/histories", params={"limit": 0}, headers=headers)).status_code == 422
     other = await make_user("hulk")
     assert (await client.get("/accounts/checking/1/histories", headers=other)).status_code == 404
+
+
+async def test_histories_filters(client, headers):
+    await open_account(client, headers, "checking", CHECKING)
+    today = today_kst()
+    old = kst_start_utc(today - timedelta(days=40)) + timedelta(hours=12)  # 40일 전 정오(KST)
+    async with SessionLocal() as db, db.begin():
+        db.add_all([
+            CheckingAccountHistory(checking_account_id=1, amount=a, balance_after=0, type=t,
+                                   counterpart_account=acc, counterpart_name=name, **({"date": d} if d else {}))
+            for a, t, acc, name, d in [
+                (100_000, "DEV_CHARGE", None, None, old),
+                (6_500, "CARD_PAYMENT", None, "스타벅스 강남점", None),
+                (23_000, "CARD_PAYMENT", None, "올리브영 100%_세일", None),
+                (50_000, "TRANSFER_OUT", "110-111-222222", None, None),
+            ]
+        ])
+
+    async def amounts(**params):
+        response = await client.get("/accounts/checking/1/histories", params=params, headers=headers)
+        assert response.status_code == 200, response.text
+        return sorted(r["amount"] for r in response.json()["data"])
+
+    assert await amounts() == [6_500, 23_000, 50_000, 100_000]
+    # 날짜: KST 날짜 양끝 포함
+    assert await amounts(date_from=(today - timedelta(days=30)).isoformat()) == [6_500, 23_000, 50_000]
+    assert await amounts(date_to=(today - timedelta(days=40)).isoformat()) == [100_000]
+    assert await amounts(date_from=today.isoformat(), date_to=today.isoformat()) == [6_500, 23_000, 50_000]
+    # 거래 종류 여러 개
+    assert await amounts(types=["CARD_PAYMENT", "TRANSFER_OUT"]) == [6_500, 23_000, 50_000]
+    # 금액 범위
+    assert await amounts(min_amount=10_000, max_amount=50_000) == [23_000, 50_000]
+    # 상대 이름·계좌번호 검색, 대소문자 무시, % _는 글자 그대로
+    assert await amounts(q="스타벅스") == [6_500]
+    assert await amounts(q="111-222") == [50_000]
+    assert await amounts(q="100%_") == [23_000]
+    assert await amounts(q="%") == [23_000]
+    # 조건 조합
+    assert await amounts(types=["CARD_PAYMENT"], min_amount=10_000) == [23_000]
+    bad = await client.get("/accounts/checking/1/histories", params={"min_amount": -1}, headers=headers)
+    assert bad.status_code == 422
 
 
 async def test_update_nickname_and_limits(client, headers):

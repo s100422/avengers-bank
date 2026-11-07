@@ -79,6 +79,9 @@ def cleanup(login_id: str) -> None:
     credit = f"(select credit_card_id from credit_cards where user_id in {u})"
     debit = f"(select debit_card_id from debit_cards where user_id in {u})"
     statements = [
+        f"delete from agent_transfer_drafts where user_id in {u}",
+        f"delete from agent_messages where conversation_id in (select conversation_id from agent_conversations where user_id in {u})",
+        f"delete from agent_conversations where user_id in {u}",
         f"delete from credit_card_histories where credit_card_id in {credit}",
         f"delete from debit_card_histories where debit_card_id in {debit}",
         f"delete from credit_card_bills where credit_card_id in {credit}",

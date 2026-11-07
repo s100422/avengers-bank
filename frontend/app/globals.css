@@ -1,23 +1,16 @@
 @import "tailwindcss";
 
+/* shortcut: 라이트 모드만 둔다. 다크 모드는 피치·코랄 팔레트를 따로 잡을 때 추가한다 */
 :root {
-  --porcelain: #eef1f4;
-  --paper: #ffffff;
-  --ink: #14213d;
-  --slate: #5b6478;
-  --line: #d5dae2;
-  --seal: #c8102e;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --porcelain: #0f1626;
-    --paper: #18213a;
-    --ink: #e6eaf2;
-    --slate: #9aa3b8;
-    --line: #2c3654;
-    --seal: #e5484d;
-  }
+  color-scheme: light;
+  --porcelain: #fff4ee; /* 페이지 바탕 (피치) */
+  --paper: #ffffff; /* 카드 */
+  --ink: #1f1a17; /* 본문 글자 */
+  --slate: #7a6d66; /* 보조 글자 */
+  --line: #f2ddd2; /* 테두리 */
+  --coral: #dd3b24; /* 주 버튼, 강조 */
+  --coral-soft: #fde3d7; /* 아이콘 원, 선택 배경 */
+  --seal: #d9381e; /* 도장, 오류, 입금 금액 */
 }
 
 @theme inline {
@@ -26,13 +19,16 @@
   --color-ink: var(--ink);
   --color-slate: var(--slate);
   --color-line: var(--line);
+  --color-coral: var(--coral);
+  --color-coral-soft: var(--coral-soft);
   --color-seal: var(--seal);
-  --font-sans: var(--font-plex);
+  --font-sans: var(--font-pretendard), system-ui, sans-serif;
 }
 
 body {
   background: var(--porcelain);
   color: var(--ink);
+  letter-spacing: -0.01em; /* Pretendard는 살짝 좁혀야 한글이 단단해 보인다 */
 }
 
 /* 은행 도장(인감) 모양: 브랜드 표시와 완료 표시에 같이 쓴다 */

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     enable_dev_endpoints: bool = False
     # CORS로 허용할 프론트 주소 (쉼표로 구분, C-047)
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
+    # AI 금융 비서 (C-070). 키가 없으면 /agent/chat은 503을 돌려준다
+    gemini_api_key: SecretStr | None = None
+    agent_model: str = "gemini-2.5-flash"
+    agent_timeout_seconds: float = Field(default=30, gt=0)
 
     @property
     def cors_origin_list(self) -> list[str]:

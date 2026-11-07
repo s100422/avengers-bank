@@ -1,8 +1,12 @@
-from sqlalchemy import func, select
+from datetime import timedelta
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from avengers_bank.core.timezone import kst_start_utc
 from avengers_bank.domains.accounts.kinds import TRANSFER_OUT, AccountKind
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
+from avengers_bank.domains.accounts.schemas import HistoryFilter
 
 
 class AccountRepository:
@@ -20,12 +24,30 @@ class AccountRepository:
         return list(await db.scalars(stmt))
 
     async def find_histories(
-        self, db: AsyncSession, kind: AccountKind, account_id: int, limit: int, offset: int
+        self, db: AsyncSession, kind: AccountKind, account_id: int, limit: int, offset: int,
+        f: HistoryFilter | None = None,
     ) -> list:
         model = kind.history_model
+        conditions = [getattr(model, kind.id_column) == account_id]
+        if f:
+            # 날짜는 KST 기준 하루 단위: date_from 00:00 이상, date_to 다음 날 00:00 미만
+            if f.date_from:
+                conditions.append(model.date >= kst_start_utc(f.date_from))
+            if f.date_to:
+                conditions.append(model.date < kst_start_utc(f.date_to + timedelta(days=1)))
+            if f.types:
+                conditions.append(model.type.in_(f.types))
+            if f.min_amount is not None:
+                conditions.append(model.amount >= f.min_amount)
+            if f.max_amount is not None:
+                conditions.append(model.amount <= f.max_amount)
+            if f.q:
+                # 상대 이름(사용처 등)은 입출금 내역에만 있다. autoescape: 입력의 % _를 글자 그대로 찾는다
+                columns = [model.counterpart_account] + ([model.counterpart_name] if hasattr(model, "counterpart_name") else [])
+                conditions.append(or_(*(c.icontains(f.q, autoescape=True) for c in columns)))
         stmt = (
             select(model)
-            .where(getattr(model, kind.id_column) == account_id)
+            .where(*conditions)
             .order_by(model.date.desc(), getattr(model, kind.history_id_column).desc())
             .limit(limit)
             .offset(offset)

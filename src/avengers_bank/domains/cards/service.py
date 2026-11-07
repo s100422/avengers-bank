@@ -267,12 +267,14 @@ class CardService:
                 raise BadRequestException(code="INSUFFICIENT_BALANCE", message="잔액이 부족합니다.")
 
             account.balance -= bill.total_amount
+            product = await product_service.get_card_product(db, card.product_id)
             await account_repository.save_history(
                 db,
                 CheckingAccountHistory(
                     checking_account_id=account.checking_account_id, amount=bill.total_amount,
                     balance_after=account.balance, type=CARD_BILL_PAYMENT,
-                    counterpart_account=card.card_num,
+                    # 거래 내역에는 카드 이름을 보여 주고, 어떤 카드인지는 카드번호로 남긴다 (C-064)
+                    counterpart_account=card.card_num, counterpart_name=product.name,
                 ),
             )
             bill.status = "PAID"

@@ -56,6 +56,14 @@ async def test_transfer_moves_money_and_records_both_sides(client, world):
     assert await histories(client, world["bruce"], "checking", 2) == [
         ("TRANSFER_IN", 300_000, 300_000, world["a"]["account_num"])]
 
+    # 상대 실명: 보낸 쪽에는 받는 분, 받은 쪽에는 보낸 분 (C-065)
+    names = {}
+    for who, account_id in (("tony", 1), ("bruce", 2)):
+        me = (await client.get("/users/me", headers=world[who])).json()["data"]["name"]
+        row = (await client.get(f"/accounts/checking/{account_id}/histories", headers=world[who])).json()["data"][0]
+        names[who] = (me, row["counterpart_name"])
+    assert names["tony"][1] == names["bruce"][0] and names["bruce"][1] == names["tony"][0]
+
 
 async def test_insufficient_balance_changes_nothing(client, world):
     response = await client.post("/transfers", json=transfer_body(world, 1_000_001), headers=world["tony"])

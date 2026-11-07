@@ -128,6 +128,17 @@
 `GET /accounts/{type}/{account_id}`는 종류별로 필드가 다릅니다(`account_type`으로 구분). 입출금은 `per_transfer_limit`·`daily_transfer_limit`, 예금은 `maturity_date`, 적금은 `monthly_payment`·`monthly_deposit_date`·`maturity_date`가 더 있습니다. 실패: `404 ACCOUNT_NOT_FOUND`(없는 계좌와 남의 계좌를 구분하지 않음)
 
 `GET /accounts/{type}/{account_id}/histories?limit=50&offset=0`: 최신순, `limit` 1~200
+
+검색 조건(모두 선택, 함께 쓰면 AND, C-064):
+
+| 파라미터 | 뜻 | 예 |
+|---|---|---|
+| `date_from`, `date_to` | 날짜(KST), 양끝 포함 | `date_from=2026-10-01&date_to=2026-10-31` |
+| `types` | 거래 종류 코드, 여러 번 쓰면 OR | `types=CARD_PAYMENT&types=CARD_BILL_PAYMENT` |
+| `min_amount`, `max_amount` | 금액 범위(0 이상), 양끝 포함 | `min_amount=5000` |
+| `q` | 상대 계좌번호·이름(사용처) 일부, 대소문자 무시, 최대 100자. `%`·`_`는 글자 그대로 찾음 | `q=스타벅스` |
+
+카드대금 납부(`CARD_BILL_PAYMENT`) 내역은 `counterpart_name`에 카드 상품 이름, `counterpart_account`에 카드번호가 들어갑니다.
 ```json
 { "data": [ { "date": "...", "amount": 300, "balance_after": 700, "type": "TRANSFER_OUT", "counterpart_account": "110-111-222222", "counterpart_name": null } ], "message": null }
 ```
@@ -246,6 +257,20 @@
 **청구서 납부** `POST /cards/credit/{card_id}/bills/{bill_id}/payments` (body 없음) → `200`: 카드의 **결제 계좌**에서 청구 금액이 출금되고(입출금 거래내역 `CARD_BILL_PAYMENT`, 상대 계좌에 카드번호), 청구서가 `PAID`가 되며, 카드의 미결제액이 그만큼 줄어 한도가 돌아옵니다. 다른 카드의 청구서 번호는 `404 BILL_NOT_FOUND`.
 청구서 생성은 이용 기간이 끝난 달만 가능합니다(`BILLING_PERIOD_NOT_ENDED`).
 
+
+## agent: AI 금융 비서 (`domains/agent`)
+
+자세한 요청·응답, Tool 목록, 이체 확인 흐름은 [AGENT.md](AGENT.md).
+
+| 상태 | 메서드 | 경로 | 인증 | 설명 |
+|---|---|---|---|---|
+| ✅ | POST | `/agent/chat` | 🔒 | 채팅 질문. 이체 요청이면 실행하지 않고 `action`(이체 확인 카드)을 돌려줌 |
+| ✅ | POST | `/agent/transfers/{draft_id}/confirm` | 🔒 | 사용자가 확인 카드에서 누른 이체 실행 (잔액·한도 재검사, 한 번만) |
+| ✅ | POST | `/agent/transfers/{draft_id}/cancel` | 🔒 | 이체 초안 취소 |
+
+실패 예시: `503 AGENT_UNAVAILABLE`, `504 AGENT_TIMEOUT`, `404 CONVERSATION_NOT_FOUND` / `DRAFT_NOT_FOUND`, `409 DRAFT_EXPIRED` / `DRAFT_NOT_PENDING`
+
+---
 
 ## dev: 개발용 (`domains/accounts/dev.py`)
 

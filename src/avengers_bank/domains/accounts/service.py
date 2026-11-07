@@ -30,6 +30,7 @@ from avengers_bank.domains.accounts.schemas import (
     AccountUpdate,
     CheckingAccountCreate,
     DepositAccountCreate,
+    HistoryFilter,
     SavingsAccountCreate,
 )
 from avengers_bank.domains.products.service import product_service
@@ -115,11 +116,12 @@ class AccountService:
         return to_response(kind, await self.get_owned(db, kind, account_id, user))
 
     async def get_histories(
-        self, db: AsyncSession, type: str, account_id: int, user: UserResponse, limit: int, offset: int
+        self, db: AsyncSession, type: str, account_id: int, user: UserResponse, limit: int, offset: int,
+        f: HistoryFilter | None = None,
     ) -> list[AccountHistoryResponse]:
         kind = KINDS[type]
         await self.get_owned(db, kind, account_id, user)
-        histories = await account_repository.find_histories(db, kind, account_id, limit, offset)
+        histories = await account_repository.find_histories(db, kind, account_id, limit, offset, f)
         return [AccountHistoryResponse.model_validate(h) for h in histories]
 
     async def update_account(

@@ -15,7 +15,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, body?: unknown): Promise<T> {
+export async function api<T>(path: string, body?: unknown, method?: "PATCH" | "POST"): Promise<T> {
   const headers: Record<string, string> = {};
   const t = token.get();
   if (t) headers.Authorization = `Bearer ${t}`;
@@ -24,7 +24,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(BASE + path, {
-      method: body === undefined ? "GET" : "POST",
+      method: method ?? (body === undefined ? "GET" : "POST"),
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -53,7 +53,30 @@ export type AccountSummary = {
   status: string | null;
 };
 
-export type User = { user_id: number; login_id: string; name: string; nick_name: string | null };
+export type User = { user_id: number; login_id: string; name: string; nick_name: string | null; phone: string };
+
+export type History = {
+  date: string;
+  amount: number;
+  balance_after: number;
+  type: string;
+  counterpart_account: string | null;
+  counterpart_name: string | null;
+};
+
+// 거래 종류: [화면 이름, 나간 돈인지]
+export const HISTORY_TYPE: Record<string, [string, boolean]> = {
+  TRANSFER_OUT: ["이체 보냄", true],
+  TRANSFER_IN: ["입금", false],
+  TO_SAVINGS: ["적금 납입", true],
+  TO_DEPOSIT: ["예금 입금", true],
+  CLOSE_IN: ["해지금 입금", false],
+  INTEREST: ["이자", false],
+  CLOSE_OUT: ["해지", true],
+  CARD_PAYMENT: ["체크카드 결제", true],
+  CARD_BILL_PAYMENT: ["카드대금 납부", true],
+  DEV_CHARGE: ["충전(개발용)", false],
+};
 
 export type Product = { product_id: number; name: string; description: string; interest_rate: string };
 
@@ -64,3 +87,38 @@ export const KIND: Record<AccountSummary["account_type"], string> = {
   deposit: "예금",
   savings: "적금",
 };
+
+// AI 금융 비서 (/agent). 이체는 초안(draft)만 만들고, 사용자가 확인 카드에서 눌러야 실행된다.
+export type TransferAction = {
+  type: "TRANSFER_CONFIRMATION";
+  draft_id: string;
+  from_account_name: string;
+  from_account_num_masked: string;
+  recipient_name: string;
+  to_account_num_masked: string;
+  amount: number;
+  expected_balance_after: number;
+  expires_at: string;
+};
+
+export type AgentReply = { conversation_id: number; answer: string; action: TransferAction | null };
+
+export type AgentTransferResult = {
+  draft_id: string;
+  status: "EXECUTED";
+  from_account_num_masked: string;
+  to_account_num_masked: string;
+  recipient_name: string;
+  amount: number;
+  balance_after: number;
+};
+
+export const agent = {
+  chat: (message: string, conversation_id: number | null) => api<AgentReply>("/agent/chat", { message, conversation_id }),
+  confirm: (draftId: string) => api<AgentTransferResult>(`/agent/transfers/${encodeURIComponent(draftId)}/confirm`, undefined, "POST"),
+  cancel: (draftId: string) =>
+    api<{ draft_id: string; status: "CANCELLED" }>(`/agent/transfers/${encodeURIComponent(draftId)}/cancel`, undefined, "POST"),
+};
+
+// 비서로 이체한 뒤 열려 있는 화면이 잔액을 다시 불러오게 알리는 이벤트 이름
+export const ACCOUNTS_CHANGED = "accounts:changed";

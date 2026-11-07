@@ -19,6 +19,7 @@ from avengers_bank.domains.transfers.schemas import (
     TransferCreate,
     TransferResponse,
 )
+from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.schemas import UserResponse
 
 
@@ -33,46 +34,74 @@ class TransferService:
 
     async def transfer(self, db: AsyncSession, data: TransferCreate, user: UserResponse) -> TransferResponse:
         """입출금 → 입출금 이체. 잔액, 1회 한도, 1일 한도를 검사한다."""
-        checking = KINDS["checking"]
         async with db.begin():
-            # 불변 정보(소유자, 받는 계좌, 같은 계좌 여부)는 잠그기 전에 확인한다
-            sender = await account_service.get_owned(db, checking, data.from_checking_account_id, user)
-            receiver = await account_repository.find_checking_by_account_num(db, data.to_account_num)
-            if receiver is None:
-                raise NotFoundException(code="ACCOUNT_NOT_FOUND", message="받는 계좌를 찾을 수 없습니다.")
-            if receiver.checking_account_id == sender.checking_account_id:
-                raise BadRequestException(
-                    code="SAME_ACCOUNT_TRANSFER", message="같은 계좌로는 이체할 수 없습니다."
-                )
+            return await self.transfer_in_tx(db, data, user)
 
-            # 두 계좌를 ID 순서대로 한 번에 잠근다 (A→B와 B→A가 동시에 와도 데드락이 없다)
-            ids = [sender.checking_account_id, receiver.checking_account_id]
-            locked = {a.checking_account_id: a for a in await account_repository.lock_checking_accounts(db, ids)}
-            sender, receiver = locked[ids[0]], locked[ids[1]]
+    async def transfer_in_tx(self, db: AsyncSession, data: TransferCreate, user: UserResponse) -> TransferResponse:
+        """transfer와 같지만 호출한 쪽이 연 트랜잭션 안에서 실행한다 (AI 이체 초안 확인, C-070)."""
+        sender, receiver = await self._parties(db, data, user)
 
-            # 잠근 뒤에 검사한다. 1일 합계도 보내는 계좌를 잠근 뒤에 계산해야 동시 이체가 한도를 못 넘는다
-            _require_funds(sender, data.amount)
-            if data.amount > sender.per_transfer_limit:
-                raise BadRequestException(
-                    code="PER_TRANSFER_LIMIT_EXCEEDED", message="1회 이체 한도를 초과했습니다."
-                )
-            used_today = await account_repository.sum_today_transfer_amount(
-                db, sender.checking_account_id, today_start_utc()
-            )
-            if used_today + data.amount > sender.daily_transfer_limit:
-                raise BadRequestException(
-                    code="DAILY_LIMIT_EXCEEDED", message="1일 이체 한도를 초과했습니다."
-                )
+        # 두 계좌를 ID 순서대로 한 번에 잠근다 (A→B와 B→A가 동시에 와도 데드락이 없다)
+        ids = [sender.checking_account_id, receiver.checking_account_id]
+        locked = {a.checking_account_id: a for a in await account_repository.lock_checking_accounts(db, ids)}
+        sender, receiver = locked[ids[0]], locked[ids[1]]
 
-            sender.balance -= data.amount
-            receiver.balance += data.amount
-            await self._save_checking_history(db, sender, TRANSFER_OUT, data.amount, receiver.account_num)
-            await self._save_checking_history(db, receiver, TRANSFER_IN, data.amount, sender.account_num)
+        # 잠근 뒤에 검사한다. 1일 합계도 보내는 계좌를 잠근 뒤에 계산해야 동시 이체가 한도를 못 넘는다
+        await self._check_limits(db, sender, data.amount)
+
+        sender.balance -= data.amount
+        receiver.balance += data.amount
+        # 거래 내역에 상대 실명을 남긴다: 보낸 쪽에는 받는 분, 받은 쪽에는 보낸 분 (C-065)
+        receiver_name = (await db.get(User, receiver.user_id)).name
+        sender_name = (await db.get(User, sender.user_id)).name
+        await self._save_checking_history(db, sender, TRANSFER_OUT, data.amount, receiver.account_num, receiver_name)
+        await self._save_checking_history(db, receiver, TRANSFER_IN, data.amount, sender.account_num, sender_name)
 
         return TransferResponse(
             from_account_num=sender.account_num, to_account_num=receiver.account_num,
             amount=data.amount, balance_after=sender.balance,
         )
+
+    async def preview(
+        self, db: AsyncSession, data: TransferCreate, user: UserResponse
+    ) -> tuple[CheckingAccount, CheckingAccount, str]:
+        """이체와 같은 검사만 하고 돈은 옮기지 않는다 (AI 이체 초안, C-070). (보내는 계좌, 받는 계좌, 받는 분 실명).
+
+        잠그지 않으므로 결과는 참고용이다. 실제 실행(transfer_in_tx)이 잠근 뒤에 다시 검사한다.
+        """
+        async with db.begin():
+            sender, receiver = await self._parties(db, data, user)
+            await self._check_limits(db, sender, data.amount)
+            receiver_name = (await db.get(User, receiver.user_id)).name
+        return sender, receiver, receiver_name
+
+    async def _parties(
+        self, db: AsyncSession, data: TransferCreate, user: UserResponse
+    ) -> tuple[CheckingAccount, CheckingAccount]:
+        # 불변 정보(소유자, 받는 계좌, 같은 계좌 여부)는 잠그기 전에 확인한다
+        sender = await account_service.get_owned(db, KINDS["checking"], data.from_checking_account_id, user)
+        receiver = await account_repository.find_checking_by_account_num(db, data.to_account_num)
+        if receiver is None:
+            raise NotFoundException(code="ACCOUNT_NOT_FOUND", message="받는 계좌를 찾을 수 없습니다.")
+        if receiver.checking_account_id == sender.checking_account_id:
+            raise BadRequestException(
+                code="SAME_ACCOUNT_TRANSFER", message="같은 계좌로는 이체할 수 없습니다."
+            )
+        return sender, receiver
+
+    async def _check_limits(self, db: AsyncSession, sender: CheckingAccount, amount: int) -> None:
+        _require_funds(sender, amount)
+        if amount > sender.per_transfer_limit:
+            raise BadRequestException(
+                code="PER_TRANSFER_LIMIT_EXCEEDED", message="1회 이체 한도를 초과했습니다."
+            )
+        used_today = await account_repository.sum_today_transfer_amount(
+            db, sender.checking_account_id, today_start_utc()
+        )
+        if used_today + amount > sender.daily_transfer_limit:
+            raise BadRequestException(
+                code="DAILY_LIMIT_EXCEEDED", message="1일 이체 한도를 초과했습니다."
+            )
 
     async def pay_savings(self, db: AsyncSession, data: SavingsPaymentCreate, user: UserResponse) -> TransferResponse:
         """입출금 → 내 적금 납입."""
@@ -121,13 +150,15 @@ class TransferService:
         )
 
     async def _save_checking_history(
-        self, db: AsyncSession, account: CheckingAccount, type: str, amount: int, counterpart: str
+        self, db: AsyncSession, account: CheckingAccount, type: str, amount: int, counterpart: str,
+        counterpart_name: str | None = None,
     ) -> None:
         await account_repository.save_history(
             db,
             CheckingAccountHistory(
                 checking_account_id=account.checking_account_id, amount=amount,
                 balance_after=account.balance, type=type, counterpart_account=counterpart,
+                counterpart_name=counterpart_name,
             ),
         )
 

@@ -61,6 +61,17 @@ class AccountUpdate(BaseModel):
     daily_transfer_limit: Amount | None = None
 
 
+class HistoryFilter(BaseModel):
+    """GET .../histories 검색 조건. 비운 값은 조건에서 뺀다 (C-064)."""
+
+    date_from: date | None = None  # KST 날짜, 그날 포함
+    date_to: date | None = None  # KST 날짜, 그날 포함
+    types: list[str] | None = None  # 거래 종류 코드 (TRANSFER_OUT, CARD_PAYMENT ...)
+    min_amount: int | None = Field(default=None, ge=0)
+    max_amount: int | None = Field(default=None, ge=0)
+    q: str | None = Field(default=None, max_length=100)  # 상대 계좌번호·이름(사용처) 일부
+
+
 class AccountCloseRequest(BaseModel):
     """예금·적금 해지: 원금+이자를 받을 내 입출금 계좌 (C-043)"""
 
