@@ -15,6 +15,22 @@ erDiagram
         string nick_name "NULL"
         string phone
         datetime created_at
+        datetime phone_verified_at "NULL, 휴대폰 인증 시각(가입·번호 변경)"
+        smallint failed_login_count "연속 로그인 실패 횟수, 기본 0"
+        datetime login_locked_at "NULL, 5회 연속 실패로 잠긴 시각"
+    }
+
+    verification_codes {
+        int verification_id PK
+        string purpose "SIGNUP_PHONE/CHANGE_PHONE/PASSWORD_RESET/FIND_LOGIN_ID/ACCOUNT_PASSWORD_RESET"
+        string phone
+        int user_id FK "NULL, 가입 전에는 없음"
+        string code_hash "HMAC-SHA256, 원문 저장 안 함"
+        smallint attempts "확인 시도 횟수, 최대 5"
+        datetime expires_at "발송 후 10분"
+        datetime verified_at "NULL, 확인 성공"
+        datetime consumed_at "NULL, 증표 1회 사용"
+        datetime created_at
     }
 
     account_products {
@@ -44,6 +60,9 @@ erDiagram
         bigint daily_transfer_limit "1일 이체 한도"
         string nickname "NULL"
         datetime created_at
+        string password_hash "NULL, 계좌 비밀번호(숫자 4자리) argon2 해시"
+        smallint password_failed_count "연속 실패, 기본 0"
+        datetime password_locked_at "NULL, 5회 실패로 잠긴 시각"
     }
 
     deposit_accounts {
@@ -57,6 +76,9 @@ erDiagram
         datetime created_at
         string status "ACTIVE / CLOSED"
         datetime closed_at "NULL, 해지 시각"
+        string password_hash "NULL, 계좌 비밀번호(숫자 4자리) argon2 해시"
+        smallint password_failed_count "연속 실패, 기본 0"
+        datetime password_locked_at "NULL, 5회 실패로 잠긴 시각"
     }
 
     savings_accounts {
@@ -72,6 +94,9 @@ erDiagram
         datetime created_at
         string status "ACTIVE / CLOSED"
         datetime closed_at "NULL, 해지 시각"
+        string password_hash "NULL, 계좌 비밀번호(숫자 4자리) argon2 해시"
+        smallint password_failed_count "연속 실패, 기본 0"
+        datetime password_locked_at "NULL, 5회 실패로 잠긴 시각"
     }
 
     checking_account_histories {
@@ -161,6 +186,7 @@ erDiagram
     users ||--o{ savings_accounts : "보유"
     users ||--o{ credit_cards : "보유"
     users ||--o{ debit_cards : "보유"
+    users |o--o{ verification_codes : "인증번호"
 
     account_products ||--o{ checking_accounts : "상품"
     account_products ||--o{ deposit_accounts : "상품"
@@ -185,9 +211,10 @@ erDiagram
 
 | 테이블 | 설명 | 도메인 |
 |---|---|---|
-| `users` | 회원 | users |
+| `users` | 회원. `phone_verified_at`(휴대폰 인증 시각), `failed_login_count`·`login_locked_at`(같은 아이디 5회 연속 로그인 실패면 잠금, 비밀번호 찾기·관리자 명령으로 해제) | users |
+| `verification_codes` | 휴대폰 인증번호 1번 발송 = 1행. 코드는 HMAC만 저장, `purpose` CHECK 제약, 인덱스 `(phone, purpose, created_at)`. 번호당 발송 제한(15분 3번)도 이 행을 센다 | verification |
 | `account_products` / `card_products` | 계좌 상품 / 카드 상품 (`account_products.min_amount`: NULL이면 제한 없음, 값이 있으면 `> 0` CHECK) | products |
-| `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌 | accounts |
+| `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌. 3종 모두 `password_hash`(NULL = 미설정, 돈이 나가지 않음)·`password_failed_count`·`password_locked_at`(5회 실패 잠금) | accounts |
 | `*_account_histories` | 계좌별 거래내역 | accounts |
 | `credit_cards` / `debit_cards` | 신용카드 / 체크카드 | cards |
 | `*_card_histories` | 카드별 사용내역 | cards |
@@ -207,6 +234,8 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
 8. **신용카드 청구는 API 호출로:** 스케줄러가 없으므로 본인이 청구서 생성·납부 API를 호출합니다. 이용 기간은 전월 1일~말일(KST), 납부 예정일은 다음 달 결제일(그 달에 없는 날이면 말일)입니다. 부분 납부·연체 이자·리볼빙은 범위 밖입니다.
 9. **돈이 움직이기 전에 행 잠금:** 잔액·한도·청구서 상태를 바꾸는 처리는 해당 행을 `SELECT ... FOR UPDATE`(`with_for_update()`)로 **먼저 잠그고, 잠근 뒤에** 검사합니다. 잠그기 전에 읽은 값으로 검사하면 동시 요청이 둘 다 통과합니다.
    - 잠금 순서는 항상 같게: 입출금 계좌(ID 오름차순) → 예금·적금 계좌 → 카드 → 청구서. 순서가 다르면 두 요청이 서로를 기다리는 데드락이 생깁니다.
+   - 로그인 세션(`refresh_tokens`)을 바꾸는 작업은 **사용자 행(`users`) → 갱신 토큰** 순서로 잠급니다(C-088). 아직 생기지 않은 새 토큰 행은 잠글 수 없어서, 사용자 행으로 같은 사용자의 로그인·갱신·로그아웃·비밀번호 변경을 한 줄로 세웁니다.
+   - 계좌 비밀번호 검증(`accounts/password.py` `check_account_password`)은 본 작업 전에 **그 계좌 행 하나만 잠그는 짧은 트랜잭션을 먼저 커밋**합니다(실패 횟수 증가가 롤백되지 않게). 행 하나만 잠그고 끝나므로 위 잠금 순서와 엮여 데드락이 생기지 않습니다.
    - 잠금 쿼리에는 `.execution_options(populate_existing=True)`를 붙여 세션에 남아 있는 예전 값을 최신 값으로 덮어씁니다.
    - 테스트 DB(SQLite)는 `FOR UPDATE`를 무시하므로 동시성 테스트는 PostgreSQL에서 해야 합니다.
 

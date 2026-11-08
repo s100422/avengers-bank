@@ -1,7 +1,7 @@
 # 설계 변경 기록
 
 팀 초기 설계(docs/ERD.md, API_ENDPOINTS.md, PROJECT_STRUCTURE.md 및 원본 코드)를 바탕으로 **개인으로 작업하면서** 바꾼 것, 구현한 것, 앞으로 할 것을 모아 둔 문서다.
-팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-08, 변경 항목 C-001 ~ C-081)
+팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-08, 변경 항목 C-001 ~ C-094)
 
 | 알고 싶은 것 | 볼 곳 |
 |---|---|
@@ -79,7 +79,7 @@
 
 | 도메인 | 엔드포인트 | 상태 | 근거 |
 |---|---|---|---|
-| users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음 | C-024 |
+| users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음. 토큰 갱신·로그아웃(`POST /users/token/refresh`, `POST /users/logout`)은 C-083, 입력 규칙 C-084 | C-024, C-083, C-084 |
 | products | 4 / 4 | ✅ 구현 | C-019 |
 | accounts | 7 / 7 | ✅ 구현 (예금은 개설 때 가입 금액을 필수로 입금 C-076·C-079, 상품별 최소 가입 금액 C-080) | C-020, C-076, C-079, C-080 |
 | transfers | 2 / 2 | ✅ 구현 (`POST /transfers/deposit`는 C-079에서 삭제: 예금은 가입 후 추가 입금 불가) | C-022, C-079 |
@@ -92,9 +92,9 @@
 
 | 방법 | 범위 | 결과 |
 |---|---|---|
-| pytest (SQLite) | 전체 | 238개 통과, 3개 skip (C-081까지. skip은 PostgreSQL이 필요한 테스트로 이번에는 실행하지 않음) |
+| pytest (SQLite) | 전체 | 415개 통과, 3개 skip (C-094까지. skip은 PostgreSQL이 필요한 테스트로, 같은 경로는 `scripts/`의 PG 스크립트로 확인) |
 | 실제 PostgreSQL: 마이그레이션 | upgrade → downgrade → upgrade, `alembic check` | 통과 (C-014) |
-| 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023), 해지(C-043, C-079에서 적금 납입 경합으로 수정), 예금 가입 금액 입금(C-079) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025) |
+| 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023), 해지(C-043, C-079에서 적금 납입 경합으로 수정), 예금 가입 금액 입금(C-079), 토큰 동시 갱신(C-083), 동시 로그인·단일 세션(C-088) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025), 로그인 잠금·인증번호 발송(C-090·C-091), 계좌 비밀번호(C-092). **스크립트 11개 모두 통과(2026-11-08)** |
 | 서버를 띄운 HTTP 확인 | 계좌, 충전, 이체, 카드, 청구서 | 통과 |
 
 - SQLite는 `FOR UPDATE` 잠금을 무시한다. **pytest가 통과해도 동시성은 검증된 것이 아니다**(C-017 결정: pytest는 SQLite 유지).
@@ -3865,6 +3865,485 @@ POST /transfers/deposit 삭제 (404). 예금 가입 후 추가 입금 불가, �
 
 ---
 
+### C-082. 로그인 실패 한도를 동시 요청으로 우회하던 버그 수정
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · 동시성
+- **상태:** 적용 (아이디+IP 메모리 한도는 C-090에서 DB 잠금으로 대체, '검증 전에 먼저 센다'는 원리는 그대로)
+- **바뀐 파일:**
+  - `core/login_limiter.py`: `check`·`record_failure` → `acquire`(확인 + 실패 1회 선기록) / `reset` / `cancel`
+  - `users/router.py` `login`, `change_password`: `acquire` 방식으로
+  - `tests/test_login_limiter_concurrency.py` (새, 6개)
+
+#### 변경 전
+```python
+login_limiter.check(data.login_id, ip)          # 한도 확인
+access_token = await user_service.login(db, data)  # argon2 검증, await 약 70ms
+# 실패하면 login_limiter.record_failure(...)
+```
+
+#### 변경 후
+```python
+attempt = login_limiter.acquire(data.login_id, ip)  # 확인 + "실패 1회" 기록을 await 없이 한 번에
+tokens = await user_service.login(db, data)         # 틀리면 미리 적은 기록이 그대로 실패 1회
+login_limiter.reset(data.login_id, ip, attempt)      # 맞으면 기록 삭제
+```
+
+#### 이유
+- 재현: 틀린 비밀번호 로그인 30개를 동시에 보내면 30개 모두 검증 전(기록 0개)에 `check`를 통과해 **30번 검증, 429는 0번**. 한도 5가 무력했다.
+- asyncio는 스레드 하나에서 `await` 지점에서만 다른 요청으로 넘어간다. `acquire()` 안에는 `await`가 없으므로 확인과 기록 사이에 끼어들 틈이 없어 락 없이 원자적이다(워커 1개 전제, 기존 shortcut 주석 유지).
+
+#### 영향 범위
+- 성공하면 아이디+IP 기록은 모두 지우고, IP 기록은 이번 시도 한 건만 뺀다(다른 아이디로 틀린 기록은 남김).
+- 비밀번호 변경에서 현재 비밀번호를 틀린 게 아닌 오류(새 비밀번호 규칙 위반 등)로 끝나면 `cancel`로 되돌린다.
+- 예상 밖 예외(DB 오류 등)도 실패 1회로 남는다(보수적).
+
+#### 검증
+- 동시 30개 → 401 5개·429 25개, 아이디를 바꾼 동시 30개 → 401 20개(IP 한도)·429 10개, 비밀번호 변경 동시 10개 → 400 5개·429 5개.
+
+#### 팀 논의 포인트
+- 아이디 단위 전체 한도(IP를 바꿔 가며 한 아이디를 시도하는 경우)는 넣지 않았다. 사용자가 "다른 곳에서 로그인하면 기존 세션 종료"(단일 세션) 정책과 함께 논의하기로 함.
+
+---
+
+### C-083. 짧은 액세스 토큰 + 갱신 토큰(회전·재사용 감지)으로 세션 구조 변경
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · DB 스키마 · API
+- **상태:** 적용 (개발 DB에 마이그레이션 적용. 운영 DB에는 적용하지 않음). 학습용 설명은 `docs/AUTH.md`
+- **바뀐 파일:**
+  - `core/config.py`: `jwt_expire_minutes=30` → `access_token_expire_minutes=5`, `session_expire_minutes=30` 추가. `.env.example`
+  - `core/security.py`: `new_refresh_token`(`secrets.token_urlsafe(32)`), `hash_refresh_token`(SHA-256)
+  - `users/models.py` `RefreshToken`, `alembic/versions/2026_11_08_1100-ccd01fe5b793_add_refresh_tokens.py` (새)
+  - `users/repository.py`, `users/service.py`(`login`·`refresh`·`logout`·`change_password`), `users/router.py`, `users/schemas.py`(`TokenResponse`, `RefreshRequest`, `LogoutRequest`)
+  - `tests/test_auth_tokens.py` (새, 11개), `scripts/pg_refresh_concurrency.py` (새), `scripts/_common.py`(정리에 `refresh_tokens`), `scripts/README.md`
+
+#### 변경 전
+- `POST /users/login` → 30분짜리 JWT 하나. 서버에 저장하지 않아 **비밀번호를 바꾸거나 로그아웃해도 서버가 끊을 수 없었다**(재현: 비밀번호 변경 후 이전 토큰으로 `GET /users/me` → 200).
+
+#### 변경 후
+```
+POST /users/login          → { access_token(5분 JWT), token_type, refresh_token, expires_in: 300, session_expires_at(+30분) }
+POST /users/token/refresh  { refresh_token } → 같은 모양. 쓴 갱신 토큰은 폐기(회전)
+POST /users/logout         { refresh_token } → 그 세션(family) 폐기, 멱등 200
+PATCH /users/me/password   → 그 사용자의 모든 세션 폐기 + 이 기기용 새 세션(응답 data = 토큰 묶음)
+```
+- 갱신 토큰은 의미 없는 256비트 임의 문자열, DB에는 SHA-256만 저장. `family_id` = 로그인 한 번 = 세션 하나.
+- **재사용 감지:** 이미 교체된 갱신 토큰이 다시 오면 탈취로 보고 그 family 전체를 폐기 → 401 `REFRESH_TOKEN_REUSED`. 모르는·만료·폐기된 토큰은 401 `INVALID_REFRESH_TOKEN`.
+- 갱신은 그 행을 `SELECT ... FOR UPDATE`(+`populate_existing`)로 잠근 뒤 검사한다(ERD 규칙 9와 같은 원칙).
+- 재사용 감지 때 폐기를 커밋해야 하므로 트랜잭션 안에서 예외를 던지지 않고 블록 밖에서 401.
+- 비밀번호 변경: 새 비밀번호가 아이디와 같으면(대소문자 무시) 400 `PASSWORD_SAME_AS_LOGIN_ID`.
+- **모든 기기에서 로그아웃** `POST /users/logout-all` 🔒: 그 사용자의 모든 세션(이 기기 포함) 폐기, 새 세션은 주지 않음. 사용자 결정(로그아웃 버튼은 이 기기만, 모든 기기 로그아웃은 내 정보 화면의 별도 버튼). `/users/logout`과 달리 액세스 토큰으로 본인 확인(남의 세션을 끊는 데 쓰이지 않게). 테스트 `test_logout_all_revokes_every_session_and_needs_login`, 브라우저에서 이 기기·다른 기기 갱신 토큰이 모두 401이 되는 것 확인.
+
+#### 이유
+- 사용자 결정(B안): 정석 구조를 배우려고 "토큰 하나 + `token_version` 비교"(A안) 대신 액세스/갱신 토큰 구조를 골랐다.
+- 액세스 토큰은 무상태로 두어 요청마다 DB 조회가 없고, 세션을 잇는 갱신 토큰만 DB에 두어 서버가 끊을 수 있다.
+- SHA-256(argon2가 아님): 원문이 256비트 임의값이라 대입이 불가능하고, 결정적 해시여야 unique 인덱스로 바로 찾는다.
+
+#### 영향 범위
+- **하위 호환:** 로그인 응답은 필드 추가뿐이라 `access_token`을 쓰는 기존 코드는 그대로 동작한다. `PATCH /users/me/password` 응답 data는 `null` → 토큰 묶음으로 바뀌었다.
+- **순수 B안의 한계:** 로그아웃·비밀번호 변경 뒤에도 이미 발급된 액세스 토큰은 **최대 5분** 유효(예전 30분). → **C-087에서 요청마다 세션을 확인하도록 바꿔 해결.**
+- 슬라이딩 세션이라 계속 쓰면 세션이 끝없이 이어진다(절대 만료 없음). 폐기·만료 행은 쌓인다(정리 작업 추후).
+- 환경변수 `JWT_EXPIRE_MINUTES`는 이제 무시된다(이 저장소에는 쓰는 곳 없음).
+
+#### 검증
+- `tests/test_auth_tokens.py`: 응답 필드, 회전(이전 토큰 무효), 재사용 감지 후 최신 토큰도 무효, 만료, 로그아웃·멱등, 비밀번호 변경 후 다른 세션 무효·새 토큰 동작, 원문 미저장, 액세스 토큰 수명 5분.
+- **PostgreSQL** `scripts/pg_refresh_concurrency.py`: 같은 토큰 10번 동시 갱신 → 1번 성공·9번 `REFRESH_TOKEN_REUSED`, 이긴 쪽 새 토큰도 폐기, 살아 있는 토큰 0개. 잠금을 뺀 대조군은 10번 모두 성공(세션 10갈래).
+- 서버에서 확인: 앞뒤 공백·대문자 아이디로 로그인 → 새 응답 모양. 옛 비밀번호(`password1234`) 계정도 로그인됨.
+
+#### 팀 논의 포인트
+- 즉시 끊어야 하면 액세스 토큰에 `family_id`를 넣고 요청마다 세션 행을 확인하는 혼합 방식(요청당 조회 1번 추가).
+- 토큰 보관 위치(`localStorage` → `httpOnly` 쿠키)는 별도 논의 예정.
+
+---
+
+### C-084. 아이디 정규화와 회원 정보 입력 검증 강화
+
+- **날짜:** 2026-11-08
+- **분류:** API · 보안
+- **상태:** 적용
+- **바뀐 파일:**
+  - `users/validators.py` (새): 정규화·검사 함수와 `LoginId`·`Name`·`NickName`·`Phone`·`NewPassword` 등 Annotated 타입
+  - `users/schemas.py`: `UserCreate`, `UserLogin`, `UserUpdate`, `PasswordChange`
+  - `tests/conftest.py`, `tests/test_users.py`, `seed_demo.py`·`scripts/pg_deposit_open_concurrency.py`(가입 비밀번호를 새 규칙 값 `Passw0rd!23`으로)
+
+#### 변경 전
+- 아이디 4~50자 아무 문자, 대소문자 구분 → `tokenuser `(뒤 공백), `Tokenuser`가 별개 계정으로 가입됨. 휴대폰 자동 대문자로 로그인 실패 가능.
+- 이름 `"   "`, 전화번호 `abcdefghij`, 비밀번호 공백 8개·아이디와 같은 비밀번호가 가입됨. 내 정보 수정도 같음.
+
+#### 변경 후
+- **아이디:** 가입·로그인 모두 앞뒤 공백 제거 + 소문자. 가입만 `^[a-z0-9_]{4,20}$` 검사. **로그인은 형식 검사 없음**(형식이 달라도 401 — 아이디 규칙을 흘리지 않고 옛 계정도 막지 않게).
+- **이름:** 앞뒤 공백 제거 후 1~50자. **닉네임:** 앞뒤 공백 제거, 빈 문자열이면 null.
+- **휴대폰:** 하이픈·공백을 빼고 `^01[016789]\d{7,8}$`이면 `010-1234-5678`(10자리 `011-123-4567`) 모양으로 저장.
+- **비밀번호(가입·새 비밀번호):** 8~128자, **영문·숫자·특수문자(키보드 기호) 각 1자 이상**, 키보드 문자만(한글·공백·전각 문자 불가), 아이디와 같으면 거부(대소문자 무시). 로그인과 현재 비밀번호에는 강도 규칙 없음(옛 계정 호환).
+
+#### 이유
+- 사용자 결정(아이디 A안, 비밀번호는 은행 앱처럼 영문·숫자·특수문자 모두).
+- 한글을 받지 않는 이유: 한/영 전환 실수와 기기마다 다른 유니코드 조합(NFC/NFD) 때문에 같은 비밀번호가 다르게 저장될 수 있다. 처음 구현은 한글을 특수문자로 쳐 주었는데(정의를 "영문·숫자·공백이 아닌 문자"로 썼음) 통합하면서 키보드 기호로 좁혔다.
+
+#### 영향 범위
+- DB 컬럼 길이(50)는 그대로, 마이그레이션 없음. 개발 DB의 기존 아이디·전화번호는 모두 새 형식을 이미 만족(확인함). 운영 DB는 미확인.
+- 기존 데이터는 수정할 때만 새 규칙으로 다시 검사된다.
+
+#### 검증
+- `tests/test_users.py`: 정규화(공백·대문자 → 같은 계정), 대소문자만 다른 중복 409, 로그인은 형식 검사 없이 401, 전화번호 정규화 5가지, 이름·닉네임 공백 처리, 비밀번호 강도·아이디와 같음·키보드 문자만, 내 정보 수정도 같은 규칙, 옛 약한 비밀번호 계정도 로그인·변경 가능.
+- 브라우저: `UiTest01` 가입 → `uitest01`로 저장, 이름 `"  테스트 "` → `테스트`, `01055556666` → `010-5555-6666`.
+
+#### 팀 논의 포인트
+- DB unique는 여전히 대소문자를 구분한다(정규화로 막음). 정규화 이전 데이터가 있는 DB라면 소문자 기준 unique 인덱스를 검토.
+
+---
+
+### C-085. 422 입력 오류 메시지를 한국어 완성 문장으로
+
+- **날짜:** 2026-11-08
+- **분류:** API
+- **상태:** 적용
+- **바뀐 파일:**
+  - `core/exception_handlers.py`: `FIELD_LABELS`(약 55개 필드 이름표), 조사 선택(`_josa`), `korean_message()`
+  - `frontend/lib/api.ts`: `details[0].msg`만 표시
+
+#### 변경 전
+```
+화면: phone: String should have at most 20 characters
+```
+
+#### 변경 후
+```json
+{"loc": ["body", "phone"], "msg": "휴대폰 번호는 20자 이하로 입력해 주세요.", "type": "string_too_long"}
+```
+- 오류 종류(`missing`, `string_too_short/long`, `greater_than(_equal)`, `less_than(_equal)`, 숫자·날짜 파싱, `extra_forbidden`, `literal_error`, `json_invalid` 등)별 문장 + 필드 이름표 + `ctx`의 숫자. 직접 낸 `ValueError`는 "Value error, " 접두어를 떼고 그대로. 모르는 종류는 "입력값을 확인해 주세요: {이름표}".
+- 응답 구조(`loc`, `msg`, `type`, 상위 `message`)는 그대로.
+
+#### 이유
+- 사용자 결정(A안, 서버에서): 서버 한 곳에서 바꾸면 모든 화면에 적용된다.
+
+#### 영향 범위
+- AI 비서 도구(`domains/agent/tools/`)는 이 처리기를 거치지 않고 pydantic 메시지로 자체 문구를 만들어 **여전히 영어**다(사용자에게 직접 보이는 경로는 아님).
+
+#### 검증
+- `test_validation_messages_are_korean_sentences`(7가지, "String should"·"Field required"·"Value error" 없음), 금지·모르는 필드, 숫자·날짜 오류.
+
+#### 팀 논의 포인트
+- AI 비서 도구 입력 오류도 같은 함수로 바꿀지.
+
+---
+
+### C-086. 화면: 세션 타이머·자동 갱신·만료 처리, 비밀번호 확인 칸
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (프론트)
+- **상태:** 적용 (브라우저에서 확인)
+- **바뀐 파일:**
+  - `frontend/lib/api.ts`: `session`(한 키 `avengers_bank_session`에 토큰 묶음), `api()`의 401 → 갱신 → 재시도, `refreshSession`(single-flight + Web Locks), `logout`, `expireSession`, `safeNext`
+  - `frontend/components/ui.tsx`: `SessionTimer`(남은 시간·연장·2분 전 예고·만료)
+  - `frontend/app/login`, `signup`, `me`, `page.tsx`, `terms/[versionId]`, `components/assistant/Assistant.tsx`·`TransferCard.tsx`
+
+#### 변경 전
+- 로그인 30분 뒤부터 모든 화면이 "유효하지 않거나 만료된 토큰입니다" 문구만 띄우고 그대로였다. 내 정보 화면은 오류여도 비밀번호 변경 폼이 보였다.
+- 로그아웃은 브라우저에서 토큰만 지웠다. 가입·비밀번호 변경에 확인 칸이 없었다.
+
+#### 변경 후
+- 화면 위 **"자동 로그아웃 29:41" + [연장]**. 2분 이하면 `role="alertdialog"` 예고(포커스 [연장]). 0이 되면 서버 로그아웃 → `/login?next=<보던 화면>&reason=expired` → "로그인이 만료되었습니다" 안내 → 다시 로그인하면 보던 화면으로.
+- 액세스 토큰(5분)이 만료되면 조용히 갱신하고 원래 요청을 다시 보낸다. 갱신 토큰을 두 번 쓰지 않도록 같은 탭은 single-flight, 여러 탭은 Web Locks로 직렬화(잠금을 얻은 뒤 저장소를 다시 읽어 이미 갱신됐으면 건너뜀).
+- 로그아웃은 서버 세션도 끊는다(이 기기만). 내 정보 화면에 **"모든 기기에서 로그아웃"** 버튼(확인 창 뒤 `POST /users/logout-all`). 비밀번호 변경 성공 시 응답의 새 토큰으로 교체.
+- 가입·비밀번호 변경에 **비밀번호 확인 칸**(다르면 서버에 보내지 않음). 아이디 칸 자동 대문자·자동 수정 끔, 안내 문구.
+- `next`는 같은 사이트 경로만 받는다(오픈 리다이렉트 방지).
+
+#### 이유
+- 사용자 결정(6번 B안: 30분 유지 + 남은 시간 타이머 + 만료 예고, 4번: 확인 칸 먼저, 비밀번호 찾기는 이메일·문자 인증으로 나중에).
+
+#### 영향 범위
+- 토큰 저장 키가 바뀌어 기존 로그인 사용자는 한 번 다시 로그인해야 한다(옛 키 `avengers_bank_token`은 지우지 않고 무시).
+- 남은 시간은 서버의 `session_expires_at`을 기기 시계로 계산한다(기기 시계가 틀리면 그만큼 어긋남).
+- 타이머는 `Shell`을 쓰는 화면에만 있다(약관 전문 화면 등에는 없음, 그래도 만료 후 API는 401 흐름으로 처리됨). Web Locks가 없는 환경(비보안 http 출처)에서는 탭 사이 직렬화가 없다.
+
+#### 검증
+- 브라우저: 가입 화면 확인 칸 불일치 → "비밀번호가 일치하지 않습니다."(서버 호출 없음), 약한 비밀번호 → 서버 한국어 문장. 가입 후 타이머 "자동 로그아웃 29:52". 액세스 토큰을 망가뜨리고 내 정보를 열면 정상 표시 + 갱신 토큰 회전 + 세션 시각 갱신. 만료 시각을 100초 뒤로 당기면 예고 창(포커스 [연장]) → 연장 → 30분. 3초 뒤로 당기면 로그인 화면(`next=/me&reason=expired`) + 서버에서도 그 갱신 토큰 폐기 → `UITEST01 `로 다시 로그인 → `/me`로 복귀.
+- `npx tsc --noEmit`, `npx eslint app components lib` 에러·경고 0.
+
+#### 팀 논의 포인트
+- 은행처럼 활동과 무관한 최대 세션 시간을 둘지. 화면에서 기기 시계 보정이 필요한지.
+
+---
+
+### C-087. 액세스 토큰도 즉시 끊기 (요청마다 세션 확인)
+
+- **날짜:** 2026-11-08
+- **분류:** 보안
+- **상태:** 적용
+- **바뀐 파일:**
+  - `core/security.py`: `create_access_token(user_id, session_id)`가 `sid` 클레임을 넣고, `decode_access_token`은 `sid`를 필수로 `(user_id, sid)`를 돌려준다
+  - `users/repository.py` `is_session_active`, `users/service.py` `get_current_user`(그리고 logout·logout_all·change_password 주석)
+  - `tests/test_auth_tokens.py`(5개 추가), `tests/test_users.py`(손으로 만든 토큰에 `sid`, 거절 사례 `no_sid`·`session_not_alive` 추가)
+  - `docs/AUTH.md` 9-1장, `docs/API_ENDPOINTS.md`
+
+#### 변경 전
+- C-083의 순수 B안: 액세스 토큰은 서명·만료만 확인. 로그아웃·모든 기기 로그아웃·비밀번호 변경·재사용 감지 뒤에도 **이미 발급된 액세스 토큰은 최대 5분 더 유효**.
+
+#### 변경 후
+```python
+user_id, session_id = decode_access_token(token)        # sid 필수
+user = await user_repository.find_by_id(db, user_id)
+if user is None or not await user_repository.is_session_active(db, user_id, session_id):
+    raise UnauthorizedException(code="INVALID_TOKEN", ...)  # 끊긴 세션이면 5분이 남았어도 거절
+```
+- `is_session_active`: 그 `family_id`에 폐기되지 않은 갱신 토큰 행이 하나라도 있는가. 회전해도 새 행이 살아 있으므로 세션은 살아 있다. 만료 시각은 보지 않는다(액세스 5분 < 갱신 30분).
+- 5분 만료는 유지(1차 방어이자 안전장치).
+- `sid`가 없는 예전 액세스 토큰은 401 → 프론트가 갱신 토큰으로 새로 받는다(사용자 영향 없음).
+
+#### 이유
+- 사용자 결정: "로그아웃 뒤 5분 유효"는 은행 서비스에서 보안상 위험하다.
+- 순수 JWT의 장점(DB 조회 없음)은 이 프로젝트가 원래 요청마다 사용자를 DB에서 읽고 있어 실익이 작았다. 늘어나는 비용은 인덱스 조회 하나.
+
+#### 영향 범위
+- 요청마다 `refresh_tokens` 조회 1번 추가(`family_id` 인덱스). 액세스 토큰이 "서명된 세션 참조"가 됐다.
+- 나중에 "다른 곳에서 로그인하면 기존 세션 종료"(단일 세션)를 넣으면 그것도 즉시 적용된다.
+
+#### 검증
+- 테스트: 액세스 토큰의 `sid` = 세션 family, 로그아웃 즉시 401(다른 세션은 200), 회전 후에도 같은 세션의 이전 액세스 토큰 동작, 모든 기기 로그아웃·비밀번호 변경 즉시 다른 기기 401(새 세션은 200), 재사용 감지 즉시 401, `sid` 없음·모르는 세션 401. 전체 306개 통과(3 skip).
+- 실행 중인 서버: 두 기기 로그인 → A 로그아웃 뒤 A 401·B 200 → 모든 기기 로그아웃 뒤 B·C 모두 401.
+
+#### 팀 논의 포인트
+- 요청량이 아주 많아지면 세션 확인을 캐시(예: 짧은 TTL의 폐기 목록)로 바꿀 수 있다. 지금 규모에서는 불필요.
+
+---
+
+### C-088. 단일 세션: 다른 곳에서 로그인하면 기존 세션 종료 + 사용자 행 잠금
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · 동시성 · DB 스키마
+- **상태:** 적용 (개발 DB에 마이그레이션 적용)
+- **바뀐 파일:**
+  - `users/models.py` `RefreshToken.revoked_reason` + CHECK 2개, `alembic/versions/2026_11_08_1400-4f2a9c7e1b30_add_refresh_tokens_revoked_reason.py` (새)
+  - `users/repository.py` `lock_user`, 폐기 함수가 이유를 저장
+  - `users/service.py` `login`(다른 세션 폐기), `refresh`(잠금 순서 변경, `SESSION_REPLACED`), `logout`·`logout_all`·`change_password`(사용자 행 잠금)
+  - `frontend/lib/api.ts`(갱신 실패 이유 기억, `reason=replaced`), `frontend/app/login/page.tsx`(안내 문구)
+  - `tests/test_single_session.py` (새, 6개), `tests/test_auth_tokens.py`(`add_other_device` 도우미, 테스트 5개 수정)
+  - `scripts/pg_single_session_concurrency.py` (새), `scripts/pg_refresh_concurrency.py`(대조군에서 사용자 행 잠금도 제거), `scripts/README.md`
+  - `docs/AUTH.md` 9-2장, `docs/API_ENDPOINTS.md`, `docs/ERD.md` 규칙 9
+
+#### 변경 전
+- 같은 아이디로 여러 곳에서 로그인하면 세션이 기기마다 따로 생겨 모두 살아 있었다.
+- (숨은 문제) 다른 기기가 갱신하는 순간 비밀번호 변경·모든 기기 로그아웃을 하면, PostgreSQL READ COMMITTED에서 폐기 UPDATE가 아직 커밋 안 된 새 토큰 행을 못 봐 그 기기가 살아남을 수 있었다.
+
+#### 변경 후
+- 로그인하면 비밀번호 검증 뒤 그 사용자의 살아 있는 갱신 토큰을 모두 폐기(`LOGIN_ELSEWHERE`)하고 새 세션을 만든다. 끊긴 기기의 액세스 토큰은 C-087로 다음 요청부터 401.
+- 끊긴 세션으로 갱신하면 `401 SESSION_REPLACED`("다른 곳에서 로그인되어 로그아웃되었습니다."). 화면은 `/login?reason=replaced`로 보내 "본인이 아니라면 비밀번호를 바꿔 주세요"까지 안내.
+- 폐기 이유 저장: `ROTATED`, `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_CHANGED`, `REUSE_DETECTED`, `LOGIN_ELSEWHERE`.
+- 세션을 바꾸는 모든 작업이 **users 행 → refresh_tokens** 순서로 잠근다. 갱신은 토큰 행을 먼저 잠그던 것을 "토큰을 잠금 없이 찾기 → users 잠금 → 토큰 다시 잠그기"로 바꿔 순서를 맞췄다(데드락 방지). 로그인은 틀린 비밀번호 요청이 사용자 행을 붙잡지 않게 검증 뒤에 잠근다.
+
+#### 이유
+- 사용자 결정(단일 세션 도입). 내 계정에 누가 들어와 있어도 내가 로그인하면 끊기고, 반대로 누가 로그인하면 내가 알게 된다.
+- 아직 없는 행은 잠글 수 없어서, 같은 사용자의 세션 작업을 사용자 행 하나로 줄 세운다.
+
+#### 영향 범위
+- 같은 사용자가 두 기기를 동시에 쓸 수 없다(정책). 같은 브라우저의 여러 탭은 같은 세션이라 영향 없음.
+- 마이그레이션 전에 폐기된 행은 이유가 NULL이라 `INVALID_REFRESH_TOKEN`으로 처리된다.
+- 같은 사용자의 로그인·갱신·로그아웃이 사용자 행에서 줄을 선다(사용자 단위라 영향 작음). 비밀번호 변경은 argon2 검증 동안 잠금을 잡는다.
+- 끊긴 기기는 **다음 요청 때** 알게 된다(화면을 그냥 열어 두면 타이머가 0이 되거나 무언가를 누를 때까지 모름).
+- 기존 테스트 중 "같은 사용자로 두 번 로그인해 두 기기를 흉내 내던" 5개는 DB에 다른 기기 세션을 직접 넣는 도우미로 바꿨다(기대 동작은 그대로).
+
+#### 검증
+- 테스트: 두 번째 로그인 후 첫 세션 갱신 `SESSION_REPLACED`·액세스 401, 다른 사용자 영향 없음, 폐기 이유 6종, 로그아웃·비밀번호 변경으로 끊긴 세션은 `INVALID_REFRESH_TOKEN`. 전체 312개 통과(3 skip).
+- **PostgreSQL** `pg_single_session_concurrency.py`: 10곳 동시 로그인 → 살아 있는 세션 1개, 각 기기 갱신은 1곳 OK·9곳 `SESSION_REPLACED`. 갱신 ↔ 다른 곳 로그인 동시 15라운드 → 매번 1개만 생존. 대조군(사용자 행 잠금 제거) → 10개 모두 생존. `pg_refresh_concurrency.py`도 다시 통과.
+- 브라우저: 브라우저에서 로그인 → 셸에서 같은 아이디로 로그인 → 브라우저에서 내 정보를 누르자 `/login?next=/me&reason=replaced`와 안내 문구.
+
+#### 팀 논의 포인트
+- 아이디 단위 실패 한도는 C-089에서 아이디별 속도 제한으로 적용(믿을 수 있는 기기 예외는 9번 쿠키 전환 때).
+- 끊긴 기기에 즉시 알리려면 주기적 확인(폴링)이나 푸시가 필요하다.
+
+---
+
+### C-089. 아이디별 속도 제한: 계정을 잠그지 않고 느리게
+
+- **날짜:** 2026-11-08
+- **분류:** 보안
+- **상태:** C-090에서 대체 (복구 절차가 생겨 국내 규정대로 5회 잠금으로 바꿈)
+- **바뀐 파일:**
+  - `core/login_limiter.py`: `MAX_FAILURES_PER_ID = 10`, `SLOW_INTERVAL_SECONDS = 30`, 키 `("id", 아이디)`, `_last_slowed_attempt`
+  - `tests/test_login_limiter_concurrency.py` (4개 추가)
+  - `docs/AUTH.md` 6-1장, `docs/API_ENDPOINTS.md`
+
+#### 변경 전
+- 한도는 "아이디+IP 15분 5회"와 "IP 15분 20회"뿐. 공격자가 IP를 바꿔 가며 한 아이디를 찌르면 막지 못했다.
+
+#### 변경 후
+- IP와 상관없이 한 아이디가 15분에 10번 틀리면, 그 아이디는 **마지막 시도(성공 포함)로부터 30초가 지나야** 한 번 더 시도 가능. 그 전에는 429 `TOO_MANY_LOGIN_ATTEMPTS` + `Retry-After`.
+- 검증 전에 먼저 기록하는 기존 방식(C-082)을 그대로 따라 동시 요청으로 우회할 수 없다.
+- 주인이 성공해도 공격자가 쌓은 실패 기록은 그대로(이번 시도만 뺌).
+
+#### 이유
+- 사용자 결정(A안: 아이디별 속도 제한 지금, B안: 믿을 수 있는 기기 예외는 9번 쿠키 전환 때).
+- "N번 틀리면 잠금"은 공격자가 일부러 틀려서 진짜 사용자를 못 들어오게 하는 잠금 공격이 가능하다. 느리게만 하면 주인은 최대 30초 기다리고, 공격자는 아이디당 분당 2번으로 묶인다.
+- 처음 구현은 30초를 "마지막 실패" 기준으로 쟀다. 테스트에서 주인이 성공한 직후 공격자가 바로 다음 시도를 할 수 있는 구멍이 드러나 "마지막 시도(성공 포함)" 기준으로 고쳤다.
+
+#### 영향 범위
+- 공격받는 아이디의 주인도 새 기기에서는 최대 30초를 기다릴 수 있다(B안으로 해소 예정).
+- 프로세스 메모리 기반이라는 기존 한계(재시작 시 초기화, 워커 1개 전제)는 같다.
+
+#### 검증
+- IP 5곳에서 2번씩 틀린 뒤 처음 보는 IP에서도 429(`Retry-After` 1~30). 30초 뒤 주인은 맞는 비밀번호로 200, 그 직후 공격 시도는 다시 429.
+- 대기 중 10개 IP 동시 시도 → 모두 429. 30초 뒤 10개 IP 동시 시도 → 정확히 1개만 검증(401)·9개 429. 다른 아이디는 영향 없음.
+- 실행 중인 서버로는 확인하지 못했다(로컬 요청은 모두 같은 IP라 아이디+IP 한도에 먼저 걸림). IP를 나눈 ASGI 테스트로 확인.
+
+#### 팀 논의 포인트
+- 기준(10회, 30초)은 정책값이다. 은행처럼 5회 오류 시 추가 인증(C안)은 문자·이메일 연동 때.
+
+---
+
+### C-090. 은행식 로그인 잠금: 5회 연속 오류 → 잠금 (DB, 원자적 선증가)
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · 동시성 · DB 스키마
+- **상태:** 적용 (C-082의 아이디+IP 한도와 C-089의 아이디별 느리게를 대체)
+- **바뀐 파일:**
+  - `users/models.py`(`failed_login_count`, `login_locked_at`), `users/repository.py`(`count_login_attempt`, `lock_login`, `unlock_login`), `users/service.py`(`login`, `change_password`, `_busy`)
+  - `core/login_limiter.py`: IP 한도만 남긴 `IpLimiter`(로그인 20회, 인증번호 발송 10회)
+  - `admin.py` (새, `unlock`·`reset-password`), 개발용 `POST /dev/users/{login_id}/unlock`
+  - 마이그레이션 `6b7c8d9e0f1a`(C-091과 함께)
+  - `tests/test_login_lock.py`(새), `tests/test_login_limiter_concurrency.py`·`tests/test_users.py`(새 정책으로 교체), `scripts/pg_login_lock_concurrency.py`(새)
+
+#### 변경 전
+- 메모리 한도: 아이디+IP 15분 5회(C-082), IP 20회, 아이디별 15분 10회 후 30초에 1회(C-089). 잠그지 않음. 재시작하면 초기화.
+
+#### 변경 후
+- 같은 아이디로 **5회 연속** 틀리면 `login_locked_at` 설정 → 맞는 비밀번호도 403 `ACCOUNT_LOCKED`. 해제는 비밀번호 찾기(C-093)·관리자 명령·개발용 API.
+- 검증 **전에** `UPDATE … SET failed_login_count = failed_login_count + 1 WHERE … AND login_locked_at IS NULL AND failed_login_count < 5 RETURNING`을 자기 트랜잭션으로 커밋(롤백 불가). 성공하면 0으로.
+- 결과가 없을 때: 잠겼으면 403, 잠기지 않았는데 동시 요청들이 5번을 가져가 검증 중이면 **429 `TOO_MANY_LOGIN_ATTEMPTS`**(통합 중 수정: 처음엔 403이라 맞는 비밀번호를 동시에 6번 보낸 사용자에게 "잠김"이라는 틀린 안내가 나갔다).
+- 비밀번호 변경의 현재 비밀번호 오류도 같은 카운터. 메모리 한도는 IP 15분 20회만.
+
+#### 이유
+- 조사 결과(전자금융감독규정 제33조 ②항 3호: 5회 이내 거래 중지 + 본인확인 후 재부여). 복구 절차(C-093)가 생겨 잠금 공격의 피해가 줄었다(OWASP: 잠긴 계정도 복구는 쓸 수 있게).
+- DB 원자적 증가는 서버 재시작·여러 대에서도 정확하다(메모리 한도의 한계 해소).
+
+#### 영향 범위
+- 아이디만 알면 누구나 5번 틀려 잠글 수 있다(정책상 수용, 본인은 복구로 해제). 403은 있는 아이디에서만 나와 아이디 존재가 드러난다.
+- 잠겨도 이미 있는 세션은 끊지 않는다.
+
+#### 검증
+- 30곳 동시 오답 → 검증 정확히 5번, 401 4개 + 나머지 403/429, 잠김, 맞는 비밀번호도 403. PostgreSQL 같은 결과, 대조군(읽고 나중에 쓰기) 30번 검증.
+
+---
+
+### C-091. 휴대폰 인증번호 구조 + 가입·번호 변경 시 휴대폰 확인
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · DB 스키마 · API
+- **상태:** 적용 (실제 문자 발송은 아직 없음, 개발용 문자함)
+- **바뀐 파일:**
+  - `domains/verification/` (새): `models.py`(`verification_codes`), `sms.py`(발송기·개발용 문자함), `service.py`(`start_verification`, `verify_code`, `consume_verification`, `send_notice`), `router.py`, `dev.py`(`GET /dev/sms`)
+  - `users/models.py`(`phone_verified_at`), `users/schemas.py`·`service.py`(가입·번호 변경 증표)
+  - `core/config.py`(`sms_sender: Literal["dev"]`), 마이그레이션 `6b7c8d9e0f1a`
+  - `tests/test_verification.py`(새), `tests/verification_helpers.py`, `tests/conftest.py`(가입 자동 인증 `auto_phone_verification`)
+
+#### 변경 후
+- `POST /verification/phone/send`(SIGNUP_PHONE), `/send-for-me` 🔒(CHANGE_PHONE, ACCOUNT_PASSWORD_RESET), `/verify` → 10분짜리 증표.
+- 6자리, 10분, 5회, 1회성. 저장은 **HMAC-SHA256(서버 키, id + 코드)**(6자리는 경우의 수가 100만이라 그냥 해시면 DB 유출 시 역산됨). 틀린 시도는 비교 전에 먼저 셈.
+- 1회성은 DB 조건 UPDATE(`consumed_at IS NULL`)로 보장, 용도·번호·사용자는 DB 행으로 판정.
+- 발송 제한: 같은 번호 15분 3번(DB, PostgreSQL advisory lock으로 동시 요청 직렬화), IP 15분 10번.
+- 가입은 `phone_verification_token` 필수, 내 정보에서 번호를 바꿀 때만 증표 필요(없으면 400 `PHONE_VERIFICATION_REQUIRED`).
+
+#### 이유
+- 복구 문자를 보낼 번호가 진짜 그 사람 것이어야 한다(NIST: 미리 검증한 주소만 복구에 사용). 실제 문자 업체 계약이 없어 발송기만 바꿔 끼우는 구조로.
+
+#### 영향 범위
+- 기존 사용자는 `phone_verified_at`이 NULL(복구 자체가 그 번호로 인증번호를 받는 과정이라 동작에 문제 없음).
+- 테스트의 모든 가입은 conftest가 자동 인증(약관 자동 첨부와 같은 방식, 끌 수 있음).
+
+#### 검증
+- 발송·확인·만료·5회·1회성·용도 불일치·HMAC 저장·발송 제한(재시작 유지). PostgreSQL에서 같은 번호 동시 8번 → 3번만 발송.
+
+---
+
+### C-092. 계좌 비밀번호 (숫자 4자리, 돈이 나가는 곳 전부, 5회 잠금)
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · DB 스키마 · API
+- **상태:** 적용
+- **바뀐 파일:**
+  - `accounts/password.py` (새: `validate_account_password_format`, `check_account_password`, `verify_account_password`, `set_account_password`, `reset_account_password`), `accounts/models.py`(`AccountPasswordMixin`), `schemas.py`, `service.py`, `router.py`(`POST /accounts/{type}/{id}/password`), `dev.py`
+  - `transfers/`, `cards/`(청구서 납부 `BillPaymentCreate`), `agent/`(확인 본문 `DraftConfirmRequest`, 프롬프트에 "비밀번호를 대화로 묻지 말 것", `TransferAction.from_account_id`)
+  - 마이그레이션 `5a6b7c8d9e0f`, `tests/test_account_password.py`(새), `tests/conftest.py`(`auto_account_password`)
+  - `scripts/_common.py`·PG 스크립트 5개(계좌 비밀번호 반영), `scripts/pg_account_password_concurrency.py`(새)
+
+#### 변경 후
+- 계좌 3종 개설에 필수 `account_password`(숫자 4자리, 동일·연속 숫자 금지). 예금은 추가로 `from_account_password`(출금 계좌).
+- 필수 `account_password`: `POST /transfers`, `/transfers/savings`, 해지, 카드 청구서 납부, AI 이체 확인. 체크카드 결제는 제외(카드 PIN 영역).
+- 400 `ACCOUNT_PASSWORD_INCORRECT`(N/5) → 5번째 403 `ACCOUNT_PASSWORD_LOCKED`. 400 `ACCOUNT_PASSWORD_NOT_SET`(기존 계좌).
+- **그 계좌 행만 잠그고 비밀번호만 검사하는 짧은 트랜잭션을 먼저 커밋**한 뒤, 맞을 때만 본 작업. 실패 횟수가 본 작업 롤백에 휩쓸려 사라지지 않게(사라지면 무한 대입 가능).
+- 계좌 응답에 `password_set`, `password_locked`. 설정·재설정은 로그인 + 휴대폰 인증번호(ACCOUNT_PASSWORD_RESET).
+
+#### 이유
+- 사용자 결정(은행형 복구의 "아는 것" + 이체 시에도 요구). 감독규정 제33조 ②항 1·3호.
+
+#### 영향 범위
+- **하위 호환이 깨진다:** 계좌 개설·돈이 나가는 모든 요청에 새 필수 필드. 기존 계좌는 비밀번호를 먼저 설정해야 돈을 보낼 수 있다.
+- 돈이 나가는 요청마다 짧은 트랜잭션 + argon2 약 50ms 추가. 검증과 본 작업 사이에 다른 요청이 계좌를 잠가도 이미 통과한 요청은 진행(맞는 비밀번호를 알아야만 통과하므로 대입엔 못 씀).
+- 계좌번호를 아는 사람은 틀린 비밀번호로 계좌를 잠글 수 있다(로그인 잠금과 같은 대가, 본인은 로그인 + 휴대폰으로 해제).
+
+#### 검증
+- 형식 규칙, 6곳 각각 N/5·잠금·잠긴 뒤 맞는 비밀번호도 403·성공 시 0, **실패 횟수가 DB에 남는지**. PostgreSQL: 틀린 비밀번호 이체 20개 동시 → 검증 정확히 5번 → 잠김, 대조군 20번. 기존 PG 스크립트 11개 모두 계좌 비밀번호 반영 후 통과.
+
+---
+
+### C-093. 계정 복구: 아이디 찾기·비밀번호 찾기·계좌 비밀번호 재설정
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · API
+- **상태:** 적용. 설계 근거는 `docs/ACCOUNT_RECOVERY_RESEARCH.md`
+- **바뀐 파일:**
+  - `domains/recovery/` (새: `router.py`, `service.py`), `verification/router.py`(send-for-me의 ACCOUNT_PASSWORD_RESET, phone 생략), `accounts/repository.py`(`lock_checking_by_account_num`), `main.py`
+  - `tests/test_recovery.py`(새)
+
+#### 변경 후
+- `POST /recovery/start` `{purpose, login_id?, account_num, account_password}` → **항상 같은 200**(같은 문구·같은 모양·비슷한 응답 시간). 맞을 때만 등록 휴대폰으로 인증번호. 틀린 계좌 비밀번호는 그 계좌의 실패 횟수로 셈. 번호당 발송 제한에 걸려도 같은 200(문자만 안 보냄).
+- `recovery_token`은 `ref = vid XOR HMAC(서버 키, nonce)`로 봉인한 JWT라 진짜·가짜가 구별되지 않는다. 가짜 토큰의 인증번호 오류도 진짜와 같이 (1/5)…(5/5) 후 만료(가짜 횟수는 메모리 — `ponytail:` 표시).
+- `POST /recovery/verify`: 아이디 찾기는 `masked_login_id`(앞 2자 + 끝 1자) + 전체 아이디 문자, 비밀번호 찾기는 `reset_token`.
+- `POST /recovery/password`: 1회성 소비, 가입 규칙·아이디와 다름·현재와 다름(`SAME_PASSWORD`). 성공하면 **잠금 해제·실패 0·모든 세션 폐기·알림 문자·자동 로그인 없음**. 만료·사용된 증표는 400 `INVALID_VERIFICATION_TOKEN`.
+- 계좌 비밀번호 설정·재설정: `POST /accounts/{type}/{id}/password` 🔒 `{phone_verification_token, new_account_password}`(처음 설정 겸용, 잠금 해제 포함, 알림 문자).
+- 계좌가 없거나 두 비밀번호를 모두 잊으면 온라인 복구 불가 → 관리자 명령(고객센터 흉내).
+
+#### 이유
+- 조사 결과: 국내 은행은 계좌 + 휴대폰 두 요소, NIST는 이메일 단독 인증 금지·복구 알림 필수, OWASP는 응답 동일화·자동 로그인 금지·세션 무효화.
+
+#### 영향 범위
+- 정보가 맞는 경로는 사용자 조회·발송 트랜잭션만큼 몇 ms 더 걸린다(argon2 약 70ms보다 훨씬 작음).
+- 정상 사용자가 15분에 3번을 넘기면 문자 없이 같은 문구만 본다 → 화면 문구에 "문자가 오지 않으면 15분 뒤 다시"를 넣음.
+- `reset_token`(verification 증표) 본문에 등록 휴대폰·사용자 번호가 보인다(이미 세 요소를 증명한 뒤라 수용).
+
+#### 검증
+- 테스트 13개(응답 동일성: 계좌 없음·비밀번호 틀림·잠김·미설정 모두 같은 응답, 가짜 토큰 오류 6개 동일, 1회성, 잠금 해제 전체 흐름, 세션 폐기, 남의 아이디+내 계좌 실패 등). 전체 pytest 통과.
+- 브라우저: 휴대폰 인증 가입 → 계좌 개설(계좌 비밀번호, 연속 숫자 거부) → 이체(1/5 후 성공) → 5회 오류로 잠김(맞는 비밀번호도 거절, "비밀번호 찾기" 안내) → 비밀번호 찾기(개발용 문자함으로 인증번호) → 재설정 → 알림 문자, 새 비밀번호로 로그인, 옛 비밀번호 401. 아이디 찾기 → `re*******1` + 전체 아이디 문자, 틀린 계좌 비밀번호와 응답 문구·토큰 길이 동일.
+
+#### 팀 논의 포인트
+- 실제 문자 업체(솔라피·NHN Cloud 등) 연동 시점. 가짜 토큰 횟수·IP 한도는 프로세스 메모리(서버 여러 대면 공유 저장소).
+
+---
+
+### C-094. 화면: 휴대폰 인증·계좌 비밀번호·아이디/비밀번호 찾기·해지
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (프론트)
+- **상태:** 적용 (브라우저에서 주요 흐름 확인)
+- **바뀐 파일:**
+  - `frontend/components/verify.tsx` (새: `CodeVerify`, `PhoneVerify`, 개발용 문자함), `components/account-password.tsx` (새: 4자리 입력, 규칙 검사, 오류별 안내 링크 `MoneyErrorText`)
+  - `frontend/app/find-id/page.tsx`, `app/reset-password/page.tsx` (새)
+  - `app/login`(잠김 안내 + 비밀번호 찾기, 아이디·비밀번호 찾기 링크, `reason=reset`), `app/signup`(휴대폰 인증), `app/me`(번호 변경 인증), `app/open/...`(계좌 비밀번호·출금 계좌 비밀번호), `app/transfer`, `app/accounts/[type]/[id]`(적금 납입, **해지 화면 신설**, 계좌 비밀번호 설정·재설정), `app/cards/[type]/[id]`(청구서 납부), `components/assistant/TransferCard.tsx`, `lib/api.ts`
+
+#### 변경 후
+- 가입: 번호 → 인증번호 → 확인해야 가입 버튼이 켜짐(번호를 바꾸면 다시 인증). 내 정보: 번호를 바꿀 때만 인증.
+- 인증번호 입력칸 옆 **"개발용 문자함 보기"**(개발 모드에서만 나타남).
+- 계좌 비밀번호 입력은 6곳 모두, 오류별 안내(미설정 → 설정, 잠김 → 휴대폰 인증 후 재설정, 틀림 → N/5). 계좌 비밀번호는 입력값 보존(sessionStorage 초안)에 넣지 않는다.
+- 계좌 상세의 "계좌 비밀번호 설정/재설정"(휴대폰 인증 → 새 비밀번호 + 확인), 오류 링크로 들어오면 자동으로 펼침.
+- 아이디 찾기·비밀번호 찾기 화면, 하단에 "입출금 계좌가 없으시면 고객센터로 문의".
+
+#### 검증
+- `npx tsc --noEmit`, `npx eslint` 에러 0. 브라우저 확인은 C-093 검증 참고.
+- **하지 않은 것:** 번호 변경 인증, 해지 화면, 카드대금 납부, AI 이체 확인 카드의 계좌 비밀번호 입력은 브라우저로 직접 눌러 보지 않았다(코드·테스트만).
+
+---
+
 ## 부록 A. 초기 리뷰(2026-11-04) 항목 처리 현황
 
 처음 코드 리뷰에서 나온 9개 항목의 처리 결과다. 취소선은 처리 완료이고 오른쪽이 처리한 항목 번호다. **9개 모두 처리됐다**(9번은 보류했다가 C-026에서 처리).
@@ -3966,6 +4445,19 @@ POST /transfers/deposit 삭제 (404). 예금 가입 후 추가 입금 불가, �
 | C-079 | 2026-11-08 | API | 예금 가입 금액 필수화, 가입 후 추가 입금 금지(`POST /transfers/deposit` 삭제) | 적용 |
 | C-080 | 2026-11-08 | DB 스키마 | 예금 상품별 최소 가입 금액 `account_products.min_amount` | 적용 |
 | C-081 | 2026-11-08 | 문서 | 예금 약관 1.1.0 개정(가입 금액·최소 금액·추가 입금 불가) + 발행·색인 | 적용 |
+| C-082 | 2026-11-08 | 보안 | 로그인 실패 한도를 동시 요청으로 우회하던 버그 수정(검증 전에 시도를 먼저 셈) | 적용 |
+| C-083 | 2026-11-08 | 보안 | 액세스 토큰 5분 + 갱신 토큰(회전·재사용 감지, 해시 저장) 세션 구조 | 적용 |
+| C-084 | 2026-11-08 | API | 아이디 정규화, 이름·휴대폰·비밀번호(영문·숫자·특수문자) 입력 검증 | 적용 |
+| C-085 | 2026-11-08 | API | 422 입력 오류 메시지를 한국어 완성 문장으로 | 적용 |
+| C-086 | 2026-11-08 | 구조 | 화면: 세션 타이머·자동 갱신·만료 처리, 비밀번호 확인 칸 | 적용 |
+| C-087 | 2026-11-08 | 보안 | 액세스 토큰에 세션 번호(`sid`)를 넣고 요청마다 세션 확인 → 로그아웃 등 즉시 적용 | 적용 |
+| C-088 | 2026-11-08 | 보안 | 단일 세션(다른 곳 로그인 시 기존 세션 종료, `SESSION_REPLACED`) + 세션 작업의 사용자 행 잠금 | 적용 |
+| C-089 | 2026-11-08 | 보안 | 아이디별 속도 제한(IP와 무관하게 15분 10회 실패 후 30초에 1회, 잠그지 않음) | C-090에서 대체 |
+| C-090 | 2026-11-08 | 보안 | 은행식 로그인 잠금(5회 연속 → 잠금, DB 원자적 선증가, 동시 요청은 429) | 적용 |
+| C-091 | 2026-11-08 | 보안 | 휴대폰 인증번호 구조(HMAC 저장·1회성·발송 제한·개발용 문자함) + 가입·번호 변경 확인 | 적용 |
+| C-092 | 2026-11-08 | 보안 | 계좌 비밀번호(숫자 4자리, 돈이 나가는 곳 전부, 5회 잠금, 실패 횟수 커밋 보장) | 적용 |
+| C-093 | 2026-11-08 | 보안 | 계정 복구: 아이디 찾기·비밀번호 찾기·계좌 비밀번호 재설정(응답 동일화) | 적용 |
+| C-094 | 2026-11-08 | 구조 | 화면: 휴대폰 인증·계좌 비밀번호 입력·찾기 화면·해지 화면 | 적용 |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`
