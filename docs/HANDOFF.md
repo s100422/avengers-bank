@@ -3,7 +3,7 @@
 다음 세션이 이 문서부터 읽고 이어서 작업한다. 끝난 작업의 상세는 [DESIGN_CHANGES.md](DESIGN_CHANGES.md)(C-0xx), 인증 구조는 [AUTH.md](AUTH.md), 계정 복구 조사는 [ACCOUNT_RECOVERY_RESEARCH.md](ACCOUNT_RECOVERY_RESEARCH.md).
 
 ## 1. 지금 상태
-- `main` 브랜치, **푸시 안 함**. C-082~C-095(인증 재작업·회원 탈퇴)는 커밋됨. **C-096(쿠키 전환 + 기기 등록)은 구현·검증을 마쳤지만 아직 커밋 안 함**(`git status`로 확인, 약 40개 파일). 커밋은 사용자가 원할 때.
+- `main` 브랜치, C-082~C-096 모두 커밋하고 **GitHub(origin/main)에 푸시함**(2026-11-09, C-096 코드 커밋 + 문서 커밋).
 - 개발 DB(PostgreSQL 127.0.0.1:5435) 마이그레이션 head: `9e0f1a2b3c4d`(user_devices까지 적용됨).
 - 테스트: `453 passed, 3 skipped`. PostgreSQL 동시성 스크립트: 이번에 `device_channel`·`refresh`·`single_session`·`login_lock`·`deposit_open` 5개를 다시 돌려 통과(나머지 스크립트는 이번 변경과 무관해 다시 안 돌림).
 - PC를 다시 켜면 Docker Desktop(`%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe`)과 DB 컨테이너(`docker compose up -d --wait`)를 먼저 올려야 한다.
@@ -13,7 +13,7 @@
 ### 회원 탈퇴 (C-095)
 조건(예금·적금 해지, 입출금 잔액 0, 카드 미결제 없음) → 비밀번호 + 휴대폰 인증 → 소프트 삭제(가림·계좌 닫기·카드 해지·세션 폐기, 거래 기록 보존, 재가입 불가). 법적 보존 기간·개인정보 보관 범위는 확인 필요.
 
-### 토큰 쿠키 전환 + 기기 등록 (C-096, 커밋 전)
+### 토큰 쿠키 전환 + 기기 등록 (C-096)
 - 갱신 토큰은 `httpOnly; Secure; SameSite=Strict; Path=/api/users` 쿠키(`refresh_token`), JSON 본문에 없음. `refresh`·`logout`은 본문 없이 쿠키만 읽고 **`Origin` 필수**(없거나 목록 밖이면 403 `CSRF_ORIGIN`). 액세스 토큰은 프론트 **메모리**에만, `localStorage`(`avengers_bank_session`)에는 `session_expires_at`만. 새로고침하면 쿠키로 조용히 갱신.
 - 프론트는 Next.js `rewrites`로 `/api/*`를 FastAPI에 프록시한다(`next.config.ts`, 서버 환경변수 `API_ORIGIN`, 기본 `http://127.0.0.1:8000`). **프론트와 API를 같이 띄워야 하고, 프론트 환경변수 `NEXT_PUBLIC_API_BASE_URL`은 없어졌다.**
 - 기기 등록(B1): 새 기기 로그인 = 비밀번호 → `DEVICE_VERIFICATION_REQUIRED` 챌린지 → `POST /users/login/device/send` → 문자 인증(`/verification/phone/verify`) → `POST /users/login/device`. 통과하면 1년짜리 `device_token` 쿠키(서버엔 SHA-256)가 생긴다. 실패 카운터는 **등록 기기 / 새 기기 채널을 따로** 센다(각 5회 연속 오류 → 잠금). 내 정보에 기기 목록·해제. 비밀번호 재설정(복구)·탈퇴는 기기 전부 해제, 비밀번호 변경은 유지. 최종 API 계약은 DESIGN_CHANGES C-096 "구현에서 정해진 세부".
@@ -21,7 +21,6 @@
 - 브라우저로 확인한 것: 새 기기 인증 로그인, `document.cookie` 비어 있음, 새로고침 뒤 자동 갱신, 로그아웃 뒤 갱신 401, 같은 브라우저 재로그인은 인증번호 없이 통과, 기기 목록 표시.
 
 ## 3. 남은 일 · 결정 대기
-- **C-096 커밋**(사용자 확인 후). 푸시는 따로 묻는다.
 - **미확인:** 내 정보 화면의 기기 **해제 버튼 동작**(눌러 보지 않음), `npm run build` 실패(`/find-id` 프리렌더에서 `components/verify.tsx:35`의 `useState(Date.now)` → `blocking-prerender-current-time-client`. 이번에 건드린 파일이 아니고 이전부터인지 확인 못 함).
 - **사용자와 정할 것(C-096 논의 포인트):** 공용 PC용 "이 기기 등록 안 함" 선택, 기기 개수 상한·오래된 기기 정리(지금은 재등록할 때마다 행이 쌓임), "5회 이내 거래 중지"를 채널별로 적용한 해석이 규정 취지에 맞는지, Safari의 Secure 쿠키(http에서 저장 안 함 → 개발은 Chrome 또는 `COOKIE_SECURE=false`), 챌린지 JWT를 1회용(jti 저장)으로 할지.
 - 갱신 쿠키 `Path=/api/users`는 `/api/users/*` 전체에 붙는다(갱신·로그아웃만으로 좁히지 못함: 두 경로의 공통 접두사). 필요하면 쿠키를 둘로 나눈다.
