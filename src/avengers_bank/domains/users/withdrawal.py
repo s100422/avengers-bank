@@ -10,7 +10,7 @@
   보존 기간(예: 5년)과 기간이 지난 뒤 파기 절차는 법 확인 필요 — 지금은 지우는 작업이 없다.
 - 닫는다: 입출금 계좌(closed_at) — 남이 이 계좌로 이체하면 돈이 묶이므로 없는 계좌처럼 거절한다(accounts/service.py
   require_open). 카드는 신용·체크 모두 CLOSED — 탈퇴 회원의 카드로 결제가 일어나지 않게.
-- 끊는다: 모든 갱신 토큰 폐기(WITHDRAWN). 액세스 토큰도 다음 요청부터 401(세션 확인 C-087 + deleted_at 확인).
+- 끊는다: 모든 갱신 토큰 폐기(WITHDRAWN)와 등록 기기 해제. 액세스 토큰도 다음 요청부터 401(세션 확인 C-087 + deleted_at 확인).
 - 지운다: AI 대화·메시지·이체 초안(개인 대화이고 거래 기록이 아니다), 인증번호 행(이번 탈퇴 인증 포함 — 소비한 뒤).
 
 잠금 순서 (docs/ERD.md 규칙 9): users → 입출금 계좌(ID 오름차순) → 예금·적금 → 카드 → (갱신 토큰 폐기).
@@ -34,7 +34,7 @@ from avengers_bank.domains.cards.kinds import KINDS as CARD_KINDS
 from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.repository import user_repository
 from avengers_bank.domains.users.schemas import UserResponse, WithdrawalBlocker
-from avengers_bank.domains.users.service import MAX_LOGIN_FAILURES, _busy, _locked
+from avengers_bank.domains.users.service import MAX_LOGIN_FAILURES, _busy, _locked, user_service
 from avengers_bank.domains.verification.models import VerificationCode
 from avengers_bank.domains.verification.service import consume_verification
 
@@ -129,7 +129,10 @@ async def _erase(db: AsyncSession, user: User, rows: dict[str, list]) -> None:
     user.hashed_password = WITHDRAWN_PASSWORD_HASH
     user.failed_login_count = 0
     user.login_locked_at = None
+    user.device_failed_login_count = 0
+    user.device_login_locked_at = None
     await user_repository.revoke_user_refresh_tokens(db, user.user_id, now, "WITHDRAWN")
+    await user_repository.revoke_user_devices(db, user.user_id, now)
 
     no_sync = {"synchronize_session": False}
     conversations = select(AgentConversation.conversation_id).where(AgentConversation.user_id == user.user_id)
@@ -147,17 +150,22 @@ async def _erase(db: AsyncSession, user: User, rows: dict[str, list]) -> None:
     )
 
 
-async def withdraw(db: AsyncSession, current_user: UserResponse, current_password: str, phone_verification_token: str) -> None:
+async def withdraw(
+    db: AsyncSession, current_user: UserResponse, current_password: str, phone_verification_token: str,
+    raw_device_token: str | None = None,
+) -> None:
     uid = current_user.user_id
     # 0) 막는 사유가 있으면 비밀번호를 세기 전에 알린다(잠그지 않은 미리 보기). 잠근 뒤 아래에서 다시 검사한다
     async with db.begin():
         blockers = _blockers(await _load(db, uid, lock=False))
     if blockers:
         raise _blocked(blockers)
-    # 1) 비밀번호 틀림은 로그인과 같은 DB 카운터로 센다(users/service.py change_password와 같은 선증가, 먼저 커밋)
+    # 1) 비밀번호 틀림은 로그인과 같은 DB 카운터로 센다(users/service.py change_password와 같은 선증가, 먼저 커밋).
+    #    채널도 같다: 요청의 기기 쿠키가 등록 기기면 등록 기기 카운터, 아니면 새 기기 카운터
     async with db.begin():
-        count = await user_repository.count_login_attempt(db, uid, MAX_LOGIN_FAILURES)
-        locked = count is None and (await user_repository.find_by_id(db, uid)).login_locked_at is not None
+        device = await user_service._is_registered_device(db, uid, raw_device_token)
+        count = await user_repository.count_login_attempt(db, uid, MAX_LOGIN_FAILURES, device)
+        locked = count is None and (await user_repository.find_by_id(db, uid)).login_locked(device)
     if count is None:
         raise _locked() if locked else _busy()
 
@@ -166,17 +174,17 @@ async def withdraw(db: AsyncSession, current_user: UserResponse, current_passwor
         user = await user_repository.lock_user(db, uid)  # users 먼저 (같은 사용자의 로그인·갱신과 한 줄로)
         if user is None or user.deleted_at is not None:
             raise _invalid_token()
-        if user.login_locked_at is not None:
+        if user.login_locked(device):
             raise _locked()
         if not await run_in_threadpool(verify_password, current_password, user.hashed_password):
             # 잠금·카운트를 커밋해야 하므로 여기서 raise하지 않는다(raise하면 begin()이 롤백한다)
             if count >= MAX_LOGIN_FAILURES:
-                await user_repository.lock_login(db, uid, datetime.now(timezone.utc), MAX_LOGIN_FAILURES)
+                await user_repository.lock_login(db, uid, datetime.now(timezone.utc), MAX_LOGIN_FAILURES, device)
                 error = _locked()
             else:
                 error = BadRequestException(code="INVALID_CURRENT_PASSWORD", message="현재 비밀번호가 올바르지 않습니다.")
         else:
-            user.failed_login_count = 0  # 비밀번호는 맞았다: 아래가 막혀도 이것은 커밋한다
+            user.reset_login_failures(device)  # 비밀번호는 맞았다: 아래가 막혀도 이것은 커밋한다
             rows = await _load(db, uid, lock=True)  # 잠근 뒤 검사 (규칙 9)
             if blockers := _blockers(rows):
                 error = _blocked(blockers)  # 미리 보기와 잠금 사이에 입금 등이 끼어들었다

@@ -6,6 +6,9 @@ import re
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-test-secret-key-0000"
 os.environ["ENABLE_DEV_ENDPOINTS"] = "true"  # /dev/... 충전 API 테스트용
+# 테스트 클라이언트는 http://test로 부르고 경로에 /api 프록시가 없다: Secure 쿠키는 http로 안 가고 Path도 안 맞는다
+os.environ["COOKIE_SECURE"] = "false"
+os.environ["REFRESH_COOKIE_PATH"] = "/users"
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -20,7 +23,10 @@ from avengers_bank.core.login_limiter import login_limiter, verification_ip_limi
 from avengers_bank.domains.verification.sms import dev_inbox
 from avengers_bank.main import app
 from tests.terms_helpers import OPEN_PATHS, agree_all
-from tests.verification_helpers import auto_signup_token
+from tests.verification_helpers import auto_device_login, auto_signup_token
+
+
+ORIGIN = "http://localhost:5173"  # 기본 CORS_ORIGINS에 들어 있는 값
 
 
 @pytest.fixture
@@ -41,6 +47,9 @@ class BankClient(AsyncClient):
     # 휴대폰 인증(C-090): 가입 요청에 phone_verification_token이 없으면 발송 → 개발용 문자함 → 확인을 거쳐 붙인다.
     # 이 자동 인증은 발송 제한을 쓰지 않는다. 인증 자체를 보는 테스트(test_verification.py)는 False로 끄고 직접 보낸다
     auto_phone_verification = True
+    # 새 기기 인증: 로그인이 DEVICE_VERIFICATION_REQUIRED를 돌려주면 개발용 문자함으로 인증을 끝내(실제 API 경로 그대로)
+    # 최종 로그인 응답을 돌려준다. 그 브라우저(쿠키 보관함)는 이후 등록 기기다. 기기 로그인 자체를 보는 테스트는 False로 끈다
+    auto_device_verification = True
 
     async def post(self, url, *args, json=None, **kwargs):
         if (
@@ -51,7 +60,12 @@ class BankClient(AsyncClient):
         kind = OPEN_PATHS.get(str(url))
         if kind and self.auto_terms and isinstance(json, dict) and "terms" not in json and "product_id" in json:
             json = {**json, "terms": await agree_all(self, kind, json["product_id"])}
-        return await super().post(url, *args, json=json, **kwargs)
+        response = await super().post(url, *args, json=json, **kwargs)
+        if self.auto_device_verification and str(url) == "/users/login" and response.status_code == 200:
+            data = response.json()["data"]
+            if data.get("status") == "DEVICE_VERIFICATION_REQUIRED":
+                return await auto_device_login(self, data["challenge_token"])
+        return response
 
     async def request(self, method, url, *args, json=None, **kwargs):
         # post()도 여기를 지난다. client.request("POST", ...)로 보낸 요청에도 붙이려고 post가 아니라 여기서 한다
@@ -85,7 +99,10 @@ async def client():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    async with BankClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    # Origin: 쿠키로 인증하는 요청(갱신·로그아웃·기기 해제)은 허용된 Origin이 있어야 한다. 브라우저가 보내는 값을 흉내 낸다
+    async with BankClient(
+        transport=ASGITransport(app=app), base_url="http://test", headers={"Origin": ORIGIN}
+    ) as ac:
         yield ac
 
 

@@ -49,7 +49,10 @@ async def wrong_logins_everywhere() -> Counter:
 
 
 def reset_lock():
-    execute("update users set failed_login_count = 0, login_locked_at = null where login_id = :l", l=LOGIN)
+    execute(
+        "update users set failed_login_count = 0, login_locked_at = null,"
+        " device_failed_login_count = 0, device_login_locked_at = null where login_id = :l", l=LOGIN,
+    )
     verified.clear()
 
 
@@ -75,6 +78,7 @@ async def amain():
         good &= check("401 4개, 나머지는 잠금 403 또는 검증 중 429(잠기기 전에 온 동시 요청)",
                       results["INVALID_CREDENTIALS"] == 4 and results["ACCOUNT_LOCKED"] >= 1
                       and results["ACCOUNT_LOCKED"] + results["TOO_MANY_LOGIN_ATTEMPTS"] == TRIES - 4)
+        # 쿠키 없는 새 기기 채널이므로 failed_login_count/login_locked_at이 센다(등록 기기 채널은 pg_device_channel_concurrency.py)
         count, locked = one("select failed_login_count from users where login_id = :l", l=LOGIN), one(
             "select login_locked_at is not null from users where login_id = :l", l=LOGIN
         )
@@ -87,7 +91,7 @@ async def amain():
         reset_lock()
         real_count = user_repository.count_login_attempt
 
-        async def read_then_write(db, user_id, max_failures):
+        async def read_then_write(db, user_id, max_failures, device=False):  # 쿠키 없는 요청 = 새 기기 채널
             current = await db.scalar(select(User.failed_login_count).where(User.user_id == user_id))
             await asyncio.sleep(0.05)  # 읽은 뒤 양보해 경쟁 구간을 넓힌다
             if current >= max_failures:

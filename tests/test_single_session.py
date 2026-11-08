@@ -10,6 +10,7 @@ from sqlalchemy import select
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.security import hash_refresh_token
 from avengers_bank.domains.users.models import RefreshToken
+from tests.cookie_helpers import logout, session_of
 from tests.test_auth_tokens import (
     LOGIN_ID,
     NEW_PASSWORD,
@@ -57,7 +58,7 @@ async def test_rotated_session_is_also_replaced(client):
     """갱신을 몇 번 한 세션도, 마지막 토큰으로 갱신하면 SESSION_REPLACED."""
     await signup(client)
     first = await login(client)
-    latest = (await refresh(client, first["refresh_token"])).json()["data"]
+    latest = session_of(await refresh(client, first["refresh_token"]))
     await login(client)
     assert error_of(await refresh(client, latest["refresh_token"])) == (401, "SESSION_REPLACED")
     # 이미 교체된 옛 토큰은 여전히 재사용 감지로 처리된다 (흐름 변경 없음)
@@ -84,10 +85,10 @@ async def test_revoked_reason_for_each_path(client):
     await signup(client)
     a = await login(client)
 
-    rotated = (await refresh(client, a["refresh_token"])).json()["data"]
+    rotated = session_of(await refresh(client, a["refresh_token"]))
     assert await reason_of(a) == "ROTATED"
 
-    await client.post("/users/logout", json={"refresh_token": rotated["refresh_token"]})
+    await logout(client, rotated["refresh_token"])
     assert await reason_of(rotated) == "LOGOUT"
 
     b = await login(client)
@@ -97,15 +98,14 @@ async def test_revoked_reason_for_each_path(client):
     c = await login(client)
     other = await add_other_device(c)
     body = {"current_password": PASSWORD, "new_password": NEW_PASSWORD}
-    fresh = (await client.patch("/users/me/password", json=body, headers=bearer(c))).json()["data"]
+    fresh = session_of(await client.patch("/users/me/password", json=body, headers=bearer(c)))
     assert (await reason_of(c), await reason_of(other)) == ("PASSWORD_CHANGED", "PASSWORD_CHANGED")
 
-    newer = (await refresh(client, fresh["refresh_token"])).json()["data"]
+    newer = session_of(await refresh(client, fresh["refresh_token"]))
     await refresh(client, fresh["refresh_token"])  # 이미 교체된 토큰 재사용
     assert (await reason_of(fresh), await reason_of(newer)) == ("ROTATED", "REUSE_DETECTED")
 
-    d = await client.post("/users/login", json={"login_id": LOGIN_ID, "password": NEW_PASSWORD})
-    d = d.json()["data"]
+    d = session_of(await client.post("/users/login", json={"login_id": LOGIN_ID, "password": NEW_PASSWORD}))
     await client.post("/users/login", json={"login_id": LOGIN_ID, "password": NEW_PASSWORD})
     assert await reason_of(d) == "LOGIN_ELSEWHERE"
     # 이미 끊긴 행의 이유는 다음 로그인이 덮어쓰지 않는다
@@ -115,7 +115,7 @@ async def test_revoked_reason_for_each_path(client):
 async def test_logout_and_password_change_are_not_session_replaced(client):
     await signup(client)
     a = await login(client)
-    await client.post("/users/logout", json={"refresh_token": a["refresh_token"]})
+    await logout(client, a["refresh_token"])
     assert error_of(await refresh(client, a["refresh_token"])) == (401, "INVALID_REFRESH_TOKEN")
 
     b = await login(client)

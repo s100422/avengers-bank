@@ -6,7 +6,8 @@
 
 서버(fastapi dev)가 떠 있고, 상품 시드·약관 발행이 끝나 있어야 한다. ENABLE_DEV_ENDPOINTS=true 필요(잔액 충전, 가입 때
 휴대폰 인증번호를 개발용 문자함 GET /dev/sms에서 읽는다). 사용자가 없으면 가입하고, 있으면 로그인한다.
-(로그인을 먼저 시도하므로 비밀번호를 틀리게 주면 로그인 실패로 세어진다. 5번이면 잠긴다 → admin unlock) 실행할 때마다 계좌가 새로 추가된다.
+(로그인을 먼저 시도하므로 비밀번호를 틀리게 주면 로그인 실패로 세어진다. 5번이면 잠긴다 → admin unlock)
+새 기기 로그인은 휴대폰 인증이 더 필요해 개발용 문자함(PHONE 번호)으로 자동 통과한다. 실행할 때마다 계좌가 새로 추가된다.
 만드는 계좌: 생활비 통장(최종 잔액 13,000,000원), 월급 통장(2,000,000원), 정기예금(가입 금액 3,000,000원을
 생활비 통장에서 출금해 개설), 정기적금(잔액 0원).
 """
@@ -51,6 +52,19 @@ def signup(c: httpx.Client) -> None:
     })
 
 
+def verify_new_device(c: httpx.Client, challenge: str) -> httpx.Response:
+    """새 기기 로그인: 비밀번호가 맞으면 세션 대신 챌린지가 온다. 등록 번호(PHONE)로 온 인증번호를 개발용 문자함에서 읽어 마무리한다.
+
+    이 스크립트는 실행할 때마다 새 프로세스(쿠키 보관함 없음)라 기존 아이디도 매번 새 기기로 등록된다(기기 목록이 늘어난다).
+    기존 아이디의 등록 번호가 PHONE이 아니면 인증번호를 읽지 못해 실패한다.
+    """
+    sent = call(c, "POST", "/users/login/device/send", json={"challenge_token": challenge})
+    text = call(c, "GET", "/dev/sms", params={"phone": PHONE})[0]["text"]
+    code = re.search(r"\d{6}", text).group()
+    token = call(c, "POST", "/verification/phone/verify", json={"verification_id": sent["verification_id"], "code": code})
+    return c.post("/users/login/device", json={"challenge_token": challenge, "phone_verification_token": token["verification_token"]})
+
+
 def main() -> None:
     with httpx.Client(base_url=BASE, timeout=10) as c:
         login = {"login_id": LOGIN_ID, "password": PASSWORD}
@@ -58,6 +72,8 @@ def main() -> None:
         if r.status_code == 401:  # 아직 없는 사용자: 휴대폰 인증(개발용 문자함) → 가입
             signup(c)
             r = c.post("/users/login", json=login)
+        if r.status_code == 200 and r.json()["data"]["status"] == "DEVICE_VERIFICATION_REQUIRED":
+            r = verify_new_device(c, r.json()["data"]["challenge_token"])
         if r.status_code != 200:
             sys.exit(f"login -> {r.status_code} {r.text}")
         token = r.json()["data"]["access_token"]

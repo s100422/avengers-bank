@@ -2,16 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Brand, Button, ErrorText, Field } from "@/components/ui";
-import { ApiError, REPLACED_MESSAGE, Session, api, safeNext, session } from "@/lib/api";
+import { CodeVerify } from "@/components/verify";
+import { ApiError, LoginResult, REPLACED_MESSAGE, api, safeNext, session } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const [busy, setBusy] = useState(false);
+  const idRef = useRef(0); // 인증번호 발송 id
   const [reason, setReason] = useState<string | null>(null);
+  // 새 기기 인증 중이면 서버가 준 챌린지. 상태에만 두고 저장하지 않는다(새로고침하면 처음부터)
+  const [challenge, setChallenge] = useState<{ token: string; phone: string } | null>(null);
 
   useEffect(() => {
     // 주소의 쿼리는 브라우저에서만 읽는다 (useSearchParams는 Suspense가 필요해 이 화면에선 쓰지 않는다)
@@ -22,6 +26,14 @@ export default function LoginPage() {
     setReason(why);
   }, []);
 
+  const goNext = () => router.replace(safeNext(new URLSearchParams(location.search).get("next")));
+
+  // 챌린지가 만료·실패했으면 비밀번호 입력부터 다시 한다
+  function restart(message: string) {
+    setChallenge(null);
+    setError(message);
+  }
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -29,13 +41,17 @@ export default function LoginPage() {
     setError(null);
     setLocked(false);
     try {
-      session.save(
-        await api<Session>("/users/login", {
-          login_id: f.get("login_id"),
-          password: f.get("password"),
-        }),
-      );
-      router.replace(safeNext(new URLSearchParams(location.search).get("next")));
+      const res = await api<LoginResult>("/users/login", {
+        login_id: f.get("login_id"),
+        password: f.get("password"),
+      });
+      if (res.status === "DEVICE_VERIFICATION_REQUIRED") {
+        setChallenge({ token: res.challenge_token, phone: res.phone_masked });
+        setBusy(false);
+        return;
+      }
+      session.save(res);
+      goNext();
     } catch (err) {
       setError((err as Error).message);
       setLocked(err instanceof ApiError && err.code === "ACCOUNT_LOCKED");
@@ -67,6 +83,45 @@ export default function LoginPage() {
           비밀번호를 재설정했습니다. 새 비밀번호로 로그인해 주세요.
         </p>
       )}
+      {challenge ? (
+        <div className="mt-6 space-y-4">
+          <h2 className="text-lg font-semibold">새 기기에서 로그인</h2>
+          <p className="text-sm text-slate">처음 사용하는 기기입니다. 등록된 휴대폰 {challenge.phone}(으)로 인증번호를 보내 본인을 확인합니다.</p>
+          <CodeVerify
+            devPhone={challenge.phone}
+            send={async () => {
+              try {
+                const r = await api<{ verification_id: number; expires_in: number }>("/users/login/device/send", {
+                  challenge_token: challenge.token,
+                });
+                idRef.current = r.verification_id;
+                return r.expires_in;
+              } catch (e) {
+                if (e instanceof ApiError && e.status === 401) restart("인증 시간이 지났습니다. 다시 로그인해 주세요.");
+                throw e;
+              }
+            }}
+            verify={async (code) => {
+              // 인증번호가 틀리면 여기서 던져 같은 화면에서 다시 입력하게 한다
+              const v = await api<{ verification_token: string }>("/verification/phone/verify", { verification_id: idRef.current, code });
+              try {
+                const res = await api<LoginResult>("/users/login/device", {
+                  challenge_token: challenge.token,
+                  phone_verification_token: v.verification_token,
+                });
+                if (res.status !== "OK") throw new Error();
+                session.save(res);
+                goNext();
+              } catch (e) {
+                restart(e instanceof ApiError && e.status !== 0 ? e.message : "로그인할 수 없습니다. 다시 로그인해 주세요.");
+              }
+            }}
+          />
+          <button type="button" onClick={() => setChallenge(null)} className="text-sm text-slate underline underline-offset-4 hover:text-ink">
+            처음으로 돌아가기
+          </button>
+        </div>
+      ) : (
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <Field
           label="아이디"
@@ -86,6 +141,7 @@ export default function LoginPage() {
         )}
         <Button busy={busy}>로그인</Button>
       </form>
+      )}
       <p className="mt-4 text-center text-sm text-slate">
         <Link href="/find-id" className="hover:text-ink">
           아이디 찾기

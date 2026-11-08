@@ -54,7 +54,7 @@ FIELD_LABELS = {
     "phone_verification_token": "휴대폰 인증", "verification_id": "인증 요청", "code": "인증번호", "purpose": "인증 용도",
     "account_password": "계좌 비밀번호", "from_account_password": "출금 계좌 비밀번호",
     "account_num": "계좌번호", "recovery_token": "본인 확인 요청", "reset_token": "비밀번호 재설정 요청",
-    "new_account_password": "새 계좌 비밀번호",
+    "new_account_password": "새 계좌 비밀번호", "challenge_token": "기기 확인",
 }
 
 

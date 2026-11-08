@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, ErrorText, Field, Shell } from "@/components/ui";
 import { PHONE, PhoneVerify, digits } from "@/components/verify";
-import { ApiError, Session, User, api, logout, logoutAll, session } from "@/lib/api";
+import { ApiError, Device, Session, User, api, devices, logout, logoutAll, session } from "@/lib/api";
 
 export default function MePage() {
   return (
@@ -36,6 +36,7 @@ function Me() {
           <PasswordForm />
         </>
       )}
+      {user && <Devices />}
       <button
         className="mt-10 w-full rounded-xl border border-line py-3 text-slate hover:text-ink"
         onClick={async () => {
@@ -61,6 +62,54 @@ function Me() {
       </button>
       {user && <Withdrawal user={user} />}
     </>
+  );
+}
+
+const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" }) : "-");
+
+function Devices() {
+  const [list, setList] = useState<Device[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    devices.list().then(setList).catch((e) => setError(e.message));
+  }, []);
+
+  async function revoke(d: Device) {
+    if (!confirm(`'${d.label}' 기기를 해제할까요? 해제하면 이 기기는 다시 문자 인증을 해야 로그인할 수 있습니다.`)) return;
+    setError(null);
+    try {
+      await devices.revoke(d.device_id);
+      setList((l) => l && l.filter((x) => x.device_id !== d.device_id));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <section className="mt-10">
+      <h2 className="text-sm text-slate">로그인한 기기</h2>
+      <ErrorText message={error} />
+      <ul className="mt-2 space-y-2">
+        {list?.map((d) => (
+          <li key={d.device_id} className="flex items-center justify-between gap-3 rounded-xl border border-line px-3 py-2.5">
+            <div className="min-w-0 text-sm">
+              <p className="font-medium">
+                {d.label}
+                {d.current && <span className="ml-2 rounded-full bg-coral-soft px-2 py-0.5 text-xs font-normal">이 기기</span>}
+              </p>
+              <p className="text-slate">
+                등록일 {fmt(d.created_at)} · 마지막 사용 {fmt(d.last_used_at)}
+              </p>
+            </div>
+            <button onClick={() => revoke(d)} className="min-h-11 shrink-0 text-sm text-slate underline underline-offset-4 hover:text-ink">
+              해제
+            </button>
+          </li>
+        ))}
+        {list?.length === 0 && <li className="text-sm text-slate">등록된 기기가 없습니다.</li>}
+      </ul>
+    </section>
   );
 }
 

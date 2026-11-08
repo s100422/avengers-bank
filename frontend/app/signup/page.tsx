@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Brand, Button, ErrorText, Field } from "@/components/ui";
 import { PHONE, PhoneVerify } from "@/components/verify";
-import { ApiError, Session, api, session } from "@/lib/api";
+import { ApiError, LoginResult, api, session } from "@/lib/api";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -35,7 +35,10 @@ export default function SignupPage() {
         phone_verification_token: token,
       });
       // 가입하면 바로 로그인시킨다
-      session.save(await api<Session>("/users/login", { login_id, password }));
+      const res = await api<LoginResult>("/users/login", { login_id, password });
+      // 새 기기 인증이 필요하면(2단계) 가입은 끝났으니 로그인 화면에서 이어 가게 한다
+      if (res.status !== "OK") return router.replace("/login");
+      session.save(res);
       router.replace("/accounts");
     } catch (err) {
       setError((err as Error).message);

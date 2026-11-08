@@ -81,3 +81,33 @@ def hash_refresh_token(token: str) -> str:
     불가능하므로 느릴 이유가 없고, 같은 입력 → 같은 해시라서 unique 인덱스로 바로 찾을 수 있다.
     """
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+CHALLENGE_TYPE = "device_challenge"  # 액세스 토큰·인증 증표와 섞이지 않게 typ로 구분한다
+CHALLENGE_TTL = timedelta(minutes=10)
+
+
+def create_device_challenge(user_id: int) -> str:
+    """새 기기 로그인에서 비밀번호까지 맞았다는 증명(10분). 세션이 아니다: 이것만으로는 어떤 API도 못 쓴다.
+
+    1회성은 JWT가 아니라 마지막 단계가 소비하는 휴대폰 인증 행(verification_codes.consumed_at)이 보장한다.
+    이 토큰으로 인증번호를 여러 번 받을 수는 있지만(발송 한도 적용) 기기를 등록하려면 매번 새 인증이 필요하다.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {"typ": CHALLENGE_TYPE, "sub": str(user_id), "iat": now, "exp": now + CHALLENGE_TTL}
+    return jwt.encode(payload, get_settings().jwt_secret_key.get_secret_value(), algorithm=ALGORITHM)
+
+
+def decode_device_challenge(token: str) -> int:
+    try:
+        payload = jwt.decode(
+            token, get_settings().jwt_secret_key.get_secret_value(), algorithms=[ALGORITHM],
+            options={"require": ["typ", "sub", "exp"]},
+        )
+        if payload["typ"] != CHALLENGE_TYPE:
+            raise ValueError
+        return int(payload["sub"])
+    except (jwt.InvalidTokenError, ValueError, TypeError):
+        raise UnauthorizedException(
+            message="기기 확인이 만료되었습니다. 다시 로그인해 주세요.", code="INVALID_DEVICE_CHALLENGE"
+        ) from None

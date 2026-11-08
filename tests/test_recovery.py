@@ -5,14 +5,15 @@
 """
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.security import verify_password
 from avengers_bank.domains.accounts.models import CheckingAccount
 from avengers_bank.domains.recovery.service import mask_login_id
-from avengers_bank.domains.users.models import User
+from avengers_bank.domains.users.models import User, UserDevice
 from avengers_bank.domains.verification.sms import dev_inbox, dev_messages
+from tests.cookie_helpers import cookie_header, session_of
 from tests.verification_helpers import phone_token, read_code
 
 pytestmark = pytest.mark.anyio
@@ -154,8 +155,34 @@ async def test_fake_token_fails_exactly_like_a_wrong_code(client, bank):
 # ── 비밀번호 찾기 ─────────────────────────────────────────────────────
 
 
+async def test_password_reset_revokes_devices_and_clears_both_locks(client, bank):
+    """기기 등록(B1): 재설정은 두 채널의 잠금을 모두 풀고 등록 기기를 모두 해제한다(새 비밀번호도 휴대폰 인증을 다시 거친다)."""
+    assert (await login(client)).status_code == 200  # 이 브라우저는 ironman의 등록 기기가 된다(BankClient가 인증을 자동으로 끝낸다)
+    no_cookie = {"Cookie": ""}
+    for headers in (None, no_cookie):  # 등록 기기 채널, 새 기기 채널을 둘 다 잠근다
+        for _ in range(5):
+            await client.post("/users/login", json={"login_id": "ironman", "password": "Wrong0pass!"}, headers=headers)
+    async with SessionLocal() as db:
+        user = await db.get(User, 1)
+        assert user.login_locked_at is not None and user.device_login_locked_at is not None
+        assert await db.scalar(select(func.count()).select_from(UserDevice).where(UserDevice.user_id == 1, UserDevice.revoked_at.is_(None))) == 2  # bank가 가입하며 한 번, 위 로그인(보관함은 hulk 쿠키)이 한 번
+
+    token = await reset_token(client, bank)
+    response = await client.post("/recovery/password", json={"reset_token": token, "new_password": NEW_PASSWORD})
+    assert response.status_code == 200, response.text
+    async with SessionLocal() as db:
+        user = await db.get(User, 1)
+        assert (user.failed_login_count, user.login_locked_at) == (0, None)
+        assert (user.device_failed_login_count, user.device_login_locked_at) == (0, None)
+        rows = list(await db.scalars(select(UserDevice)))
+    assert {(d.user_id, d.revoked_at is not None) for d in rows} == {(1, True), (2, False)}  # 다른 사용자의 기기는 그대로
+    client.auto_device_verification = False
+    again = await login(client, password=NEW_PASSWORD)  # 낡은 기기 쿠키는 새 기기 취급
+    assert again.json()["data"]["status"] == "DEVICE_VERIFICATION_REQUIRED"
+
+
 async def test_password_reset_unlocks_login_and_revokes_all_sessions(client, bank):
-    refresh = (await login(client)).json()["data"]["refresh_token"]
+    refresh = session_of(await login(client))["refresh_token"]
     for _ in range(4):
         assert error(await login(client, password="Wrong0pass!")) == (401, "INVALID_CREDENTIALS")
     assert error(await login(client, password="Wrong0pass!")) == (403, "ACCOUNT_LOCKED")
@@ -173,7 +200,7 @@ async def test_password_reset_unlocks_login_and_revokes_all_sessions(client, ban
     assert dev_messages(TONY_PHONE)[0][0] == (
         "[AvengersBank] 비밀번호가 재설정되었습니다. 본인이 아니라면 바로 고객센터로 연락해 주세요."
     )
-    assert (await client.post("/users/token/refresh", json={"refresh_token": refresh})).status_code == 401
+    assert (await client.post("/users/token/refresh", headers=cookie_header(refresh))).status_code == 401
     assert error(await login(client)) == (401, "INVALID_CREDENTIALS")
     assert (await login(client, password=NEW_PASSWORD)).status_code == 200
 

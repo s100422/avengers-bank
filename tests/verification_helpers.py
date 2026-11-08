@@ -3,10 +3,12 @@
 import re
 from datetime import datetime, timezone
 
-from sqlalchemy import update
+import jwt
+from sqlalchemy import select, update
 
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.login_limiter import verification_ip_limiter
+from avengers_bank.domains.users.models import User
 from avengers_bank.domains.verification.models import VerificationCode
 
 
@@ -57,3 +59,24 @@ async def auto_signup_token(client, phone) -> dict:
     code = await read_code(client, phone)
     verified = await client.post("/verification/phone/verify", json={"verification_id": verification_id, "code": code})
     return {"phone_verification_token": verified.json()["data"]["verification_token"]}
+
+
+async def auto_device_login(client, challenge_token: str):
+    """새 기기 인증을 끝까지 해서 POST /users/login/device 응답을 돌려준다(실제 API 경로: 발송 → 문자함 → 확인 → 로그인).
+
+    번호는 응답이 가린 값이라 알 수 없으므로 챌린지의 sub(사용자 id)로 DB에서 읽는다. 발송 제한은 쓰지 않는다.
+    """
+    user_id = int(jwt.decode(challenge_token, options={"verify_signature": False})["sub"])
+    async with SessionLocal() as db:
+        phone = await db.scalar(select(User.phone).where(User.user_id == user_id))
+    sent = await client.post("/users/login/device/send", json={"challenge_token": challenge_token})
+    assert sent.status_code == 200, sent.text
+    verification_id = sent.json()["data"]["verification_id"]
+    await exempt_from_send_limits(verification_id)
+    code = await read_code(client, phone)
+    verified = await client.post("/verification/phone/verify", json={"verification_id": verification_id, "code": code})
+    assert verified.status_code == 200, verified.text
+    return await client.post(
+        "/users/login/device",
+        json={"challenge_token": challenge_token, "phone_verification_token": verified.json()["data"]["verification_token"]},
+    )

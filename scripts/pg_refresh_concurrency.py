@@ -12,7 +12,9 @@ from collections import Counter
 
 import httpx
 
-from _common import check, cleanup, connect, finish, one, run, signup_via_api
+from _common import (
+    check, cleanup, connect, cookie_headers, cookie_value, finish, login_via_api, one, register_device_sql, run, signup_via_api,
+)
 from avengers_bank.core.database import engine
 from avengers_bank.domains.users.repository import user_repository
 from avengers_bank.main import app
@@ -24,13 +26,17 @@ def label(r):
     return "OK" if r.status_code == 200 else r.json()["error"]["code"]
 
 
-async def login(client):
-    data = (await client.post("/users/login", json={"login_id": LOGIN, "password": PASSWORD})).json()["data"]
-    return data["refresh_token"]
+async def login(client, device):
+    # 갱신 토큰은 본문이 아니라 쿠키로 온다(Set-Cookie). 등록 기기로 로그인해 휴대폰 인증을 건너뛴다
+    return cookie_value(await login_via_api(client, LOGIN, PASSWORD, device))
+
+
+def refresh_once(client, token):
+    return client.post("/users/token/refresh", headers=cookie_headers(token))
 
 
 async def refresh_all(client, token):
-    return await asyncio.gather(*[client.post("/users/token/refresh", json={"refresh_token": token}) for _ in range(TRIES)])
+    return await asyncio.gather(*[refresh_once(client, token) for _ in range(TRIES)])
 
 
 async def amain():
@@ -39,14 +45,15 @@ async def amain():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         body = {"login_id": LOGIN, "password": PASSWORD, "name": "검증", "phone": "010-0000-0000"}
         await signup_via_api(client, body)  # 휴대폰 인증 → 가입 (C-090)
+        device = register_device_sql(LOGIN)
 
         print(f"1) 같은 갱신 토큰으로 {TRIES}번 동시에 갱신 (잠금 있음)")
-        responses = await refresh_all(client, await login(client))
+        responses = await refresh_all(client, await login(client, device))
         results = Counter(label(r) for r in responses)
         print("  ", dict(results))
         good &= check("정확히 1번만 새 토큰이 나오고 나머지는 REFRESH_TOKEN_REUSED", results == Counter({"OK": 1, "REFRESH_TOKEN_REUSED": TRIES - 1}))
-        winner = next(r for r in responses if r.status_code == 200).json()["data"]["refresh_token"]
-        again = await client.post("/users/token/refresh", json={"refresh_token": winner})
+        winner = cookie_value(next(r for r in responses if r.status_code == 200))
+        again = await refresh_once(client, winner)
         good &= check("재사용이 감지됐으므로 이긴 쪽이 받은 새 토큰도 끊겼다 (세션 전체 폐기)", label(again) == "INVALID_REFRESH_TOKEN")
         alive = one(f"select count(*) from refresh_tokens where user_id = {user_id_sql} and revoked_at is null", l=LOGIN)
         good &= check("살아 있는 갱신 토큰이 0개", alive == 0)
@@ -64,7 +71,7 @@ async def amain():
         user_repository.find_refresh_token = no_lock
         user_repository.lock_user = user_repository.find_by_id
         try:
-            results = Counter(label(r) for r in await refresh_all(client, await login(client)))
+            results = Counter(label(r) for r in await refresh_all(client, await login(client, device)))
         finally:
             user_repository.find_refresh_token = real
             user_repository.lock_user = real_lock

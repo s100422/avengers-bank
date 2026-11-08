@@ -7,9 +7,11 @@ import jwt
 import pytest
 from sqlalchemy import select, update
 
+from avengers_bank.core.config import Settings, get_settings
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.security import create_access_token, hash_refresh_token, new_refresh_token
 from avengers_bank.domains.users.models import RefreshToken
+from tests.cookie_helpers import cookie_header, cookie_value, logout, refresh, session_of, set_cookies
 
 pytestmark = pytest.mark.anyio
 
@@ -26,11 +28,7 @@ async def signup(client):
 async def login(client, password=PASSWORD) -> dict:
     response = await client.post("/users/login", json={"login_id": LOGIN_ID, "password": password})
     assert response.status_code == 200, response.text
-    return response.json()["data"]
-
-
-async def refresh(client, token):
-    return await client.post("/users/token/refresh", json={"refresh_token": token})
+    return session_of(response)
 
 
 def bearer(tokens) -> dict[str, str]:
@@ -69,7 +67,9 @@ async def test_login_returns_access_and_refresh_tokens(client):
     data = response.json()["data"]
     assert data["token_type"] == "bearer"
     assert data["expires_in"] == 300
-    assert data["refresh_token"] and data["access_token"]
+    assert data["status"] == "OK"
+    assert data["access_token"] and "refresh_token" not in data  # 갱신 토큰은 본문에 없다(쿠키로만)
+    assert cookie_value(response)
     session_expires_at = datetime.fromisoformat(data["session_expires_at"])
     remaining = session_expires_at - datetime.now(timezone.utc)
     assert timedelta(minutes=29) < remaining <= timedelta(minutes=30)
@@ -95,7 +95,7 @@ async def test_refresh_rotates_tokens(client, tokens):
     response = await refresh(client, tokens["refresh_token"])
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
-    new = response.json()["data"]
+    new = session_of(response)
     assert new["refresh_token"] != tokens["refresh_token"]
     assert new["expires_in"] == 300
     assert (await client.get("/users/me", headers=bearer(new))).status_code == 200
@@ -108,7 +108,7 @@ async def test_refresh_rotates_tokens(client, tokens):
 
 
 async def test_reused_refresh_token_revokes_whole_family(client, tokens):
-    new = (await refresh(client, tokens["refresh_token"])).json()["data"]
+    new = session_of(await refresh(client, tokens["refresh_token"]))
     # 이미 교체된 토큰을 다시 낸다 → 탈취로 보고 family 전체 폐기
     assert error_of(await refresh(client, tokens["refresh_token"])) == (401, "REFRESH_TOKEN_REUSED")
     assert error_of(await refresh(client, new["refresh_token"])) == (401, "INVALID_REFRESH_TOKEN")
@@ -134,13 +134,14 @@ async def test_expired_refresh_token(client, tokens):
 
 
 async def test_logout_revokes_session_and_is_idempotent(client, tokens):
-    new = (await refresh(client, tokens["refresh_token"])).json()["data"]
-    response = await client.post("/users/logout", json={"refresh_token": new["refresh_token"]})
+    new = session_of(await refresh(client, tokens["refresh_token"]))
+    response = await logout(client, new["refresh_token"])
     assert response.status_code == 200
     assert error_of(await refresh(client, new["refresh_token"])) == (401, "INVALID_REFRESH_TOKEN")
     # 같은 토큰으로 다시, 모르는 토큰으로도 200
-    assert (await client.post("/users/logout", json={"refresh_token": new["refresh_token"]})).status_code == 200
-    assert (await client.post("/users/logout", json={"refresh_token": "unknown"})).status_code == 200
+    assert (await logout(client, new["refresh_token"])).status_code == 200
+    assert (await logout(client, "unknown")).status_code == 200
+    assert (await client.post("/users/logout", headers={"Cookie": ""})).status_code == 200  # 쿠키가 아예 없어도
 
 
 async def me_status(client, session) -> int:
@@ -158,14 +159,14 @@ async def test_logout_cuts_access_token_immediately(client, tokens):
     """C-087: 로그아웃하면 5분이 남은 액세스 토큰도 다음 요청부터 401. 다른 세션은 그대로."""
     other = await add_other_device(tokens)
     assert await me_status(client, tokens) == 200
-    await client.post("/users/logout", json={"refresh_token": tokens["refresh_token"]})
+    await logout(client, tokens["refresh_token"])
     assert await me_status(client, tokens) == 401
     assert await me_status(client, other) == 200
 
 
 async def test_session_survives_rotation(client, tokens):
     """갱신(회전)해도 세션은 같으므로, 갱신 전에 받은 액세스 토큰도 만료 전까지는 그대로 쓸 수 있다."""
-    new = (await refresh(client, tokens["refresh_token"])).json()["data"]
+    new = session_of(await refresh(client, tokens["refresh_token"]))
     assert await me_status(client, tokens) == 200
     assert await me_status(client, new) == 200
 
@@ -178,7 +179,7 @@ async def test_logout_all_and_password_change_cut_other_devices_immediately(clie
     first = await login(client)
     second = await add_other_device(first)
     body = {"current_password": PASSWORD, "new_password": NEW_PASSWORD}
-    fresh = (await client.patch("/users/me/password", json=body, headers=bearer(first))).json()["data"]
+    fresh = session_of(await client.patch("/users/me/password", json=body, headers=bearer(first)))
     assert (await me_status(client, first), await me_status(client, second)) == (401, 401)
     assert await me_status(client, fresh) == 200  # 비밀번호를 바꾼 이 기기의 새 세션은 동작
 
@@ -206,7 +207,7 @@ async def test_password_change_revokes_all_sessions_and_issues_new_one(client, t
     assert response.status_code == 200
     assert response.json()["message"] == "비밀번호가 변경되었습니다."
     assert response.headers["Cache-Control"] == "no-store"
-    fresh = response.json()["data"]
+    fresh = session_of(response)
     for old in (tokens, other):
         assert error_of(await refresh(client, old["refresh_token"])) == (401, "INVALID_REFRESH_TOKEN")
     assert (await client.get("/users/me", headers=bearer(fresh))).status_code == 200
@@ -219,3 +220,89 @@ async def test_new_password_same_as_login_id(client, tokens):
     response = await client.patch("/users/me/password", json=body, headers=bearer(tokens))
     assert error_of(response) == (400, "PASSWORD_SAME_AS_LOGIN_ID")
     assert (await refresh(client, tokens["refresh_token"])).status_code == 200  # 세션은 그대로
+
+
+# --- 쿠키 전환: 갱신 토큰은 httpOnly 쿠키로만 오간다 ---
+
+
+async def test_login_cookie_attributes(client):
+    await signup(client)
+    response = await client.post("/users/login", json={"login_id": LOGIN_ID, "password": PASSWORD})
+    morsel = set_cookies(response)["refresh_token"]
+    assert morsel["httponly"] is True
+    assert morsel["samesite"].lower() == "strict"
+    assert morsel["path"] == get_settings().refresh_cookie_path
+    assert int(morsel["max-age"]) == 30 * 60
+    assert not morsel["secure"]  # 테스트 환경은 COOKIE_SECURE=false (아래 테스트가 Secure를 확인)
+
+
+async def test_cookie_defaults_and_secure_flag(client, monkeypatch):
+    fields = Settings.model_fields
+    assert (fields["cookie_secure"].default, fields["refresh_cookie_path"].default) == (True, "/api/users")
+    monkeypatch.setattr(get_settings(), "cookie_secure", True)
+    await signup(client)
+    response = await client.post("/users/login", json={"login_id": LOGIN_ID, "password": PASSWORD})
+    assert set_cookies(response)["refresh_token"]["secure"] is True
+
+
+async def test_refresh_sets_new_cookie_and_body_has_no_token(client, tokens):
+    response = await refresh(client, tokens["refresh_token"])
+    assert "refresh_token" not in response.json()["data"]
+    assert cookie_value(response) not in (None, tokens["refresh_token"])
+    assert set_cookies(response)["refresh_token"]["httponly"] is True
+
+
+async def test_refresh_uses_cookie_jar_without_body(client, tokens):
+    """브라우저처럼: 로그인 때 받은 쿠키를 보관함이 알아서 실어 보낸다."""
+    assert (await client.post("/users/token/refresh")).status_code == 200
+    assert (await client.post("/users/token/refresh")).status_code == 200  # 회전된 새 쿠키로 이어진다
+
+
+async def test_refresh_without_cookie_is_401(client):
+    response = await client.post("/users/token/refresh")
+    assert error_of(response) == (401, "INVALID_REFRESH_TOKEN")
+
+
+async def test_refresh_and_logout_reject_wrong_or_missing_origin(client, tokens):
+    for origin in ("http://evil.example", ""):  # 다른 사이트 / Origin 없음
+        for path in ("/users/token/refresh", "/users/logout"):
+            response = await client.post(path, headers={"Origin": origin, **cookie_header(tokens["refresh_token"])})
+            assert error_of(response) == (403, "CSRF_ORIGIN"), (path, origin)
+    # 거절된 요청은 세션을 건드리지 않았다
+    assert (await refresh(client, tokens["refresh_token"])).status_code == 200
+
+
+async def test_logout_clears_cookie(client, tokens):
+    response = await client.post("/users/logout")
+    morsel = set_cookies(response)["refresh_token"]
+    assert morsel.value == "" and int(morsel["max-age"]) == 0
+    assert morsel["path"] == get_settings().refresh_cookie_path
+    assert (await client.post("/users/token/refresh")).status_code == 401  # 보관함에서도 사라졌다
+
+
+async def test_dead_session_refresh_clears_cookie(client, tokens):
+    await logout(client, tokens["refresh_token"])
+    response = await refresh(client, tokens["refresh_token"])
+    assert error_of(response) == (401, "INVALID_REFRESH_TOKEN")
+    assert int(set_cookies(response)["refresh_token"]["max-age"]) == 0
+
+
+async def test_reused_token_refresh_clears_cookie_and_still_revokes(client, tokens):
+    await refresh(client, tokens["refresh_token"])
+    response = await refresh(client, tokens["refresh_token"])
+    assert error_of(response) == (401, "REFRESH_TOKEN_REUSED")
+    assert int(set_cookies(response)["refresh_token"]["max-age"]) == 0
+    async with SessionLocal() as db:  # 401을 던지기 전에 폐기가 커밋됐다
+        assert (await db.scalar(select(RefreshToken).where(RefreshToken.revoked_at.is_(None)))) is None
+
+
+async def test_unknown_token_refresh_clears_cookie(client, tokens):
+    response = await refresh(client, "not-a-real-token")
+    assert int(set_cookies(response)["refresh_token"]["max-age"]) == 0
+
+
+async def test_password_change_sets_cookie(client, tokens):
+    body = {"current_password": PASSWORD, "new_password": NEW_PASSWORD}
+    response = await client.patch("/users/me/password", json=body, headers=bearer(tokens))
+    assert "refresh_token" not in response.json()["data"]
+    assert cookie_value(response) not in (None, tokens["refresh_token"])

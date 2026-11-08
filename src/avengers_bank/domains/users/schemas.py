@@ -73,21 +73,44 @@ class UserResponse(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """로그인·갱신·비밀번호 변경 응답. 액세스 토큰은 짧게(API 호출용), 갱신 토큰은 길게(새 액세스 토큰 받기용)."""
+    """갱신·비밀번호 변경 응답. 액세스 토큰은 본문, 갱신 토큰은 본문에 없다 — httpOnly 쿠키(refresh_token)로만 내려간다."""
 
     access_token: str
     token_type: Literal["bearer"] = "bearer"
-    refresh_token: str = Field(repr=False)
     expires_in: int  # 액세스 토큰 수명(초). 프론트는 이보다 조금 일찍 갱신하면 된다
     session_expires_at: datetime  # 갱신 토큰 만료 시각(UTC). 이때까지 갱신하지 않으면 다시 로그인
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=1, max_length=256, repr=False)
+class LoginOk(TokenResponse):
+    """로그인 성공(등록 기기이거나 새 기기 인증을 마침). status로 아래 DeviceChallenge와 구분한다."""
+
+    status: Literal["OK"] = "OK"
 
 
-class LogoutRequest(BaseModel):
-    refresh_token: str = Field(min_length=1, max_length=256, repr=False)
+class DeviceChallenge(BaseModel):
+    """새 기기에서 비밀번호는 맞았지만 세션은 주지 않았다. 휴대폰 인증(login/device/send → verification/phone/verify)을 마치고
+    POST /users/login/device로 challenge_token과 인증 증표를 보내야 로그인된다."""
+
+    status: Literal["DEVICE_VERIFICATION_REQUIRED"] = "DEVICE_VERIFICATION_REQUIRED"
+    challenge_token: str = Field(repr=False)
+    phone_masked: str  # 010-****-5678
+
+
+class DeviceChallengeSend(BaseModel):
+    challenge_token: str = Field(min_length=1, max_length=2048, repr=False)
+
+
+class DeviceLogin(DeviceChallengeSend):
+    # POST /users/login/device/send로 받은 인증번호를 POST /verification/phone/verify로 확인해 받은 증표 (purpose NEW_DEVICE)
+    phone_verification_token: str = Field(min_length=1, max_length=2048, repr=False)
+
+
+class DeviceResponse(BaseModel):
+    device_id: int
+    label: str
+    created_at: datetime
+    last_used_at: datetime
+    current: bool  # 이 요청의 기기 쿠키가 이 기기인가
 
 
 class WithdrawalBlocker(BaseModel):

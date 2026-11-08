@@ -18,7 +18,9 @@ from collections import Counter
 
 import httpx
 
-from _common import check, cleanup, connect, finish, one, run, signup_via_api
+from _common import (
+    check, cleanup, connect, cookie_headers, cookie_value, finish, login_via_api, one, register_device_sql, run, signup_via_api,
+)
 from avengers_bank.core.database import engine
 from avengers_bank.core.security import hash_refresh_token
 from avengers_bank.domains.users.repository import user_repository
@@ -41,7 +43,13 @@ def label(r):
 
 
 async def login(client):
-    return await client.post("/users/login", json={"login_id": LOGIN, "password": PASSWORD})
+    # 기기마다 등록 기기 쿠키(device_token)를 따로 준비해 둔다: 휴대폰 인증 없이 '등록 기기' 채널로 로그인한다.
+    # 갱신 토큰은 본문이 아니라 Set-Cookie로 온다
+    return await login_via_api(client, LOGIN, PASSWORD, client.device_token)
+
+
+def refresh(client, token):
+    return client.post("/users/token/refresh", headers=cookie_headers(token))
 
 
 def alive_families() -> int:
@@ -68,15 +76,17 @@ async def amain():
     try:
         body = {"login_id": LOGIN, "password": PASSWORD, "name": "검증", "phone": "010-0000-0000"}
         await signup_via_api(devices[0], body)  # 휴대폰 인증 → 가입 (C-090)
+        for d in devices:
+            d.device_token = register_device_sql(LOGIN)
 
         print(f"1) 같은 사용자로 {TRIES}곳에서 동시에 로그인 (잠금 있음)")
         responses = await login_all(devices)
         print("  ", dict(Counter(label(r) for r in responses)))
         good &= check("모두 로그인 성공 (나중 로그인이 앞 로그인을 끊는다)", all(r.status_code == 200 for r in responses))
         good &= check("살아 있는 세션(family)이 정확히 1개", alive_families() == 1)
-        tokens = [r.json()["data"]["refresh_token"] for r in responses]
+        tokens = [cookie_value(r) for r in responses]
         refreshed = Counter(label(r) for r in await asyncio.gather(
-            *[d.post("/users/token/refresh", json={"refresh_token": t}) for d, t in zip(devices, tokens)]
+            *[refresh(d, t) for d, t in zip(devices, tokens)]
         ))
         print("   각 기기에서 갱신:", dict(refreshed))
         good &= check(
@@ -88,12 +98,10 @@ async def amain():
         first, elsewhere = devices[0], devices[1]
         outcomes, bad_rounds = Counter(), []
         for i in range(ROUNDS):
-            token = (await login(first)).json()["data"]["refresh_token"]
-            refreshed, other = await asyncio.gather(
-                first.post("/users/token/refresh", json={"refresh_token": token}), login(elsewhere)
-            )
+            token = cookie_value(await login(first))
+            refreshed, other = await asyncio.gather(refresh(first, token), login(elsewhere))
             outcomes[label(refreshed)] += 1  # 어느 쪽이 먼저 잠금을 얻었나에 따라 OK 또는 SESSION_REPLACED
-            winner = family_of(other.json()["data"]["refresh_token"])
+            winner = family_of(cookie_value(other))
             if not (other.status_code == 200 and alive_families() == 1 and alive_family() == winner):
                 bad_rounds.append(i + 1)
         print("   기기 1 갱신 결과:", dict(outcomes))

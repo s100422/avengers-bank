@@ -7,12 +7,13 @@ import pytest
 from sqlalchemy import func, select, update
 
 from avengers_bank.core.database import SessionLocal
+from tests.cookie_helpers import cookie_header, session_of, set_cookies
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
 from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft
 from avengers_bank.domains.cards.models import CreditCard, DebitCard
 from avengers_bank.domains.products.models import CardProduct
 from avengers_bank.domains.terms.models import TermsConsent
-from avengers_bank.domains.users.models import RefreshToken, User
+from avengers_bank.domains.users.models import RefreshToken, User, UserDevice
 from avengers_bank.domains.verification.models import VerificationCode
 from avengers_bank.domains.verification.sms import dev_inbox, dev_messages
 from tests.helpers import FUTURE, open_deposit
@@ -45,7 +46,7 @@ async def bank(client, account_products):
     for name, login_id, phone in (("tony", "ironman", TONY_PHONE), ("bruce", "hulk", BRUCE_PHONE)):
         body = {"login_id": login_id, "password": PASSWORD, "name": name, "nick_name": "닉", "phone": phone}
         assert (await client.post("/users/signup", json=body)).status_code == 201
-        tokens = (await login(client, login_id)).json()["data"]
+        tokens = session_of(await login(client, login_id))
         headers = {"Authorization": f"Bearer {tokens['access_token']}"}
         account = (await client.post("/accounts/checking", json={"product_id": 1}, headers=headers)).json()["data"]
         out[name] = {"headers": headers, "refresh": tokens["refresh_token"], "account": account}
@@ -65,6 +66,12 @@ async def withdraw(client, headers, token, password=PASSWORD):
 async def user_row(login_id="ironman") -> User:
     async with SessionLocal() as db:
         return await db.scalar(select(User).where(User.login_id == login_id))
+
+
+async def active_devices(user_id: int) -> int:
+    async with SessionLocal() as db:
+        return await db.scalar(select(func.count()).select_from(UserDevice).where(
+            UserDevice.user_id == user_id, UserDevice.revoked_at.is_(None)))
 
 
 async def test_requires_login(client):
@@ -183,8 +190,11 @@ async def test_withdrawal_success(client, bank):
     assert histories_before == 2
 
     assert (await client.get("/users/me/withdrawal", headers=tony)).json()["data"]["can_withdraw"] is True
+    assert await active_devices(1) == 1  # 가입 직후 로그인으로 등록된 기기
     done = await withdraw(client, tony, await withdrawal_token(client, tony))
     assert (done.status_code, done.json()) == (200, {"data": None, "message": DONE})
+    assert await active_devices(1) == 0  # 등록 기기도 모두 해제
+    assert {"refresh_token", "device_token"} <= {n for n, m in set_cookies(done).items() if int(m["max-age"]) == 0}
 
     # 개인정보는 가리고 login_id는 남긴다
     user = await user_row()
@@ -207,7 +217,7 @@ async def test_withdrawal_success(client, bank):
 
     # 기존 액세스·갱신 토큰은 바로 401
     assert error(await client.get("/users/me", headers=tony)) == (401, "INVALID_TOKEN")
-    refresh = await client.post("/users/token/refresh", json={"refresh_token": bank["tony"]["refresh"]})
+    refresh = await client.post("/users/token/refresh", headers=cookie_header(bank["tony"]["refresh"]))
     assert error(refresh) == (401, "INVALID_REFRESH_TOKEN")
 
     async with SessionLocal() as db:

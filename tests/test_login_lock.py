@@ -34,9 +34,12 @@ async def login(client, password=WRONG, login_id=LOGIN_ID):
     return await client.post("/users/login", json={"login_id": login_id, "password": password})
 
 
-async def lock_state() -> tuple[int, bool]:
+async def lock_state(device: bool = False) -> tuple[int, bool]:
+    """(연속 실패 횟수, 잠김). device=False: 새 기기 채널, True: 등록 기기 채널(성공 로그인으로 기기를 등록한 뒤의 로그인·비밀번호 확인)."""
     async with SessionLocal() as db:
         user = await db.scalar(select(User).where(User.login_id == LOGIN_ID))
+        if device:
+            return user.device_failed_login_count, user.device_login_locked_at is not None
         return user.failed_login_count, user.login_locked_at is not None
 
 
@@ -91,7 +94,8 @@ async def test_success_resets_count_so_only_consecutive_failures_lock(client):
     assert await lock_state() == (0, False)
     for _ in range(4):
         assert (await login(client)).status_code == 401  # 다시 4번까지는 잠기지 않는다
-    assert await lock_state() == (4, False)
+    assert await lock_state(device=True) == (4, False)  # 성공 로그인이 기기를 등록해 그 뒤는 등록 기기 채널
+    assert await lock_state() == (0, False)
 
 
 async def test_concurrent_wrong_logins_verify_exactly_five_then_lock(client, verified):
@@ -153,7 +157,7 @@ async def test_wrong_current_password_shares_the_login_counter(client):
         assert code(await client.patch("/users/me/password", json=bad, headers=headers)) == (400, "INVALID_CURRENT_PASSWORD")
     assert (await login(client)).status_code == 401  # 4번째 (로그인과 비밀번호 변경이 같은 카운터)
     assert code(await client.patch("/users/me/password", json=bad, headers=headers)) == (403, "ACCOUNT_LOCKED")
-    assert await lock_state() == (5, True)
+    assert await lock_state(device=True) == (5, True)
     good = {"current_password": PASSWORD, "new_password": "N3w-Passw0rd!"}
     assert code(await client.patch("/users/me/password", json=good, headers=headers)) == (403, "ACCOUNT_LOCKED")
 
@@ -168,7 +172,7 @@ async def test_concurrent_wrong_current_passwords_verify_exactly_five(client, ve
     assert len(verified) == 5
     codes = Counter(r.status_code for r in responses)
     assert codes[400] == 4 and codes[403] >= 1 and codes[403] + codes[429] == 6  # 잠기기 전 동시 요청은 429
-    assert await lock_state() == (5, True)
+    assert await lock_state(device=True) == (5, True)
 
 
 async def test_dev_unlock_endpoint(client):

@@ -96,6 +96,7 @@ def cleanup(login_id: str) -> None:
     statements = [
         f"delete from terms_consents where user_id in {u}",
         f"delete from refresh_tokens where user_id in {u}",
+        f"delete from user_devices where user_id in {u}",
         # 가입 인증은 user_id가 비어 있으므로 번호로도 지운다(남기면 번호당 15분 3번 발송 제한에 걸린다)
         f"delete from verification_codes where user_id in {u} or phone in (select phone from users where login_id = :l)",
         f"delete from agent_transfer_drafts where user_id in {u}",
@@ -136,6 +137,70 @@ async def signup_via_api(client, body: dict) -> None:
     token = verified.json()["data"]["verification_token"]
     response = await client.post("/users/signup", json={**body, "phone_verification_token": token})
     assert response.status_code == 201, response.text
+
+
+def origin_header() -> dict[str, str]:
+    """쿠키로 인증하는 요청(갱신·로그아웃·기기 해제)이 요구하는 Origin. 브라우저가 보내는 값을 흉내 낸다."""
+    return {"Origin": get_settings().cors_origin_list[0]}
+
+
+def cookie_value(response, name: str = "refresh_token") -> str | None:
+    """응답의 Set-Cookie에서 쿠키 원문을 꺼낸다. httpx 보관함에 맡기지 않는 이유: 설정(COOKIE_SECURE=true, Path=/api/users)
+    때문에 http://test/users/...로 가는 요청에는 보관함이 쿠키를 싣지 않는다 — 스크립트가 Cookie 헤더를 직접 만든다."""
+    from http.cookies import SimpleCookie
+
+    jar = SimpleCookie()
+    for header in response.headers.get_list("set-cookie"):
+        jar.load(header)
+    return jar[name].value if name in jar else None
+
+
+def cookie_headers(refresh_token: str | None = None, device_token: str | None = None) -> dict[str, str]:
+    """갱신 토큰·기기 토큰 쿠키 + Origin 헤더."""
+    parts = [f"{n}={v}" for n, v in (("refresh_token", refresh_token), ("device_token", device_token)) if v is not None]
+    return {**origin_header(), "Cookie": "; ".join(parts)}
+
+
+def register_device_sql(login_id: str) -> str:
+    """등록 기기를 SQL로 직접 만들고 기기 쿠키 원문을 돌려준다(스크립트 준비용).
+
+    실제 흐름(휴대폰 인증 → POST /users/login/device)은 번호당 15분 3번 발송 한도가 있어 기기를 여러 개 만들 수 없다.
+    기기 쿠키를 가진 요청은 휴대폰 인증 없이 '등록 기기' 채널로 로그인한다.
+    """
+    from avengers_bank.core.security import hash_refresh_token, new_refresh_token
+
+    raw = new_refresh_token()
+    one(
+        "insert into user_devices(user_id, token_hash, label) values ((select user_id from users where login_id = :l), :h, 'script')"
+        " returning device_id", l=login_id, h=hash_refresh_token(raw),
+    )
+    return raw
+
+
+async def login_via_api(client, login_id: str, password: str, device_token: str | None = None):
+    """POST /users/login. device_token(register_device_sql)이 있으면 등록 기기로 바로 로그인한다.
+    없고 새 기기 챌린지가 오면 실제 API로 휴대폰 인증을 끝낸다(개발용 문자함 = 같은 프로세스 메모리). 최종 응답을 돌려준다."""
+    import re
+
+    from avengers_bank.domains.verification.sms import dev_messages
+
+    headers = {"Cookie": f"device_token={device_token}"} if device_token else None
+    response = await client.post("/users/login", json={"login_id": login_id, "password": password}, headers=headers)
+    data = response.json().get("data") or {}
+    if data.get("status") != "DEVICE_VERIFICATION_REQUIRED":
+        return response
+    challenge = data["challenge_token"]
+    phone = one("select phone from users where login_id = :l", l=login_id)
+    sent = await client.post("/users/login/device/send", json={"challenge_token": challenge})
+    assert sent.status_code == 200, sent.text
+    code = re.search(r"\d{6}", dev_messages(phone)[0][0]).group()
+    verified = await client.post(
+        "/verification/phone/verify", json={"verification_id": sent.json()["data"]["verification_id"], "code": code}
+    )
+    assert verified.status_code == 200, verified.text
+    return await client.post("/users/login/device", json={
+        "challenge_token": challenge, "phone_verification_token": verified.json()["data"]["verification_token"],
+    })
 
 
 def run(coro):

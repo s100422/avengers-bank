@@ -26,6 +26,7 @@ uv run python -m avengers_bank.seed      # 상품 데이터가 필요합니다
 | `pg_refresh_concurrency.py` | 동시 토큰 갱신: 같은 갱신 토큰으로 10번 동시에 갱신해도 1번만 성공하고, 나머지는 재사용으로 걸려 세션 전체가 끊긴다 (C-083) |
 | `pg_single_session_concurrency.py` | 단일 세션: 같은 사용자로 5곳 동시 로그인해도, 갱신과 다른 곳 로그인이 겹쳐도 살아 있는 세션은 1개. users 잠금을 뺀 대조군은 2개 이상 살아남는다 |
 | `pg_login_lock_concurrency.py` | 로그인 잠금: 같은 아이디로 30곳에서 동시에 틀려도 비밀번호 검증은 정확히 5번, 그 뒤 잠김(맞는 비밀번호도 403). 같은 번호 인증번호 동시 8번 요청 → 3번만 발송. 선증가를 '읽고→쓰기'로 바꾼 대조군은 5번 넘게 검증된다 (C-090) |
+| `pg_device_channel_concurrency.py` | 로그인 채널 분리(기기 등록 B1): 새 기기 채널을 30곳에서 동시에 틀려도 검증은 정확히 5번·그 채널만 잠기고 주인의 등록 기기 로그인은 된다. 반대로 등록 기기 채널을 잠가도 새 기기 채널은 영향이 없다(챌린지). 선증가를 '읽고→쓰기'로 바꾼 대조군은 5번 넘게 검증된다 (마이그레이션 `9e0f1a2b3c4d` 적용 후 실행) |
 | `pg_account_password_concurrency.py` | 계좌 비밀번호 5회 잠금: 같은 계좌로 틀린 비밀번호 이체 20건 동시 → 검증 정확히 5번, 잠김, 맞는 비밀번호도 403. 계정 복구 시작(`/recovery/start`) 20곳 동시도 같은 카운터로 5에서 잠김(응답은 모두 같은 200). 행 잠금을 뺀 대조군은 5번 넘게 검증된다 |
 | `pg_withdrawal_concurrency.py` | 회원 탈퇴 ↔ 남이 그 계좌로 입금(동시) 20라운드: 어느 쪽이 먼저든 '탈퇴했는데 돈이 남은' 상태가 없다(탈퇴 성공+이체 404, 또는 탈퇴 막힘+이체 성공). 입출금 계좌 잠금을 뺀 대조군은 돈이 남는다 |
 | `pg_agent_confirm_concurrency.py` | AI 이체 초안 동시 확인: 같은 초안을 10번 동시에 확인해도 이체는 한 번 (C-070) |
@@ -41,6 +42,7 @@ uv run python scripts/pg_refresh_concurrency.py
 uv run python scripts/pg_single_session_concurrency.py
 uv run python scripts/pg_withdrawal_concurrency.py
 uv run python scripts/pg_login_lock_concurrency.py
+uv run python scripts/pg_device_channel_concurrency.py
 uv run python scripts/pg_account_password_concurrency.py
 uv run python scripts/pg_agent_confirm_concurrency.py
 uv run python scripts/pg_unique_violation_message.py

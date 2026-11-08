@@ -14,7 +14,9 @@ from datetime import date, timedelta
 import httpx
 from sqlalchemy import select
 
-from _common import ACCOUNT_PASSWORD, check, cleanup, connect, execute, finish, make_checking, one, run, signup_via_api
+from _common import (
+    ACCOUNT_PASSWORD, check, cleanup, connect, execute, finish, login_via_api, make_checking, one, run, signup_via_api,
+)
 from avengers_bank.core.database import engine
 from avengers_bank.domains.accounts.models import CheckingAccount
 from avengers_bank.domains.accounts.repository import account_repository
@@ -61,7 +63,7 @@ async def amain():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         body = {"login_id": LOGIN, "password": "Passw0rd!23", "name": "검증", "phone": "010-0000-0000"}
         await signup_via_api(client, body)  # 휴대폰 인증 → 가입 (C-090)
-        token = (await client.post("/users/login", json={"login_id": LOGIN, "password": "Passw0rd!23"})).json()["data"]["access_token"]
+        token = (await login_via_api(client, LOGIN, "Passw0rd!23")).json()["data"]["access_token"]  # 새 기기 인증까지
         headers = {"Authorization": f"Bearer {token}"}
         ids["user"] = one("select user_id from users where login_id = :l", l=LOGIN)
         ids["checking"] = make_checking(ids["user"], "110-777-400001", START, per=10**9, daily=10**9)

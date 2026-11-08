@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=5, gt=0)
     # 갱신 토큰(=세션) 수명. 갱신할 때마다 새로 이만큼 연장된다 → "이 시간 동안 아무것도 안 하면 로그아웃"(슬라이딩 세션)
     session_expire_minutes: int = Field(default=30, gt=0)
+    # 쿠키(갱신 토큰·기기 토큰)에 Secure를 붙인다. 운영(HTTPS)에서는 반드시 True. http://로 여는 개발·테스트에서만 끈다
+    cookie_secure: bool = True
+    # 두 쿠키가 브라우저에서 이 경로 아래로만 간다. 브라우저는 Next.js 프록시(/api/...)로 API를 부르므로 /api/users.
+    # 갱신·로그아웃·로그인·기기 API만 쿠키를 받고 나머지 API(계좌·이체 등)에는 아예 실려 가지 않는다
+    refresh_cookie_path: str = "/api/users"
+    # 기기 등록(B1) 쿠키 수명(일). 이 기간 안에 쓰지 않아도 쿠키가 사라지면 새 기기로 취급된다
+    device_cookie_days: int = Field(default=365, gt=0)
     db_echo: bool = False
     # 개발용 API(/dev/...)를 켠다. 운영 환경에서는 켜지 않는다.
     enable_dev_endpoints: bool = False
