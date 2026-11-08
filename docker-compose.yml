@@ -4,8 +4,9 @@
 #   docker compose down -v    # 중지 + 데이터 삭제
 services:
   db:
-    # 공식 PostgreSQL 17. 이전 pgvector 이미지와 같은 Debian(trixie) 기반이라 기존 볼륨의 정렬 규칙(glibc)이 달라지지 않는다.
-    image: postgres:17-trixie
+    # PostgreSQL 17 + pgvector (약관 검색, C-075). postgres:17-trixie와 같은 PG 빌드·Debian(trixie) 기반이라
+    # 기존 볼륨을 그대로 쓴다 (정렬 규칙(glibc)이 같다). 볼륨을 지우지 않고 이미지만 바꿔 다시 띄우면 된다.
+    image: pgvector/pgvector:pg17-trixie
     environment:
       POSTGRES_USER: postgres
       # .env의 POSTGRES_PASSWORD를 쓴다 (DATABASE_URL의 비밀번호와 같아야 한다). 처음 볼륨을 만들 때만 적용된다.

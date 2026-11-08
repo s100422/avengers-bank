@@ -32,6 +32,8 @@ from avengers_bank.domains.cards.schemas import (
     DebitCardCreate,
 )
 from avengers_bank.domains.products.service import product_service
+from avengers_bank.domains.terms import service as terms_service
+from avengers_bank.domains.terms.schemas import TermsConsentIn
 from avengers_bank.domains.users.schemas import UserResponse
 
 MAX_NUMBER_ATTEMPTS = 5
@@ -62,22 +64,24 @@ class CardService:
 
     async def issue_credit(self, db: AsyncSession, data: CreditCardCreate, user: UserResponse):
         return await self._issue(
-            db, KINDS["credit"], user, data.product_id, data.checking_account_id,
+            db, KINDS["credit"], user, data.product_id, data.checking_account_id, data.terms,
             payment_date=data.payment_date,
         )
 
     async def issue_debit(self, db: AsyncSession, data: DebitCardCreate, user: UserResponse):
-        return await self._issue(db, KINDS["debit"], user, data.product_id, data.checking_account_id)
+        return await self._issue(db, KINDS["debit"], user, data.product_id, data.checking_account_id, data.terms)
 
     async def _issue(
         self, db: AsyncSession, kind: CardKind, user: UserResponse,
-        product_id: int, checking_account_id: int, **fields,
+        product_id: int, checking_account_id: int, terms: TermsConsentIn, **fields,
     ):
         # 같은 테이블 안에서 번호가 겹치면 unique 제약(IntegrityError)이 막는다. 새 번호로 다시 시도한다.
         for _ in range(MAX_NUMBER_ATTEMPTS):
             try:
                 async with db.begin():
                     product = await product_service.require_card_product(db, product_id, kind.product_type)
+                    # 약관 동의 검증·기록은 발급과 같은 트랜잭션 (C-075)
+                    current, agreed = await terms_service.check_consent(db, kind.name, product_id, terms)
                     await account_service.get_owned(db, ACCOUNT_KINDS["checking"], checking_account_id, user)
                     if kind.name == "credit":
                         fields["credit_limit"] = product.credit_limit  # 상품 한도를 카드에 복사 (C-013)
@@ -87,6 +91,9 @@ class CardService:
                         card_num=self._new_card_num(kind), **fields,
                     )
                     await card_repository.save(db, card)
+                    await terms_service.record_consent(
+                        db, user, kind.name, getattr(card, kind.id_column), current, agreed
+                    )
                 return to_response(kind, card)
             except IntegrityError as e:
                 if "card_num" not in str(e.orig):

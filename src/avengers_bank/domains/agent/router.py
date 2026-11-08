@@ -12,6 +12,7 @@ from avengers_bank.domains.agent.schemas import (
     ChatResponse,
     DraftCancelResponse,
     DraftConfirmResponse,
+    MessageItem,
 )
 from avengers_bank.domains.agent.service import agent_service
 from avengers_bank.domains.users.schemas import UserResponse
@@ -28,6 +29,18 @@ async def chat(
 ):
     """AI 금융 비서에게 질문한다. 이체 요청이면 실행하지 않고 action(이체 확인 카드)을 돌려준다."""
     return SuccessResponse[ChatResponse](data=await agent_service.chat(data, user, client))
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=SuccessResponse[list[MessageItem]],
+    responses=error_responses(404),
+)
+async def conversation_messages(
+    conversation_id: int, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """내 대화의 메시지를 오래된 순서로 돌려준다 (답변의 이체 action·약관 citations 포함). 남의 대화는 404."""
+    return SuccessResponse[list[MessageItem]](data=await agent_service.list_messages(db, conversation_id, user))
 
 
 @router.post(

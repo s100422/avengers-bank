@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "documents": [
+    {
+      "document_key": "t.common",
+      "version": "1.0.0",
+      "path": "corpus/t.common.md"
+    },
+    {
+      "document_key": "t.account",
+      "version": "1.0.0",
+      "path": "corpus/t.account.md"
+    },
+    {
+      "document_key": "t.card",
+      "version": "1.0.0",
+      "path": "corpus/t.card.md"
+    },
+    {
+      "document_key": "t.optional",
+      "version": "1.0.0",
+      "path": "corpus/t.optional.md"
+    }
+  ],
+  "products": [
+    {
+      "product_code": "fx-checking",
+      "kind": "checking",
+      "seed_name": "CHECKING",
+      "terms": [
+        {
+          "document_key": "t.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "t.account",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "t.optional",
+          "version": "1.0.0",
+          "required": false,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "fx-deposit",
+      "kind": "deposit",
+      "seed_name": "DEPOSIT",
+      "terms": [
+        {
+          "document_key": "t.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "t.account",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        }
+      ]
+    },
+    {
+      "product_code": "fx-savings",
+      "kind": "savings",
+      "seed_name": "SAVINGS",
+      "terms": [
+        {
+          "document_key": "t.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "t.account",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        }
+      ]
+    },
+    {
+      "product_code": "fx-credit",
+      "kind": "credit",
+      "seed_name": "신용",
+      "terms": [
+        {
+          "document_key": "t.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "t.card",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        }
+      ]
+    },
+    {
+      "product_code": "fx-debit",
+      "kind": "debit",
+      "seed_name": "체크",
+      "terms": [
+        {
+          "document_key": "t.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "t.card",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        }
+      ]
+    }
+  ]
+}

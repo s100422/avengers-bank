@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Button, ErrorText, Field, Shell } from "@/components/ui";
+import { Button, ErrorText, Field, MoneyField, Shell } from "@/components/ui";
 import { AccountSummary, History, api, won } from "@/lib/api";
 
 type Result = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
@@ -142,7 +142,7 @@ function Transfer() {
             onPick={setTo}
           />
         </div>
-        <Field label="금액 (원)" name="amount" type="number" min={1} step={1} inputMode="numeric" required />
+        <MoneyField label="금액 (원)" name="amount" min={1} required />
         <ErrorText message={error} />
         <Button busy={busy} disabled={!accounts}>
           보내기

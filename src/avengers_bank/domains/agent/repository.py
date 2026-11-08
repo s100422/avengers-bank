@@ -17,6 +17,13 @@ class AgentRepository:
         )
         return list(reversed(list(await db.scalars(stmt))))
 
+    async def find_messages(self, db: AsyncSession, conversation_id: int) -> list[AgentMessage]:
+        stmt = (
+            select(AgentMessage).where(AgentMessage.conversation_id == conversation_id)
+            .order_by(AgentMessage.agent_message_id)
+        )
+        return list(await db.scalars(stmt))
+
     async def save(self, db: AsyncSession, obj):
         db.add(obj)
         await db.flush()

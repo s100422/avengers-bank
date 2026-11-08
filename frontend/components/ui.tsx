@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { token } from "@/lib/api";
 
 export function Brand() {
@@ -116,6 +116,55 @@ export function Field({
         {...props}
         className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 outline-none focus:border-coral focus-visible:ring-2 focus-visible:ring-coral/20"
       />
+    </label>
+  );
+}
+
+/** 1000000 → "100만 원", 123456789 → "1억 2,345만 6,789원". 만 원 미만은 null (숫자 그대로 읽기 쉬움) */
+export function koreanWon(value: number): string | null {
+  if (!Number.isSafeInteger(value) || value < 10_000) return null;
+  const units: [number, string][] = [[1_000_000_000_000, "조"], [100_000_000, "억"], [10_000, "만"]];
+  const parts: string[] = [];
+  let rest = value;
+  for (const [size, unit] of units) {
+    const n = Math.floor(rest / size);
+    if (n) parts.push(`${n.toLocaleString("ko-KR")}${unit}`);
+    rest %= size;
+  }
+  return rest ? `${parts.join(" ")} ${rest.toLocaleString("ko-KR")}원` : `${parts.join(" ")} 원`;
+}
+
+/** 금액 입력. 0이 많아도 헷갈리지 않게 입력칸 오른쪽에 "10만 원"처럼 읽어 준다. */
+export function MoneyField({
+  label,
+  onInput,
+  ...props
+}: { label: string } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "type">) {
+  const [value, setValue] = useState(String(props.value ?? props.defaultValue ?? ""));
+  const hint = koreanWon(Number(props.value ?? value));
+  const hintId = useId();
+  return (
+    <label className="block">
+      <span className="mb-1 block text-sm text-slate">{label}</span>
+      <span className="relative block">
+        <input
+          type="number"
+          inputMode="numeric"
+          step={1}
+          {...props}
+          aria-describedby={hint ? hintId : undefined}
+          onInput={(e) => {
+            setValue(e.currentTarget.value);
+            onInput?.(e);
+          }}
+          className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 pr-36 outline-none focus:border-coral focus-visible:ring-2 focus-visible:ring-coral/20"
+        />
+        {hint && (
+          <span id={hintId} className="pointer-events-none absolute inset-y-0 right-10 flex items-center text-sm text-coral tabular-nums">
+            {hint}
+          </span>
+        )}
+      </span>
     </label>
   );
 }

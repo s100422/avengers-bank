@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, TransferAction, agent, token } from "@/lib/api";
+import { ASSISTANT_ASK, ApiError, Citation, TransferAction, agent, termsHref, token } from "@/lib/api";
+import { RichText } from "./RichText";
 import { TransferCard } from "./TransferCard";
 
-type Msg = { id: number; role: "user" | "ai"; text: string; action?: TransferAction };
+type Msg = { id: number; role: "user" | "ai"; text: string; action?: TransferAction; citations?: Citation[] };
 
 const SUGGESTIONS = ["내 자산 요약해 줘", "최근 거래내역 알려줘", "다음 카드값을 낼 수 있어?", "내 예·적금 만기 알려줘"];
 
@@ -23,6 +25,24 @@ export function AssistantGate() {
 }
 
 let nextId = 1;
+
+// 새로고침해도 대화를 이어 보도록 이 탭에 대화 번호만 기억한다. 메시지는 서버에서 다시 불러온다
+const CONVO_KEY = "avengers_bank_conversation_id";
+const convo = {
+  get: () => {
+    try {
+      return Number(sessionStorage.getItem(CONVO_KEY)) || null;
+    } catch {
+      return null;
+    }
+  },
+  set: (id: number | null) => {
+    try {
+      if (id) sessionStorage.setItem(CONVO_KEY, String(id));
+      else sessionStorage.removeItem(CONVO_KEY);
+    } catch {}
+  },
+};
 
 // 넓은 화면에서 패널 폭(px). 왼쪽 가장자리를 끌거나 ←→ 키로 바꾸고, 이 브라우저에 기억한다
 const WIDTH_KEY = "avengers_bank_assistant_width";
@@ -46,6 +66,7 @@ function Assistant() {
   const wasOpen = useRef(false);
   const [width, setWidth] = useState(DEFAULT_W);
   const [resizing, setResizing] = useState(false);
+  const restored = useRef(false);
 
   useEffect(() => {
     try {
@@ -62,6 +83,41 @@ function Assistant() {
       localStorage.setItem(WIDTH_KEY, String(next));
     } catch {}
   }
+
+  // 다른 화면(약관 전문)이 질문을 채워 비서를 열게 한다. 보내기는 사용자가 누른다
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const text = (e as CustomEvent).detail;
+      if (typeof text === "string") setInput(text.slice(0, 1000));
+      setOpen(true);
+    };
+    window.addEventListener(ASSISTANT_ASK, onAsk);
+    return () => window.removeEventListener(ASSISTANT_ASK, onAsk);
+  }, []);
+
+  // 처음 열 때 이 탭이 기억한 대화를 서버에서 불러온다 (근거 약관 포함)
+  useEffect(() => {
+    if (!open || restored.current) return;
+    restored.current = true;
+    const id = convo.get();
+    if (!id) return;
+    agent
+      .messages(id)
+      .then((ms) => {
+        // 불러오는 사이 새 질문을 보냈다면 그 대화를 그대로 둔다
+        setConversationId((c) => c ?? id);
+        setMessages((now) =>
+          now.length
+            ? now
+            : // shortcut: 지난 이체 확인 카드는 다시 그리지 않는다(이미 처리한 초안을 또 누르지 않게). 필요하면 초안 상태 API로 판단한다
+              ms.map((m) => ({ id: nextId++, role: m.role === "user" ? "user" : "ai", text: m.content, citations: m.citations })),
+        );
+      })
+      .catch((e) => {
+        onAuthError(e);
+        convo.set(null); // 다른 사용자 대화이거나 사라진 대화
+      });
+  });
 
   // 열면 입력창으로, 닫으면 여는 버튼으로 포커스를 옮긴다
   useEffect(() => {
@@ -105,7 +161,8 @@ function Assistant() {
     try {
       const r = await agent.chat(text, conversationId);
       setConversationId(r.conversation_id);
-      add({ role: "ai", text: r.answer, action: r.action ?? undefined });
+      convo.set(r.conversation_id);
+      add({ role: "ai", text: r.answer, action: r.action ?? undefined, citations: r.citations });
     } catch (e) {
       onAuthError(e);
       setFailed({ text, error: (e as Error).message });
@@ -117,6 +174,7 @@ function Assistant() {
   function reset() {
     setMessages([]);
     setConversationId(null);
+    convo.set(null);
     setFailed(null);
     setInput("");
     inputRef.current?.focus();
@@ -216,16 +274,34 @@ function Assistant() {
 
             {messages.map((m) =>
               m.role === "user" ? (
-                <p key={m.id} className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-coral px-3.5 py-2 whitespace-pre-wrap text-paper">
+                <p key={m.id} className="msg-in ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-coral px-3.5 py-2 whitespace-pre-wrap text-paper">
                   <span className="sr-only">나: </span>
                   {m.text}
                 </p>
               ) : (
-                <div key={m.id} className="max-w-[90%] space-y-2">
-                  <p className="w-fit rounded-2xl rounded-bl-sm border border-line bg-paper px-3.5 py-2 whitespace-pre-wrap">
+                <div key={m.id} className="msg-in max-w-[92%] space-y-2">
+                  <div className="w-fit rounded-2xl rounded-bl-sm border border-line bg-paper px-3.5 py-2.5">
                     <span className="sr-only">AI 비서: </span>
-                    {m.text}
-                  </p>
+                    <RichText text={m.text} />
+                  </div>
+                  {!!m.citations?.length && (
+                    <ul aria-label="근거 약관" className="flex flex-wrap gap-1.5">
+                      {m.citations.map((c, i) => {
+                        const href = termsHref(c.document_version_id, c.section_id);
+                        if (!href) return null;
+                        return (
+                          <li key={i}>
+                            <Link
+                              href={href}
+                              className="inline-block rounded-full border border-line bg-paper px-2.5 py-1 text-xs text-slate hover:border-coral hover:text-ink"
+                            >
+                              {c.title} · {c.version} · {c.section_title}
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                   {m.action?.type === "TRANSFER_CONFIRMATION" && (
                     <TransferCard action={m.action} onDone={(text) => add({ role: "ai", text })} onAuthError={onAuthError} />
                   )}
@@ -233,10 +309,17 @@ function Assistant() {
               ),
             )}
 
-            {sending && <p className="w-fit rounded-2xl border border-line bg-paper px-3.5 py-2 text-slate">답변을 만드는 중…</p>}
+            {sending && (
+              <p className="msg-in typing flex w-fit items-center gap-1 rounded-2xl rounded-bl-sm border border-line bg-paper px-4 py-3.5">
+                <span className="sr-only">답변을 만드는 중…</span>
+                <span aria-hidden className="size-1.5 rounded-full bg-coral" />
+                <span aria-hidden className="size-1.5 rounded-full bg-coral" />
+                <span aria-hidden className="size-1.5 rounded-full bg-coral" />
+              </p>
+            )}
 
             {failed && (
-              <div role="alert" className="flex items-center gap-2 rounded-2xl border border-seal/40 bg-paper px-4 py-2 text-sm text-seal">
+              <div role="alert" className="msg-in flex items-center gap-2 rounded-2xl border border-seal/40 bg-paper px-4 py-2 text-sm text-seal">
                 <span className="flex-1">{failed.error}</span>
                 <button
                   type="button"

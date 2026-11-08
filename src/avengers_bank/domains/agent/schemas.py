@@ -21,10 +21,32 @@ class TransferAction(BaseModel):
     expires_at: datetime
 
 
+class Citation(BaseModel):
+    """서버가 이번 요청의 검색 결과로 확인한 약관 출처 (C-075)."""
+
+    source_id: str
+    document_version_id: int  # terms_version_id
+    title: str
+    version: str
+    section_id: str
+    section_title: str
+    url: str  # /terms/{document_version_id}#{section_id}
+
+
 class ChatResponse(BaseModel):
     conversation_id: int
     answer: str
     action: TransferAction | None = None
+    citations: list[Citation] = []
+
+
+class MessageItem(BaseModel):
+    message_id: int
+    role: Literal["user", "assistant"]
+    content: str
+    action: TransferAction | None = None
+    citations: list[Citation] = []
+    created_at: datetime
 
 
 class DraftConfirmResponse(BaseModel):

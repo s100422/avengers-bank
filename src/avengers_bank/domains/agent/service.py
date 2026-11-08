@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,13 +24,17 @@ from avengers_bank.domains.agent.prompts import build_system_prompt
 from avengers_bank.domains.agent.repository import agent_repository
 from avengers_bank.domains.agent.schemas import (
     ChatRequest,
+    Citation,
     ChatResponse,
     DraftCancelResponse,
     DraftConfirmResponse,
+    MessageItem,
     TransferAction,
 )
 from avengers_bank.domains.agent.tools import TOOLS, run_tool
 from avengers_bank.domains.agent.tools.common import as_utc, mask_num
+from avengers_bank.domains.agent.tools.terms import request_sources
+from avengers_bank.domains.terms.search import Passage
 from avengers_bank.domains.transfers.schemas import TransferCreate
 from avengers_bank.domains.transfers.service import transfer_service
 from avengers_bank.domains.users.schemas import UserResponse
@@ -43,6 +48,9 @@ HISTORY_MESSAGES = 10  # 모델에 넘기는 지난 대화 (사용자·AI 메시
 LIMIT_TEXT = "질문을 처리하는 데 단계가 너무 많이 필요합니다. 조금 더 구체적으로 나눠서 물어봐 주세요."
 EMPTY_TEXT = "답변을 만들지 못했습니다. 다시 질문해 주세요."
 
+# 모델이 답변에 붙이는 인용 표시. 사용자에게는 지우고 citations로만 보여 준다
+CITATION_MARKER = re.compile(r"\s?\[\[src:([^\]\s]{1,120})\]\]")
+
 TOOL_SPECS = [ToolSpec(t.name, t.description, t.input_schema) for t in TOOLS.values()]
 
 
@@ -50,6 +58,13 @@ class AgentService:
     # ── 채팅 ──────────────────────────────────────────────────────────
 
     async def chat(self, data: ChatRequest, user: UserResponse, client: ModelClient) -> ChatResponse:
+        token = request_sources.set({})  # 이번 요청에서 검색된 약관 출처만 인용·열람할 수 있다
+        try:
+            return await self._chat(data, user, client)
+        finally:
+            request_sources.reset(token)
+
+    async def _chat(self, data: ChatRequest, user: UserResponse, client: ModelClient) -> ChatResponse:
         turns: list[Turn] = [*await self._history(data.conversation_id, user), UserTurn(data.message)]
         system = build_system_prompt(today_kst())
         tool_log: list[dict] = []
@@ -76,8 +91,9 @@ class AgentService:
         else:
             logger.warning("agent 모델 호출 상한 도달 (user_id=%s)", user.user_id)
 
-        conversation_id = await self._save(data, user, answer, tool_log, action)
-        return ChatResponse(conversation_id=conversation_id, answer=answer, action=action)
+        answer, citations = extract_citations(answer, request_sources.get())
+        conversation_id = await self._save(data, user, answer, tool_log, action, citations)
+        return ChatResponse(conversation_id=conversation_id, answer=answer, action=action, citations=citations)
 
     async def _respond(self, client: ModelClient, system: str, turns: list[Turn]) -> ModelReply:
         try:
@@ -106,7 +122,8 @@ class AgentService:
         return conversation
 
     async def _save(
-        self, data: ChatRequest, user: UserResponse, answer: str, tool_log: list[dict], action: TransferAction | None
+        self, data: ChatRequest, user: UserResponse, answer: str, tool_log: list[dict], action: TransferAction | None,
+        citations: list[Citation],
     ) -> int:
         async with SessionLocal() as db, db.begin():
             if data.conversation_id is None:
@@ -118,8 +135,19 @@ class AgentService:
             await agent_repository.save(db, AgentMessage(
                 conversation_id=cid, role="assistant", content=answer, tool_calls=tool_log or None,
                 action=action.model_dump(mode="json") if action else None,
+                citations=[c.model_dump() for c in citations] or None,
             ))
         return cid
+
+    async def list_messages(self, db: AsyncSession, conversation_id: int, user: UserResponse) -> list[MessageItem]:
+        await self._owned_conversation(db, conversation_id, user)
+        return [
+            MessageItem(
+                message_id=m.agent_message_id, role=m.role, content=m.content, action=m.action,
+                citations=m.citations or [], created_at=m.created_at,
+            )
+            for m in await agent_repository.find_messages(db, conversation_id)
+        ]
 
     # ── 이체 초안 확인·취소 (사용자가 화면에서 직접 누른다. Tool로 등록하지 않는다) ──
 
@@ -169,6 +197,22 @@ class AgentService:
         if draft.status != "PENDING":
             raise ConflictException(code="DRAFT_NOT_PENDING", message="이미 처리되었거나 만료된 이체입니다.")
         return draft
+
+
+def extract_citations(answer: str, sources: dict[str, Passage] | None) -> tuple[str, list[Citation]]:
+    """답변의 [[src:id]] 표시를 모두 지우고, 이번 요청에서 실제로 검색된 id만 인용으로 남긴다 (처음 나온 순서).
+    모르는 id(지어낸 것·원문 속 주입 문구)는 버리고, 검색됐지만 인용하지 않은 출처는 보여 주지 않는다."""
+    sources = sources or {}
+    citations: dict[str, Citation] = {}
+    for sid in CITATION_MARKER.findall(answer):
+        p = sources.get(sid)
+        if p is not None and sid not in citations:
+            citations[sid] = Citation(
+                source_id=sid, document_version_id=p.terms_version_id, title=p.title, version=p.version,
+                section_id=p.section_id, section_title=p.section_title, url=p.url,
+            )
+    text = CITATION_MARKER.sub("", answer).strip()
+    return text or EMPTY_TEXT, list(citations.values())
 
 
 agent_service = AgentService()

@@ -34,6 +34,8 @@ from avengers_bank.domains.accounts.schemas import (
     SavingsAccountCreate,
 )
 from avengers_bank.domains.products.service import product_service
+from avengers_bank.domains.terms import service as terms_service
+from avengers_bank.domains.terms.schemas import TermsConsentIn
 from avengers_bank.domains.users.schemas import UserResponse
 
 MAX_NUMBER_ATTEMPTS = 5
@@ -60,7 +62,7 @@ def _kst_date(moment: datetime):
 class AccountService:
     async def open_checking(self, db: AsyncSession, data: CheckingAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["checking"], user, data.product_id,
+            db, KINDS["checking"], user, data.product_id, data.terms,
             nickname=data.nickname,
             per_transfer_limit=data.per_transfer_limit,
             daily_transfer_limit=data.daily_transfer_limit,
@@ -68,28 +70,36 @@ class AccountService:
 
     async def open_deposit(self, db: AsyncSession, data: DepositAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["deposit"], user, data.product_id,
+            db, KINDS["deposit"], user, data.product_id, data.terms,
             nickname=data.nickname, maturity_date=data.maturity_date,
         )
 
     async def open_savings(self, db: AsyncSession, data: SavingsAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["savings"], user, data.product_id,
+            db, KINDS["savings"], user, data.product_id, data.terms,
             nickname=data.nickname, maturity_date=data.maturity_date,
             monthly_payment=data.monthly_payment, monthly_deposit_date=data.monthly_deposit_date,
         )
 
-    async def _open(self, db: AsyncSession, kind: AccountKind, user: UserResponse, product_id: int, **fields):
+    async def _open(
+        self, db: AsyncSession, kind: AccountKind, user: UserResponse, product_id: int, terms: TermsConsentIn,
+        **fields,
+    ):
         # 같은 테이블 안에서 번호가 겹치면 unique 제약(IntegrityError)이 막는다. 새 번호로 다시 시도한다.
         for _ in range(MAX_NUMBER_ATTEMPTS):
             try:
                 async with db.begin():
                     await product_service.require_account_product(db, product_id, kind.product_type)
+                    # 약관 동의 검증·기록은 개설과 같은 트랜잭션: 한쪽이 실패하면 둘 다 롤백된다 (C-075)
+                    current, agreed = await terms_service.check_consent(db, kind.name, product_id, terms)
                     account = kind.model(
                         user_id=user.user_id, product_id=product_id,
                         account_num=self._new_account_num(kind), **fields,
                     )
                     await account_repository.save(db, account)
+                    await terms_service.record_consent(
+                        db, user, kind.name, getattr(account, kind.id_column), current, agreed
+                    )
                     await db.refresh(account)
                 return to_response(kind, account)
             except IntegrityError as e:

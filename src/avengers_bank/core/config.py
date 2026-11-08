@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     agent_model: str = "gemini-2.5-flash"
     agent_timeout_seconds: float = Field(default=30, gt=0)
+    # 약관 검색 (C-075). 문서와 질의는 반드시 같은 모델·차원으로 임베딩한다. 바꾸면 전체 재색인
+    terms_root: str = "docs/terms"
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimensions: int = Field(default=768, gt=0)
+    embedding_timeout_seconds: float = Field(default=20, gt=0)
+    # 이보다 낮은 벡터 유사도는 근거로 쓰지 않는다. 0.6 = scripts/eval_terms.py 실측(gemini-embedding-001·768, 2026-11-07):
+    # 기대 조항 최저 0.622, 근거 없는 질문 최고 0.594. 모델·차원을 바꾸면 다시 잰다
+    terms_min_score: float = Field(default=0.6, ge=-1, le=1)
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -17,6 +17,7 @@ from avengers_bank.domains.users.schemas import UserResponse
 
 class CardItem(BaseModel):
     card_type: str  # credit / debit
+    card_id: int  # card_type과 함께 카드를 가리킨다 (가입 당시 약관 검색의 subject_id)
     card_num_masked: str
     status: str
     outstanding_amount: int | None  # 신용카드 미결제액 (청구 전 + 미납 청구서)
@@ -83,7 +84,7 @@ async def get_card_payment_status(db: AsyncSession, user: UserResponse, args: No
                 entry["unpaid"] += unpaid
                 entry["outstanding"] += outstanding
             cards.append(CardItem(
-                card_type=kind.name, card_num_masked=mask_num(card.card_num), status=card.status,
+                card_type=kind.name, card_id=getattr(card, kind.id_column), card_num_masked=mask_num(card.card_num), status=card.status,
                 outstanding_amount=outstanding, unpaid_bill_total=unpaid, next_payment_date=next_day,
                 next_payment_basis=basis, payment_account_name=entry["name"],
                 payment_account_num_masked=mask_num(entry["account"].account_num),

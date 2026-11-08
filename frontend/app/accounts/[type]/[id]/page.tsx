@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { DEFAULT_FILTER, Filter, HistoryFilterBar, toQuery } from "@/components/history-filter";
-import { Button, ErrorText, Field, Shell } from "@/components/ui";
-import { AccountSummary, HISTORY_TYPE, History, KIND, api, won } from "@/lib/api";
+import { ConsentRecord } from "@/components/terms/ConsentRecord";
+import { Button, ErrorText, MoneyField, Shell } from "@/components/ui";
+import { AccountSummary, HISTORY_TYPE, History, KIND, TermsKind, api, won } from "@/lib/api";
 
 type Account = {
   account_num: string;
@@ -73,7 +74,7 @@ function PayIn({
           ))}
         </select>
       </label>
-      <Field label="금액 (원)" name="amount" type="number" min={1} step={1} defaultValue={suggested} required />
+      <MoneyField label="금액 (원)" name="amount" min={1} defaultValue={suggested} required />
       {msg && <p role="status" className={`text-sm ${msg.ok ? "text-slate" : "text-seal"}`}>{msg.text}</p>}
       <Button busy={busy}>{label}하기</Button>
     </form>
@@ -172,6 +173,7 @@ function AccountDetail() {
           </ul>
         )}
       </section>
+      {(["checking", "deposit", "savings"] as string[]).includes(type) && <ConsentRecord kind={type as TermsKind} subjectId={id} />}
     </>
   );
 }

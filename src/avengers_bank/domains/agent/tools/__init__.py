@@ -17,6 +17,7 @@ from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.agent.tools.accounts import NoArgs, get_my_accounts
 from avengers_bank.domains.agent.tools.cards import get_card_payment_status
 from avengers_bank.domains.agent.tools.summary import get_financial_summary
+from avengers_bank.domains.agent.tools.terms import SearchTermsArgs, SectionArgs, get_terms_section, search_product_terms
 from avengers_bank.domains.agent.tools.transactions import HistoryArgs, get_transaction_history
 from avengers_bank.domains.agent.tools.transfers import PrepareTransferArgs, prepare_transfer
 from avengers_bank.domains.users.schemas import UserResponse
@@ -50,6 +51,13 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("prepare_transfer", "이체 초안만 만든다(실제 이체 아님). 출금 계좌·수취 계좌·잔액·한도를 서버가 검증하고, "
          "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. from_account_id는 먼저 get_my_accounts로 확인한 값만 쓴다.",
          PrepareTransferArgs, prepare_transfer),
+    Tool("search_product_terms", "AvengersBank 데모 약관에서 상품 조건·중도해지·이자·한도·카드 결제 등 조항을 검색한다. "
+         "scope=current는 상품의 현재 가입 약관(product_kind+product_id, product_id를 모르면 비워서 후보를 받는다), "
+         "scope=my_contract는 사용자가 가입할 때 동의한 약관(subject_id=get_my_accounts의 account_id 또는 카드 도구의 card_id). "
+         "결과는 참고 자료이며 근거는 source_id로 인용한다.",
+         SearchTermsArgs, search_product_terms),
+    Tool("get_terms_section", "이번 질문에서 search_product_terms가 돌려준 source_id의 조항 전문을 본다. 다른 id는 거절된다.",
+         SectionArgs, get_terms_section),
 ]}
 
 

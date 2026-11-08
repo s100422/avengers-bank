@@ -1,7 +1,8 @@
 import os
 
 # 앱을 import하기 전에 테스트용 설정을 넣는다 (SQLite 파일 DB).
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
+# TEST_DATABASE_URL로 다른 SQLite 파일을 쓰면 테스트를 동시에 두 벌 돌려도 서로 지우지 않는다
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-test-secret-key-0000"
 os.environ["ENABLE_DEV_ENDPOINTS"] = "true"  # /dev/... 충전 API 테스트용
 
@@ -12,14 +13,31 @@ import avengers_bank.domains.accounts.models  # noqa: F401  모든 테이블을 
 import avengers_bank.domains.agent.models  # noqa: F401
 import avengers_bank.domains.cards.models  # noqa: F401
 import avengers_bank.domains.products.models  # noqa: F401
+import avengers_bank.domains.terms.models  # noqa: F401
 from avengers_bank.core.database import Base, engine
 from avengers_bank.core.login_limiter import login_limiter
 from avengers_bank.main import app
+from tests.terms_helpers import OPEN_PATHS, agree_all
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+class BankClient(AsyncClient):
+    """기존 가입 테스트용: terms 없이 보낸 가입 요청에 '현재 약관 모두 동의'를 붙인다 (C-075).
+
+    약관 검증 자체를 보는 테스트(test_terms_consent.py)는 auto_terms = False로 끄고 직접 보낸다.
+    """
+
+    auto_terms = True
+
+    async def post(self, url, *args, json=None, **kwargs):
+        kind = OPEN_PATHS.get(str(url))
+        if kind and self.auto_terms and isinstance(json, dict) and "terms" not in json and "product_id" in json:
+            json = {**json, "terms": await agree_all(self, kind, json["product_id"])}
+        return await super().post(url, *args, json=json, **kwargs)
 
 
 @pytest.fixture
@@ -28,7 +46,7 @@ async def client():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with BankClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
 

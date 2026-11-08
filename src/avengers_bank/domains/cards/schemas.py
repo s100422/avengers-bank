@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from avengers_bank.domains.accounts.schemas import Amount
+from avengers_bank.domains.terms.schemas import TermsConsentIn
 
 # ── 요청 ──────────────────────────────────────────────────────────────
 
@@ -12,12 +13,14 @@ class CreditCardCreate(BaseModel):
     """신용 한도는 받지 않는다. 상품(card_products)의 한도가 그대로 복사된다 (C-013)."""
 
     product_id: int
+    terms: TermsConsentIn  # 화면에서 본 약관 집합과 항목별 동의 (C-075)
     checking_account_id: int  # 결제 계좌
     payment_date: int = Field(ge=1, le=31)  # 매월 결제일
 
 
 class DebitCardCreate(BaseModel):
     product_id: int
+    terms: TermsConsentIn  # 화면에서 본 약관 집합과 항목별 동의 (C-075)
     checking_account_id: int  # 출금 계좌
 
 

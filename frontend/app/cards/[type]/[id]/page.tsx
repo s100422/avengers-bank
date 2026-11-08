@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ConsentRecord } from "@/components/terms/ConsentRecord";
 import { ErrorText, Shell } from "@/components/ui";
-import { api, won } from "@/lib/api";
+import { TermsKind, api, won } from "@/lib/api";
 
 type Card = {
   card_type: "credit" | "debit";
@@ -184,6 +185,7 @@ function CardDetail() {
           </ul>
         )}
       </section>
+      {(["credit", "debit"] as string[]).includes(type) && <ConsentRecord kind={type as TermsKind} subjectId={id} />}
     </>
   );
 }

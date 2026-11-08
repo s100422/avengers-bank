@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "documents": [
+    {"document_key": "r.common", "version": "1.0.0", "path": "corpus/r.common.md"},
+    {"document_key": "r.marketing", "version": "1.0.0", "path": "corpus/r.marketing.md"},
+    {"document_key": "r.deposit.rules", "version": "1.0.0", "path": "corpus/r.deposit.rules.md"},
+    {"document_key": "r.credit.rules", "version": "1.0.0", "path": "corpus/r.credit.rules.md"},
+    {"document_key": "r.product.deposit-a", "version": "1.0.0", "path": "corpus/r.product.deposit-a.md"}
+  ],
+  "products": [
+    {
+      "product_code": "rag-deposit-a", "kind": "deposit", "seed_name": "RAG 테스트 예금",
+      "terms": [
+        {"document_key": "r.common", "version": "1.0.0", "required": true, "order": 1},
+        {"document_key": "r.deposit.rules", "version": "1.0.0", "required": true, "order": 2},
+        {"document_key": "r.product.deposit-a", "version": "1.0.0", "required": true, "order": 3}
+      ]
+    },
+    {
+      "product_code": "rag-credit-a", "kind": "credit", "seed_name": "RAG 테스트 신용카드",
+      "terms": [
+        {"document_key": "r.common", "version": "1.0.0", "required": true, "order": 1},
+        {"document_key": "r.credit.rules", "version": "1.0.0", "required": true, "order": 2}
+      ]
+    }
+  ]
+}

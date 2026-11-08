@@ -37,6 +37,7 @@ class AgentMessage(Base):
     # [{"name": "get_my_accounts", "ok": true}, ...] — 결과 값은 남기지 않는다
     tool_calls: Mapped[list | None] = mapped_column(JSON)
     action: Mapped[dict | None] = mapped_column(JSON)  # 이체 확인 action (마스킹된 값만)
+    citations: Mapped[list | None] = mapped_column(JSON)  # 서버가 검증한 약관 출처 (C-075)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -85,13 +85,14 @@
 | transfers | 3 / 3 | ✅ 구현 | C-022 |
 | cards | 10 / 10 | ✅ 구현 | C-023 |
 | dev (설계 외) | 1 | ✅ 구현 | C-021 |
+| terms (설계 외) | 3 + 가입 5종 동의 + Agent Tool 2개 | ✅ 구현 (문서는 초안, 발행 전) | C-075 |
 | 인프라 | 최초 마이그레이션, docker compose, 시드 | ✅ | C-014, C-015, C-019 |
 
 ### 검증 현황
 
 | 방법 | 범위 | 결과 |
 |---|---|---|
-| pytest (SQLite) | 전체 | 166개 통과 |
+| pytest (SQLite) | 전체 | 226개 통과 (PostgreSQL 통합 테스트 포함 실행, C-075) |
 | 실제 PostgreSQL: 마이그레이션 | upgrade → downgrade → upgrade, `alembic check` | 통과 (C-014) |
 | 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025) |
 | 서버를 띄운 HTTP 확인 | 계좌, 충전, 이체, 카드, 청구서 | 통과 |
@@ -3506,6 +3507,119 @@ C-070에서 Anthropic Claude(`claude-opus-5-5`, effort `low`, 거절 시 서버 
 - `tsc --noEmit`, `npm run lint` 통과.
 - 브라우저(1100px, 임시 사용자, 확인 뒤 삭제): 끌어서 340 → 439px(본문 여백도 439px, 저장됨), → 키 3번 367px, 최소 300px, 최대 540px, 가로 스크롤 없음. 540px로 넓힌 뒤 창을 1024px로 줄이면 464px로 줄어든다.
 
+### C-074. AI 답변을 서식 있게 보여 주기 (굵게·목록) + 등장 애니메이션
+
+- **날짜:** 2026-11-07
+- **분류:** 구조
+- **상태:** 적용 (실제 Gemini 답변으로 확인)
+- **바뀐 파일:**
+  - `frontend/components/assistant/RichText.tsx` (새): AI 답변의 `**굵게**`, 목록(`-` `*` `•` `1.`), 문단만 React 요소로 그린다. HTML은 해석하지 않는다.
+  - `frontend/components/assistant/Assistant.tsx`: AI 답변을 `RichText`로, 답변 기다리는 동안 점 세 개 표시, 메시지에 등장 애니메이션
+  - `frontend/app/globals.css`: `msg-in`(떠오르며 나타남), `typing`(점 튀기) 애니메이션. 움직임 줄이기 설정이면 끔
+  - `src/avengers_bank/domains/agent/prompts.py`: 서식 규칙(첫 줄 요약, `- ` 목록, 굵게는 이름에만, 제목·표·코드 금지)
+
+#### 변경 전
+모델이 마크다운으로 답하면 `**비상금 예금 (120-***-**9722)**`, `*   ` 같은 기호가 그대로 보였다.
+
+#### 변경 후
+- 목록 항목은 연한 피치 바탕의 한 줄 카드(코랄 점, 번호 목록은 동그라미 숫자)로, 70ms 간격으로 차례로 나타난다.
+- 사용자·AI 메시지와 오류는 아래에서 살짝 떠오르며 나타난다. 답변을 기다리는 동안 "답변을 만드는 중…" 글 대신 점 세 개가 튄다(화면 읽기 도구에는 글로 읽힘).
+- 마스킹된 번호(`120-***-**9722`, `4000-****-****-9012`)의 `*`는 굵게 표시로 읽지 않는다. 처음에 `**`를 굵게로 잘못 읽어 번호가 깨지는 것을 실제 답변에서 발견해 고쳤다.
+
+#### 이유
+- 사용자 요청: 기호가 그대로 나와서 보기 안 좋다, 애니메이션 등으로 보기 좋게.
+- 마크다운 라이브러리는 이 정도 서식에 비해 커서 넣지 않았다.
+
+#### 영향 범위
+- 프론트 표시와 모델 지침만. API·저장 데이터는 같다(답변은 여전히 마크다운 글).
+
+#### 검증
+- `tsc --noEmit`, `npm run lint` 통과. 굵게 처리 자체 확인 4건(이름만 굵게, 마스킹 번호가 들어간 굵게, 카드번호, 짝 없는 `**`).
+- 실제 Gemini에 "내 예·적금 만기 알려줘": 요약 한 줄 + 예금·적금 두 줄 카드로 보이고 번호가 `120-***-**2597`로 온전함(임시 사용자, 확인 뒤 삭제).
+
+### C-075. 상품 약관 동의(버전 보존) + 약관 검색 RAG Tool + 검증된 출처
+
+- **날짜:** 2026-11-07
+- **분류:** DB 스키마 · API · 구조
+- **상태:** 적용 (로컬. 실제 Gemini 임베딩·채팅으로 확인, 운영 DB에는 적용하지 않음)
+- **역할:** 약관 문서·상품 연결·평가 질문은 Codex(`docs/terms/`, 본문 수정하지 않음). 이 항목은 앱 쪽 전부.
+- **바뀐 파일:**
+  - `src/avengers_bank/domains/terms/` (새): `models.py`(버전·적용 집합·동의·색인 테이블, pgvector `Vector` 타입), `markdown.py`(front matter·`## [id]` 조항), `loader.py`(manifest·corpus 검증), `publish.py`(발행 명령), `service.py`(현재 집합·동의 검증/기록·가입 당시 약관), `router.py`(`/terms/...`), `schemas.py`, `embedding.py`(Gemini 임베딩 경계), `chunking.py`, `indexing.py`(색인 명령), `search.py`
+  - `alembic/versions/2026_11_07_1200-a7c4e6f8b0d2_add_terms_tables.py` (새): `vector` 확장, 약관 테이블 7개, `account_products/card_products.product_code`, `agent_messages.citations`
+  - `accounts/service.py` `_open`, `cards/service.py` `_issue`, 두 `schemas.py`의 `*Create`: `terms` 필수, 동의 검증·기록을 개설·발급과 같은 트랜잭션에
+  - `agent/tools/terms.py` (새, `search_product_terms`·`get_terms_section`), `agent/tools/__init__.py`, `agent/tools/cards.py`(`card_id` 추가), `agent/service.py`(요청별 출처 목록·인용 추출·저장), `agent/schemas.py`(`citations`), `agent/router.py`·`repository.py`(대화 메시지 조회), `agent/prompts.py`(약관 규칙, C-074 서식 규칙 뒤에 추가)
+  - `core/config.py`: `terms_root`, `embedding_model`, `embedding_dimensions`, `embedding_timeout_seconds`, `terms_min_score`
+  - `docker-compose.yml`: `postgres:17-trixie` → `pgvector/pgvector:pg17-trixie` (C-048의 반대 방향, 이유는 아래)
+  - 프론트: `app/open/[kind]/[[...product]]/page.tsx`(약관 동의 단계), `app/terms/[versionId]/page.tsx`(새, 전문 보기), `components/terms/TermsMarkdown.tsx`·`ConsentRecord.tsx`(새), 계좌·카드 상세(가입 당시 약관 보기), `components/assistant/Assistant.tsx`(출처 칩·대화 복원·"AI에게 질문하기"), `lib/api.ts`
+  - 테스트: `tests/test_terms_consent.py`, `test_terms_rag.py`, `test_terms_pg_consent.py`, `test_terms_pg.py`, `tests/terms_helpers.py`, `tests/fixtures/terms*/`, `tests/conftest.py`
+  - `scripts/eval_terms.py`(새), `docs/TERMS_RAG.md`(새, 운영 안내), `docs/TERMS_EVAL.md`(새, 평가 결과), `.env.example`
+
+#### 변경 전
+```python
+class DepositAccountCreate(BaseModel):
+    product_id: int
+    maturity_date: date
+```
+가입은 상품만 고르면 됐고 약관·동의 기록이 없었다. AI 비서는 계좌·카드 조회와 이체 초안만 할 수 있어서 "중도해지하면 이자가 어떻게 돼?"에 근거 없이 답하거나 모른다고 했다.
+
+#### 변경 후
+```python
+class DepositAccountCreate(BaseModel):
+    product_id: int
+    terms: TermsConsentIn  # {revision_id, set_hash, agreements: [{terms_version_id, agreed}]}
+    maturity_date: date
+```
+```python
+async with db.begin():
+    await product_service.require_account_product(db, product_id, kind.product_type)
+    current, agreed = await terms_service.check_consent(db, kind.name, product_id, terms)  # 상품 행 FOR SHARE
+    account = ...; await account_repository.save(db, account)
+    await terms_service.record_consent(db, user, kind.name, account_id, current, agreed)
+```
+- **불변 스냅샷:** 발행 명령이 `docs/terms`를 검증해 `terms_versions`에 넣는다. 같은 `(document_key, version)`의 본문이 다르면 거절한다. 버전은 지우지 않고, 현재 집합에서 빠지면 `retired`.
+- **상품 연결:** 새 `product_code` 컬럼. 처음엔 `(종류, 시드 이름)`이 정확히 1개일 때만 연결하고 코드를 저장한다. 계좌·카드 상품 ID가 겹쳐서 항상 `(kind, product_id)`로 다룬다.
+- **동의 검증(서버):** 사용자가 본 `revision_id·set_hash`가 지금 집합과 같은지(아니면 409 `TERMS_OUTDATED`), 항목이 집합과 정확히 같은지(중복·누락·다른 상품·없는 버전 → 400 `TERMS_INVALID`), 필수에 모두 동의했는지(400 `TERMS_REQUIRED_NOT_AGREED`), `agreed`는 StrictBool. 약관 없는 상품은 409 `TERMS_NOT_CONFIGURED`(조용히 건너뛰지 않음). 동의 거부한 선택 약관도 `agreed=false`로 기록. IP·기기 정보는 받지 않는다.
+- **동시성:** 가입은 상품 행 `FOR SHARE`, 발행은 `FOR UPDATE`. 발행 중이면 가입이 기다렸다가 새 집합을 보고 `TERMS_OUTDATED`, 가입 중이면 발행이 기다린다(가입은 자신이 본 집합으로 기록).
+- **기존 계좌·카드:** 동의 기록을 만들지 않는다. 조회하면 `has_record: false`.
+- **검색:** 조항 단위 청크 + Gemini 임베딩(`gemini-embedding-001`, 768) + pgvector 정확 검색 + 한국어 bigram 보정, 임계값 0.6. 범위(상품·버전)는 서버가 먼저 정한다. 색인 세대를 다 만든 뒤에만 활성화. 자세한 기준은 `docs/TERMS_RAG.md`.
+- **출처:** 모델은 `[[src:{버전ID}:{조항ID}]]` 표시만 하고, 서버가 이번 요청에서 검색된 ID만 `citations`로 만든다. 링크는 정확한 버전의 조항(`/terms/12#early-close`).
+- **상품 이름 해석:** 모델이 상품 ID 없이 검색하면, 질문·`product_name`에 상품 이름이 정확히 하나만 나올 때만 서버가 그 상품으로 정한다(아래 "실제 확인"에서 발견해 추가).
+
+#### 이유
+- 가입 시점에 "무엇에 동의했는지"를 나중에 증명할 수 있어야 한다. 화면 체크박스만 보면 API를 직접 부르는 요청은 막을 수 없다.
+- 재현 시나리오(동시성): "사용자 A가 v1 약관 화면을 열어 둔 사이 v2가 발행되면, A는 v1에 동의했는데 서버가 v2로 기록하거나, v2 집합 아래 v1 동의로 가입된다." → revision 비교 + 상품 행 잠금으로 막았다.
+- 재현 시나리오(검색): "적금 질문에 예금 약관이, 새 가입자 질문에 예전 버전이 섞여 답이 틀린다." → 상품·버전 필터를 검색 전에 적용, 색인이 안 된 새 버전은 예전 버전으로 대신하지 않고 `TERMS_INDEX_NOT_READY`.
+- 출처를 모델이 만들게 두면 없는 링크·다른 버전 링크가 나온다 → 서버가 검색 결과로만 만든다.
+- **pgvector 이미지로 되돌린 이유:** C-048에서 "쓰지 않는 확장"이라 공식 이미지로 바꿨는데, 이번에 실제로 쓰게 됐다. 두 이미지의 PostgreSQL 빌드가 같아(`17.11 (Debian 17.11-1.pgdg13+2)`) 기존 볼륨을 그대로 썼다(바꾸기 전 `pg_dump` 백업).
+
+#### 영향 범위
+- **API 호환성 깨짐:** 가입 5개 API가 `terms` 없이 오면 422. 프론트는 함께 바꿨다. 다른 클라이언트도 `GET /terms/products/...` 결과를 보내야 한다.
+- **약관을 발행하지 않은 DB에서는 가입이 막힌다**(409). 로컬 개발 DB는 마이그레이션만 했고 **아직 발행하지 않았다** — 문서가 초안이라서다. 가입을 쓰려면 발행 명령을 돌린다(`docs/TERMS_RAG.md`).
+- 기존 테스트 187개는 `tests/conftest.py`의 `BankClient`가 `terms` 없는 가입 요청에 "현재 약관 모두 동의"를 붙여 그대로 통과한다(약관이 없는 테스트 상품에는 필수 약관 1개짜리 집합을 만든다). 동의 검증 자체는 `test_terms_consent.py`가 이 기능을 끄고 확인한다.
+- `alembic check` 차이 없음, downgrade → upgrade 확인. downgrade는 `vector` 확장을 지우지 않는다.
+
+#### 검증
+- pytest 226개 통과(PostgreSQL 통합 테스트 포함, `TEST_PG_DATABASE_URL` 설정 시. 없으면 3개 건너뜀).
+  - 동의: 5개 가입 경로 모두 필수 미동의·`terms` 없음·오래된 revision 차단, 조작(중복·누락·없는 버전·다른 상품 집합·문자열 "true"), 선택 거부 가입, 발급 실패 시 동의 롤백, 동의 기록 실패 시 계좌 롤백, v2 발행 후 이전 화면 제출 → 재동의, 예전 원문·동의 보존, 남의 기록 404, 기존 계좌 기록 없음, AI 키 없이 열람.
+  - PostgreSQL 실제 잠금(`test_terms_pg_consent.py`): 발행 중 가입 → 대기 후 `TERMS_OUTDATED`, 가입 중 발행 → 대기, 가입은 v1으로 기록.
+  - 검색(`test_terms_rag.py`, 가짜 임베딩): 상품·버전 필터, 공통 약관은 연결된 경우만, 표·예외 한 청크, 재색인 중복 없음, 차원 불일치, 색인 미준비, 근거 부족, 다른 상품 섞임 없음, 문서 속 프롬프트 주입, 지어낸 출처 제거, 대화 다시 열기 출처 유지, 상품 이름 해석. `test_terms_pg.py`: pgvector `<=>` 경로.
+- 실제 Codex 문서: 로더 검증 통과(21개·15개 상품). 개발 DB에 `--dry-run` 발행 → 15개 상품이 시드 이름으로 정확히 연결(ID가 순서대로가 아님: `credit-shopping → credit#4`).
+- 임시 DB(`avengers_bank_e2e`)에서 실제로: 발행 21개 → 다시 발행 0개 변경, 색인 21개·청크 123개 → 다시 색인 0개 처리, 가입(미동의 400 → 동의 201 → 동의 기록 3건), 실제 Gemini 채팅 질문 5개 + 새 대화 질문 4개.
+- 검색 평가(`docs/TERMS_EVAL.md`, 실제 임베딩): hit@3 24/24, hit@1 23/24, 섞임 0, 근거 부족 1/1.
+- 프론트: `tsc --noEmit`, `npm run lint`, `npm run build` 통과. **브라우저로 직접 눌러 보지는 않았다.**
+
+#### 실제 확인에서 발견해 고친 것
+- "어벤져스 정기예금 중도해지하면?"에 모델이 상품 ID를 몰라 후보만 다시 물었다 → 서버가 정확한 상품 이름이면 상품을 정하도록(`named_product`) 고쳤다. 종류 이름 한 단어("정기예금")나 두 상품이 같이 나오면 고르지 않는다.
+- "쇼핑 신용카드 할인이 실제로 계산돼?"에 검색 없이 "명세서에서 확인하세요"라고 답했다 → 혜택·할인·수수료·가입 대상도 반드시 검색하도록 프롬프트를 고쳤다. 고친 뒤 "할인은 데모에서 계산하지 않는다"를 출처 2개와 함께 답했다.
+- 같은 대화 뒤쪽 질문에서 검색을 건너뛰고 상품 소개 문구("만 19~34세만 가입")로 틀리게 답했다 → "질문마다 새로 검색" 규칙을 넣었다. 새 대화로 두 번 다시 물었을 때는 "데모에서는 나이 확인을 하지 않는다"를 출처와 함께 답했다. **규칙을 넣은 뒤 같은 대화 안에서 다시 묻는 확인은 하지 못했다.**
+
+#### 팀 논의 포인트
+- **임계값 0.6의 여유가 작다:** 기대 조항 최저 0.622, 근거 없는 질문 최고 0.594, 근거 없는 평가 질문은 1개뿐. 평가 질문을 늘리고 다시 재야 한다.
+- **모델 답변 평가는 수동 9문항뿐이다.** 검색 평가는 자동이지만, "모델이 검색하고 인용하는지"는 자동 평가가 없다(실제 모델 호출 비용).
+- 약관 버전을 보존해도 **가입 당시 금리는 보존되지 않는다**(해지 때 상품 테이블 금리를 읽음, `docs/terms/IMPLEMENTATION_NOTES.md`). 별도 결정이 필요하다.
+- 문서가 모두 초안이다. 실제 발행일(`--effective-from`)과 운영 DB 확장 활성화는 정해야 한다.
+- 출처 칩은 "인용한 것"만 보인다. 모델이 인용 표시를 빠뜨리면 근거를 썼어도 출처가 안 보인다(지어낸 출처보다 낫다고 판단).
+
 ---
 
 ## 부록 A. 초기 리뷰(2026-11-04) 항목 처리 현황
@@ -3601,6 +3715,8 @@ C-070에서 Anthropic Claude(`claude-opus-5-5`, effort `low`, 거절 시 서버 
 | C-071 | 2026-11-06 | 구조 | AI 비서 모델 공급자를 Gemini(`google-genai`, `gemini-2.5-flash`)로 변경 | 적용 |
 | C-072 | 2026-11-07 | 구조 | AI 비서 패널: 홈을 옆으로 밀기, 340px로 작게, 좁으면 비서만 | 적용 |
 | C-073 | 2026-11-07 | 구조 | AI 비서 패널 폭을 경계선 끌기·←→ 키로 조절 | 적용 |
+| C-074 | 2026-11-07 | 구조 | AI 답변 서식(굵게·목록 카드) + 등장·입력 중 애니메이션 | 적용 |
+| C-075 | 2026-11-07 | DB 스키마 | 상품 약관 동의(버전 보존·동시성) + 약관 검색 RAG Tool(pgvector) + 검증된 출처 | 적용 |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`

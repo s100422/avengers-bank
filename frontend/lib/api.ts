@@ -10,7 +10,8 @@ export const token = {
 };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  // code: 서버 오류 코드(TERMS_OUTDATED 등). 화면이 코드별로 다르게 처리할 때 쓴다
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -38,7 +39,7 @@ export async function api<T>(path: string, body?: unknown, method?: "PATCH" | "P
     const err = json?.error;
     const detail = err?.details?.[0];
     const message = detail ? `${detail.loc.at(-1)}: ${detail.msg}` : err?.message;
-    throw new ApiError(res.status, message ?? `요청이 실패했습니다 (${res.status}).`);
+    throw new ApiError(res.status, message ?? `요청이 실패했습니다 (${res.status}).`, err?.code);
   }
   return json.data as T;
 }
@@ -101,7 +102,27 @@ export type TransferAction = {
   expires_at: string;
 };
 
-export type AgentReply = { conversation_id: number; answer: string; action: TransferAction | null };
+// 비서 답변이 근거로 쓴 약관 조항. 링크는 url을 믿지 않고 id로 직접 만든다 (termsHref)
+export type Citation = {
+  source_id: string;
+  document_version_id: number;
+  title: string;
+  version: string;
+  section_id: string;
+  section_title: string;
+  url: string;
+};
+
+export type AgentReply = { conversation_id: number; answer: string; action: TransferAction | null; citations?: Citation[] };
+
+export type AgentMessage = {
+  message_id: number;
+  role: "user" | "assistant";
+  content: string;
+  action: TransferAction | null;
+  citations: Citation[];
+  created_at: string;
+};
 
 export type AgentTransferResult = {
   draft_id: string;
@@ -116,9 +137,65 @@ export type AgentTransferResult = {
 export const agent = {
   chat: (message: string, conversation_id: number | null) => api<AgentReply>("/agent/chat", { message, conversation_id }),
   confirm: (draftId: string) => api<AgentTransferResult>(`/agent/transfers/${encodeURIComponent(draftId)}/confirm`, undefined, "POST"),
+  messages: (conversationId: number) => api<AgentMessage[]>(`/agent/conversations/${conversationId}/messages`),
   cancel: (draftId: string) =>
     api<{ draft_id: string; status: "CANCELLED" }>(`/agent/transfers/${encodeURIComponent(draftId)}/cancel`, undefined, "POST"),
 };
 
 // 비서로 이체한 뒤 열려 있는 화면이 잔액을 다시 불러오게 알리는 이벤트 이름
 export const ACCOUNTS_CHANGED = "accounts:changed";
+
+// 약관. 계좌·카드의 product_id가 겹칠 수 있어 언제나 (종류, id)로 찾는다
+export type TermsKind = "checking" | "deposit" | "savings" | "credit" | "debit";
+
+export type TermsItem = {
+  terms_version_id: number;
+  document_key: string;
+  title: string;
+  version: string;
+  effective_from: string;
+  required: boolean;
+  order: number;
+};
+
+export type TermsSet = {
+  product_kind: TermsKind;
+  product_id: number;
+  product_code: string;
+  revision_id: number;
+  set_hash: string;
+  items: TermsItem[];
+};
+
+export type TermsVersion = {
+  terms_version_id: number;
+  document_key: string;
+  title: string;
+  version: string;
+  effective_from: string;
+  status: "published" | "retired";
+  demo_only: boolean;
+  body: string;
+  body_sha256: string;
+  sections: { section_id: string; title: string }[];
+};
+
+export type TermsConsent = {
+  subject_kind: TermsKind;
+  subject_id: number;
+  has_record: boolean;
+  recorded_at: string | null;
+  items: (Omit<TermsItem, "order"> & { agreed: boolean })[];
+};
+
+// 조항 id는 이 모양만 HTML id·주소 조각으로 쓴다
+export const SECTION_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+// 약관 전문 링크. 서버가 준 url 대신 id로 내부 경로만 만든다
+export function termsHref(versionId: number, sectionId?: string) {
+  if (!Number.isInteger(versionId) || versionId <= 0) return null;
+  return `/terms/${versionId}` + (sectionId && SECTION_ID.test(sectionId) ? `#${sectionId}` : "");
+}
+
+// 약관 화면에서 "AI에게 질문하기"를 누르면 보내는 이벤트. detail은 입력창에 채울 질문
+export const ASSISTANT_ASK = "assistant:ask";
