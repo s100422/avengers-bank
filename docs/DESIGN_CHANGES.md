@@ -1,7 +1,7 @@
 # 설계 변경 기록
 
 팀 초기 설계(docs/ERD.md, API_ENDPOINTS.md, PROJECT_STRUCTURE.md 및 원본 코드)를 바탕으로 **개인으로 작업하면서** 바꾼 것, 구현한 것, 앞으로 할 것을 모아 둔 문서다.
-팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-09, 변경 항목 C-001 ~ C-095)
+팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-09, 변경 항목 C-001 ~ C-096)
 
 | 알고 싶은 것 | 볼 곳 |
 |---|---|
@@ -79,7 +79,7 @@
 
 | 도메인 | 엔드포인트 | 상태 | 근거 |
 |---|---|---|---|
-| users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음. 토큰 갱신·로그아웃(`POST /users/token/refresh`, `POST /users/logout`)은 C-083, 입력 규칙 C-084 | C-024, C-083, C-084 |
+| users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음. 토큰 갱신·로그아웃(`POST /users/token/refresh`, `POST /users/logout`)은 C-083, 입력 규칙 C-084. **토큰 쿠키 전환 + 기기 등록(`/users/login/device*`, `/users/me/devices`)은 C-096** | C-024, C-083, C-084, C-096 |
 | products | 4 / 4 | ✅ 구현 | C-019 |
 | accounts | 7 / 7 | ✅ 구현 (예금은 개설 때 가입 금액을 필수로 입금 C-076·C-079, 상품별 최소 가입 금액 C-080) | C-020, C-076, C-079, C-080 |
 | transfers | 2 / 2 | ✅ 구현 (`POST /transfers/deposit`는 C-079에서 삭제: 예금은 가입 후 추가 입금 불가) | C-022, C-079 |
@@ -92,7 +92,7 @@
 
 | 방법 | 범위 | 결과 |
 |---|---|---|
-| pytest (SQLite) | 전체 | 422개 통과, 3개 skip (C-095까지. skip은 PostgreSQL이 필요한 테스트로, 같은 경로는 `scripts/`의 PG 스크립트로 확인) |
+| pytest (SQLite) | 전체 | 453개 통과, 3개 skip (C-096까지. skip은 PostgreSQL이 필요한 테스트로, 같은 경로는 `scripts/`의 PG 스크립트로 확인) |
 | 실제 PostgreSQL: 마이그레이션 | upgrade → downgrade → upgrade, `alembic check` | 통과 (C-014) |
 | 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023), 해지(C-043, C-079에서 적금 납입 경합으로 수정), 예금 가입 금액 입금(C-079), 토큰 동시 갱신(C-083), 동시 로그인·단일 세션(C-088) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025), 로그인 잠금·인증번호 발송(C-090·C-091), 계좌 비밀번호(C-092). 회원 탈퇴 ↔ 입금(C-095). **스크립트 12개 모두 통과(2026-11-09)** |
 | 서버를 띄운 HTTP 확인 | 계좌, 충전, 이체, 카드, 청구서 | 통과 |
@@ -2856,7 +2856,7 @@ C-052의 Caddy 설정은 도메인이 있다는 전제였고, DB 위치는 정�
 
 #### 영향 범위
 - 백엔드 코드·DB·테스트 변경 없음.
-- `localStorage` 토큰은 XSS에 약하다. 실서비스라면 httpOnly 쿠키로 바꿔야 한다(코드에 `shortcut:` 주석).
+- `localStorage` 토큰은 XSS에 약하다. 실서비스라면 httpOnly 쿠키로 바꿔야 한다(코드에 `shortcut:` 주석). → **C-096에서 해결**(갱신 토큰 쿠키, 액세스 토큰 메모리).
 - 계좌 만들기는 입출금만 된다. 예금·적금, 카드, 거래 내역, 내 정보 수정 화면은 아직 없다.
 
 #### 검증
@@ -3953,7 +3953,7 @@ PATCH /users/me/password   → 그 사용자의 모든 세션 폐기 + 이 기�
 
 #### 팀 논의 포인트
 - 즉시 끊어야 하면 액세스 토큰에 `family_id`를 넣고 요청마다 세션 행을 확인하는 혼합 방식(요청당 조회 1번 추가).
-- 토큰 보관 위치(`localStorage` → `httpOnly` 쿠키)는 별도 논의 예정.
+- 토큰 보관 위치(`localStorage` → `httpOnly` 쿠키)는 별도 논의 예정. → C-096에서 적용.
 
 ---
 
@@ -4150,7 +4150,7 @@ if user is None or not await user_repository.is_session_active(db, user_id, sess
 - 브라우저: 브라우저에서 로그인 → 셸에서 같은 아이디로 로그인 → 브라우저에서 내 정보를 누르자 `/login?next=/me&reason=replaced`와 안내 문구.
 
 #### 팀 논의 포인트
-- 아이디 단위 실패 한도는 C-089에서 아이디별 속도 제한으로 적용(믿을 수 있는 기기 예외는 9번 쿠키 전환 때).
+- 아이디 단위 실패 한도는 C-089에서 아이디별 속도 제한으로 적용(믿을 수 있는 기기 예외는 9번 쿠키 전환 때 → C-096에서 "카운터 분리"로 적용).
 - 끊긴 기기에 즉시 알리려면 주기적 확인(폴링)이나 푸시가 필요하다.
 
 ---
@@ -4391,6 +4391,109 @@ if user is None or not await user_repository.is_session_active(db, user_id, sess
 
 ---
 
+### C-096. 토큰 쿠키 전환 + 기기 등록
+
+- **날짜:** 2026-11-09
+- **분류:** 보안 · DB 스키마 · API · 구조
+- **상태:** 적용 (기기 해제 버튼 동작·build는 미확인)
+- **바뀐 파일:**
+  - `core/cookies.py`(새: 쿠키 설정·삭제, Origin 확인), `core/config.py`·`security.py`·`exception_handlers.py`
+  - `users/models.py`(`UserDevice`, 사용자 컬럼 추가)·`schemas.py`·`router.py`·`service.py`·`repository.py`·`withdrawal.py`, `verification/models.py`(purpose `NEW_DEVICE`)
+  - 마이그레이션 `2026_11_09_1000-9e0f1a2b3c4d_add_user_devices.py`
+  - `frontend/lib/api.ts`, `frontend/next.config.ts`(rewrites), `frontend/app/login`·`signup`·`me`, `.env.example`·`.env.prod.example`·`frontend/.env.example`(`API_ORIGIN`)
+  - `seed_demo.py`, `tests/`(`test_devices.py`·`cookie_helpers.py` 새, 기존 인증 테스트 수정), `scripts/pg_device_channel_concurrency.py`(새)·`scripts/README.md`
+
+#### 변경 전
+- 로그인 응답 본문에 액세스 토큰과 갱신 토큰이 모두 들어 있었고, 브라우저는 둘 다 `localStorage`(`avengers_bank_session`)에 보관했다.
+- `POST /users/token/refresh`, `POST /users/logout`은 본문에 갱신 토큰을 받았다.
+- 로그인 실패는 사용자 하나에 카운터 하나(`failed_login_count`, `login_locked_at`)였다. 남이 5번 틀리면 주인도 잠겼다(C-090).
+- 기기 개념이 없었다. 비밀번호만 맞으면 어디서든 로그인됐다.
+
+#### 변경 후
+**1. 토큰 쿠키 전환**
+- 갱신 토큰: `Set-Cookie: refresh_token=…; HttpOnly; Secure; SameSite=Strict; Path=/api/users`. **JSON 본문에는 더 이상 없다.** `refresh`·`logout`은 본문 없이 쿠키만 읽는다.
+- 액세스 토큰: 응답 본문으로 받아 **프론트 메모리(변수)에만** 둔다. 페이지를 새로고침하면 사라지고, 쿠키로 조용히 갱신해 다시 받는다.
+- `localStorage`에는 `session_expires_at`(비밀 아님)만 남긴다. 여러 탭의 타이머·로그아웃 동기화용이다.
+- `next.config.ts` rewrites가 `/api/*`를 FastAPI(서버 환경변수 `API_ORIGIN`)로 프록시한다. 브라우저에는 프론트와 **같은 주소**로 보이므로 쿠키가 first-party다.
+- 쿠키를 쓰는 엔드포인트(갱신·로그아웃·기기)는 **`Origin` 헤더를 필수로 확인**한다(`cors_origins`에 있어야 통과, 없거나 다르면 403 `CSRF_ORIGIN`. 적용: 갱신·로그아웃·기기 해제).
+- 여러 탭의 갱신을 한 번에 하나씩 하는 Web Locks와 같은 탭의 single-flight는 유지한다.
+
+**2. 기기 등록(B1)**
+- `user_devices`: `device_id`, `user_id`, `token_hash`(256비트 임의값의 SHA-256, unique), `label`(User-Agent에서 만든 "Chrome · Windows" 같은 이름), `created_at`, `last_used_at`, `revoked_at`.
+- 기기 쿠키 `device_token`: 1년, httpOnly·Secure·SameSite=Strict, Path=/api/users.
+- 로그인은 채널이 둘이다.
+  | | 등록된 기기 | 새 기기 |
+  |---|---|---|
+  | 조건 | 유효한 기기 쿠키 + 비밀번호 | 기기 쿠키 없음·무효 |
+  | 절차 | 바로 로그인 | 비밀번호 → 휴대폰 인증번호(purpose `NEW_DEVICE`) → 로그인하며 기기 등록 |
+  | 실패 카운터 | `device_failed_login_count`, `device_login_locked_at` | `failed_login_count`, `login_locked_at`(기존 컬럼) |
+  | 한도 | 5회 연속 오류 → 잠금 | 5회 연속 오류 → 잠금 |
+- 새 기기 로그인 API: `POST /users/login`이 비밀번호가 맞고 새 기기면 로그인 대신 **챌린지 토큰**을 준다 → `POST /users/login/device/send`(챌린지로 등록 번호에 인증번호 발송) → `POST /users/login/device`(챌린지 + 인증번호 → 세션과 기기 쿠키 발급).
+- 내 정보: 기기 목록(이름·마지막 사용·이 기기 표시)과 해제.
+- **비밀번호 재설정(복구)과 회원 탈퇴는 모든 기기를 해제**한다. 비밀번호 변경은 기기를 **유지**한다(본인이 현재 비밀번호를 알고 바꾸는 것이므로, 기기까지 지우면 매번 문자 인증이 필요해 불편하기만 하다).
+- 단일 세션 규칙(다른 곳에서 로그인하면 기존 세션 종료)은 그대로다.
+
+**3. 구현에서 정해진 세부 (최종 API 계약)**
+| 엔드포인트 | 요청 | 응답 · 쿠키 · 오류 |
+|---|---|---|
+| `POST /users/login` | `{login_id, password}` (+ 기기 쿠키) | `LoginOk`(`TokenResponse` + `status:"OK"`, refresh 쿠키) 또는 `DeviceChallenge`(`status:"DEVICE_VERIFICATION_REQUIRED"`, `challenge_token`, `phone_masked`; 쿠키·세션 없음). 401 `INVALID_CREDENTIALS`, 403 `ACCOUNT_LOCKED`, 429 `TOO_MANY_LOGIN_ATTEMPTS` |
+| `POST /users/login/device/send` | `{challenge_token}` | `{verification_id, expires_in}`(`send-for-me`와 같은 모양·같은 발송 한도). 등록 번호로만 발송. 401 `INVALID_DEVICE_CHALLENGE` |
+| `POST /users/login/device` | `{challenge_token, phone_verification_token}` | `LoginOk` + refresh·기기 쿠키. 400 `INVALID_VERIFICATION_TOKEN`, 401 `INVALID_DEVICE_CHALLENGE`, 403 `ACCOUNT_LOCKED`(새 기기 채널 잠김). 증표 소비·다른 세션 폐기·기기 등록·토큰 발급이 **한 트랜잭션** |
+| `POST /users/token/refresh` | 본문 없음 | 새 refresh 쿠키. 쿠키 없음 401 `INVALID_REFRESH_TOKEN`. 세션이 죽은 401(`INVALID_REFRESH_TOKEN`·`REFRESH_TOKEN_REUSED`·`SESSION_REPLACED`)에는 쿠키 삭제(`Max-Age=0`)가 함께 간다. Origin 확인 |
+| `POST /users/logout` | 본문 없음 | 항상 200, refresh 쿠키 삭제(기기 쿠키는 유지). Origin 확인이 먼저라 Origin이 없으면 403 |
+| `GET /users/me/devices` | Bearer | `[{device_id, label, created_at, last_used_at, current}]`(해제 안 된 것만, 최근 사용순) |
+| `DELETE /users/me/devices/{id}` | Bearer + Origin | 남의·없는·이미 해제된 기기 404 `DEVICE_NOT_FOUND`. 현재 기기면 기기 쿠키 삭제. 세션은 유지 |
+
+- 설정: `cookie_secure`(기본 True), `refresh_cookie_path`(기본 `/api/users`), `device_cookie_days`(기본 365). **기기 쿠키도 `refresh_cookie_path`를 같이 쓴다**(따로 설정 없음). 기기 쿠키의 1년은 발급 때 정해지고 사용할 때마다 늘어나지 않는다(등록 기기 로그인은 쿠키를 새로 주지 않는다).
+- **채널 판정은 비밀번호 검증 *전에*** 한다: 요청의 기기 쿠키가 로그인 대상 사용자의 해제 안 된 기기와 일치하면 등록 기기, 아니면 새 기기. 선증가(`count_login_attempt`)와 `lock_login`은 `device` 인자만 더했고 로직은 하나다. 성공은 해당 채널만 0으로 만든다. 새 기기에서 비밀번호가 맞으면 새 기기 카운터를 0으로 하고 챌린지를 준다.
+- **비밀번호 변경·회원 탈퇴**의 현재 비밀번호 확인도 요청의 기기 쿠키로 채널을 정해 센다(`withdraw(..., raw_device_token)`). 탈퇴는 성공 시 두 쿠키를 모두 지우고 기기를 전부 해제한다.
+- **챌린지 1회성:** 챌린지 JWT 자체는 10분 안에 다시 쓸 수 있다. 1회성은 `NEW_DEVICE` 인증 행의 `consumed_at`(조건 UPDATE 한 문장)이 보장한다. 같은 증표는 두 번 못 쓰고, 기기를 등록할 때마다 새 문자 인증이 필요하다. 챌린지 저장소(jti)는 만들지 않았다.
+- 운영 코드에 "기기 인증 건너뛰기" 설정은 없다. 테스트는 `BankClient.post`가 `/users/login`에서 챌린지를 받으면 실제 경로(send → 개발용 문자함 → verify → `/login/device`)로 자동 인증한다(`auto_device_verification`). 테스트 환경에서만 `COOKIE_SECURE=false`, `REFRESH_COOKIE_PATH=/users`를 둔다(http·프록시 없음).
+- `seed_demo.py`는 새 기기 챌린지를 `010-1234-5678` 개발용 문자함으로 자동 인증한다(기존 아이디의 번호가 다르면 실패, 실행마다 기기 1개 등록). PG 스크립트는 기기를 `register_device_sql`로 SQL 직접 등록한다(번호당 3회 발송 한도 때문에 실제 흐름으로는 기기를 여러 개 준비할 수 없다).
+
+#### 이유
+- **XSS와 토큰:** `localStorage`의 토큰은 페이지에서 실행되는 어떤 스크립트든 읽어서 밖으로 보낼 수 있다. 훔친 갱신 토큰은 공격자 PC에서 30분 넘게 이어 쓸 수 있다. `httpOnly` 쿠키와 메모리 보관으로 바꾸면 스크립트가 **읽을 수 없는 토큰은 훔칠 수 없다.**
+  - **한계(정직하게):** XSS가 페이지에서 실행되는 동안에는 그 스크립트가 **사용자인 척 API를 호출**할 수 있다(브라우저가 쿠키를 알아서 붙인다). 쿠키 전환은 "토큰을 들고 나가 나중에 쓰는 것"을 막을 뿐, XSS 자체의 해를 없애지 않는다. 그래서 이체 때 계좌 비밀번호·휴대폰 인증을 다시 받는 기존 방어가 여전히 중요하다.
+- **프록시:** 프론트(예: `app.example.com`)와 API(`api.example.com`)가 다르면 쿠키가 제3자 쿠키가 되어 브라우저가 막는다. 같은 주소로 프록시하면 쿠키가 정상이고, 프론트를 어디에 배포하든 API 주소를 바꿀 필요가 없다.
+- **CSRF(쿠키는 브라우저가 알아서 붙이므로 새로 생긴 위험):** 겹쳐서 막는다.
+  - `SameSite=Strict`: 다른 사이트에서 시작한 요청에는 쿠키를 붙이지 않는다. 가장 강한 방어다.
+  - 쿠키 `Path=/api/users`: 다른 API 경로에는 쿠키가 아예 가지 않는다.
+  - `Origin` 확인: 브라우저 버전·설정 차이나 SameSite 우회 사례가 있어도, 서버가 **요청을 보낸 사이트가 허용 목록에 있는지** 직접 본다. **Strict와 Origin을 함께 쓰는 이유:** 하나는 브라우저가 지켜 주는 약속이고 하나는 서버가 직접 하는 검사라서, 한쪽이 뚫리거나 설정이 틀려도 다른 쪽이 남는다. Origin을 필수(없으면 거절)로 한 것은 "헤더를 지우면 통과"하는 구멍을 없애기 위해서다.
+  - 액세스 토큰은 `Authorization` 헤더로만 가므로 쿠키를 쓰지 않는 일반 API는 CSRF 대상이 아니다.
+- **Web Locks를 유지하는 이유:** 갱신 토큰을 한 번 쓰면 폐기되고 재사용하면 세션이 끊긴다(AUTH.md 4장). 이제는 브라우저가 **항상 현재 쿠키를 보낸다**. 그래서 갱신이 *순차*로 일어나면(탭 A가 갱신하고, 그다음 탭 B가 갱신) B도 새 쿠키를 보내므로 문제없다. 위험한 건 *동시*에 두 탭이 같은 옛 쿠키를 보내는 경우뿐이고, 이것을 Web Locks가 막는다. 예전처럼 "내가 쓴 토큰이 저장소에 있는 것과 다른가" 확인할 필요는 없어졌다(토큰이 JS에 없으므로).
+- **기기 등록:** 아이디만 알면 5번 틀려 잠글 수 있는 문제(AUTH.md 6-1·9-3의 한계)를, 주인이 평소 쓰는 기기에는 영향이 없게 해서 줄인다. 또 비밀번호만 유출돼도 **모르는 기기에서는 휴대폰 인증이 한 번 더** 필요하다.
+- **규정 해석(팀 확인 필요):** 전자금융감독규정은 "5회 이내 오류 시 거래 중지"를 요구한다. 이를 **채널별로 적용**한다고 해석했다. 공격자는 새 기기 채널만 잠글 수 있고, 주인은 등록된 기기에서 계속 로그인하거나 복구로 푼다. 사용자 하나에 카운터 하나인 구조라면 공격자가 주인을 완전히 막는다. 이 해석이 규정의 취지에 맞는지는 확인이 필요하다.
+- AUTH.md 6-1의 "다음 단계(B)"(믿을 수 있는 기기 예외)가 이것으로 해결된다. 단 방식은 "제한 면제"가 아니라 "카운터 분리"다.
+
+#### 영향 범위
+- **API 계약이 바뀐다:** 로그인·갱신 응답에서 `refresh_token`이 사라지고, 갱신·로그아웃은 본문을 받지 않는다. 프론트와 테스트(`cookie_helpers.py`)를 같이 바꿨다. 다른 클라이언트가 있다면 쿠키 저장소를 지원해야 한다.
+- 프론트는 이제 **Next.js 서버(프록시)를 거친다.** `API_ORIGIN`을 서버 환경변수로 설정해야 하고, 프록시가 죽으면 API도 안 닿는다. 개발에서 Swagger(`:8000`)는 그대로 쓸 수 있다.
+- 마이그레이션: `user_devices` 테이블, `users`에 `device_failed_login_count`·`device_login_locked_at`, 인증 purpose `NEW_DEVICE`. 되돌리면 등록된 기기가 모두 사라져 다음 로그인에 휴대폰 인증이 필요하다.
+- **기존 사용자는 모두 새 기기로 처음 한 번 휴대폰 인증을 거친다.** `users.phone`은 필수 컬럼이라 인증 대상 번호는 항상 있다(가입 전 `phone_verified_at`이 비어 있어도 등록 번호로 보낸다).
+- 복구(비밀번호 재설정)·관리자 명령은 두 채널의 잠금을 모두 풀고 기기를 전부 해제한다. 브라우저에 남은 옛 `avengers_bank_session`(토큰 포함)은 따로 지우지 않는다: 다음 로그인·로그아웃이 덮어쓰거나 지우며, 옛 갱신 토큰은 서버에서 최대 30분 뒤 만료된다.
+- 돈이 움직이는 코드는 건드리지 않았다. 사용자 행 잠금 순서(users → 토큰·기기)는 같다.
+- 개발 환경: 개발 `.env`에 `COOKIE_SECURE`가 없으면 기본 True다(`localhost`의 Chrome은 http에서도 받는다). Safari 등은 `COOKIE_SECURE=false`가 필요하다(`.env.example`에 안내).
+
+#### 검증
+- 전체 pytest `453 passed, 3 skipped`(기존 422, 2026-11-09, 직접 재실행).
+- PostgreSQL 스크립트 5개 통과: `pg_device_channel_concurrency`(30곳 동시 오답 → 검증 정확히 5번, 등록 기기 채널만 잠김·새 기기는 영향 없음, 대조군 30번), `pg_refresh_concurrency`, `pg_single_session_concurrency`, `pg_login_lock_concurrency`, `pg_deposit_open_concurrency`.
+- 브라우저(프록시 경유): 새 기기 로그인 → 인증번호 → 로그인, `document.cookie` 비어 있음, localStorage에 `session_expires_at`만, 새로고침 뒤 `token/refresh` 200으로 로그인 유지, 로그아웃 뒤 갱신 401, 같은 브라우저 재로그인은 인증번호 없이 통과, 내 정보에 기기 목록 표시.
+- 미확인: 기기 해제 버튼 동작, 프록시가 낡은 8000번 서버를 가리키던 개발 환경 정리(낡은 API 서버를 내리고 새 코드로 다시 띄워 확인함), `npm run build`(`/find-id`의 `Date.now` 오류, 이번 변경 파일 아님).
+
+#### 팀 논의 포인트
+- **`Secure` 쿠키와 http:** `localhost`는 브라우저가 예외로 허용하지만 **Safari는 http에서 Secure 쿠키를 저장하지 않는다.** 개발·시연은 Chrome 또는 HTTPS로 한다. 운영은 HTTPS 전제다.
+- **기기 쿠키를 잃으면:** 시크릿 창, 쿠키 삭제, 브라우저 변경 → 새 기기로 보고 휴대폰 인증을 다시 받는다(불편하지만 안전한 쪽).
+- **기기를 도난당한 경우:** 기기 쿠키만으로는 로그인되지 않는다(비밀번호도 필요). 둘을 모두 가진 공격자는 등록 기기 채널로 문자 없이 들어올 수 있다. 주인이 내 정보에서 기기를 해제하거나 비밀번호를 재설정(모든 기기 해제)해야 한다.
+- **공용 PC:** "이 기기 등록 안 함" 선택이 아직 없다. 새 기기 로그인을 통과하면 무조건 1년짜리가 등록된다. 공용 PC에서 쓴 사람이 해제하지 않으면 다음 사람이 비밀번호만으로 들어올 수 있다는 뜻이다. 선택 옵션을 둘지 정해야 한다.
+- **비밀번호를 아는 공격자의 문자 발송:** 비밀번호를 알면 새 기기 로그인 단계에서 주인에게 인증번호 문자를 계속 보낼 수 있다. 발송 제한(번호당 15분 3번, IP 15분 10번)으로 묶었지만 주인이 문자를 받는 불편은 남는다.
+- **기기 개수·정리:** 기기 등록 개수 상한과 오래된 기기 정리가 없다. 같은 브라우저가 쿠키를 잃고 다시 등록하면 옛 행이 목록에 남는다. 상한(예: 10개)과 자동 정리를 둘지 정해야 한다.
+- **챌린지 JWT 재사용:** 10분 안에는 같은 챌린지로 문자를 다시 보낼 수 있다(발송 한도로 묶임). 인증 증표가 1회용이라 기기 등록은 문자 인증마다 한 번뿐이다. 챌린지 자체를 1회용으로(jti 저장) 할지는 필요해지면.
+- **잠금 해석:** 위 "규정 해석"이 맞는지, 공격자가 새 기기 채널을 잠글 수 있는 점(주인이 새 기기에서 쓰려면 복구 필요)을 받아들일지.
+- **XSS 한계:** 쿠키 전환은 토큰 탈취만 막는다. 페이지가 열려 있는 동안의 대리 요청은 막지 못한다(CSP 같은 XSS 자체 방어는 별도 과제).
+- **갱신 쿠키 `Path=/api/users`가 `/api/users/*` 전체**에 간다. 갱신·로그아웃만이 아니라 `/api/users/me` 등에도 쿠키가 붙는다. 해당 엔드포인트들은 쿠키를 읽지 않지만, 경로를 `/api/users/token`·`/api/users/logout`처럼 더 좁히려면 API 주소 구조를 바꿔야 한다.
+
+---
+
 ## 부록 A. 초기 리뷰(2026-11-04) 항목 처리 현황
 
 처음 코드 리뷰에서 나온 9개 항목의 처리 결과다. 취소선은 처리 완료이고 오른쪽이 처리한 항목 번호다. **9개 모두 처리됐다**(9번은 보류했다가 C-026에서 처리).
@@ -4506,6 +4609,7 @@ if user is None or not await user_repository.is_session_active(db, user_id, sess
 | C-093 | 2026-11-08 | 보안 | 계정 복구: 아이디 찾기·비밀번호 찾기·계좌 비밀번호 재설정(응답 동일화) | 적용 |
 | C-094 | 2026-11-08 | 구조 | 화면: 휴대폰 인증·계좌 비밀번호 입력·찾기 화면·해지 화면 | 적용 |
 | C-095 | 2026-11-09 | 보안 | 회원 탈퇴(소프트 삭제·개인정보 가림·계좌 닫기·입금 경합 차단) | 적용 |
+| C-096 | 2026-11-09 | 보안 | 토큰 쿠키 전환(갱신 토큰 httpOnly 쿠키·액세스 토큰 메모리·Next.js 프록시·Origin 확인) + 기기 등록(새 기기 휴대폰 인증, 채널별 5회 잠금) | 적용 (기기 해제 버튼 동작·build는 미확인) |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`

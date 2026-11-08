@@ -2,8 +2,32 @@
 
 - 실행 중인 서버에서는 `http://127.0.0.1:8000/docs`(Swagger)에서 직접 호출해 볼 수 있습니다.
 - 🔒 표시가 있는 API는 `Authorization: Bearer <access_token>` 헤더가 필요합니다.
-  - 토큰은 2종입니다. **액세스 토큰**(JWT, 5분, 자기가 속한 세션 번호 `sid`를 담음)은 API 호출에 쓰고, **갱신 토큰**(임의 문자열, 30분 슬라이딩: 갱신할 때마다 다시 30분, 서버에는 SHA-256 해시만 저장)은 `POST /users/token/refresh`로 새 액세스 토큰을 받을 때만 씁니다. 수명은 `.env`의 `ACCESS_TOKEN_EXPIRE_MINUTES`·`SESSION_EXPIRE_MINUTES`로 바꿉니다. 서버는 요청마다 액세스 토큰의 세션이 살아 있는지 확인하므로, **로그아웃·모든 기기 로그아웃·비밀번호 변경은 즉시 적용**됩니다(끊긴 세션의 액세스 토큰은 다음 요청부터 `401 INVALID_TOKEN`). 자세한 구조는 [AUTH.md](AUTH.md)를 보세요.
+  - 토큰은 2종입니다. **액세스 토큰**(JWT, 5분, 자기가 속한 세션 번호 `sid`를 담음)은 응답 본문으로 받아 API 호출에 쓰고, **갱신 토큰**(임의 문자열, 30분 슬라이딩: 갱신할 때마다 다시 30분, 서버에는 SHA-256 해시만 저장)은 **본문에 없고 httpOnly 쿠키(`refresh_token`)로만** 오가며 `POST /users/token/refresh`로 새 액세스 토큰을 받을 때만 씁니다. 수명은 `.env`의 `ACCESS_TOKEN_EXPIRE_MINUTES`·`SESSION_EXPIRE_MINUTES`로 바꿉니다. 서버는 요청마다 액세스 토큰의 세션이 살아 있는지 확인하므로, **로그아웃·모든 기기 로그아웃·비밀번호 변경은 즉시 적용**됩니다(끊긴 세션의 액세스 토큰은 다음 요청부터 `401 INVALID_TOKEN`). 자세한 구조는 [AUTH.md](AUTH.md)를 보세요.
 - 상태: ✅ 구현됨 / 📝 TODO (router 파일에 주석으로 자리만 잡아 둠)
+
+## 인증·쿠키·프록시 (C-083, C-087, C-096)
+
+클라이언트(브라우저)가 지금 인증하는 순서:
+
+1. **로그인** `POST /users/login` → 두 가지 중 하나가 `data`로 옵니다. `data.status`로 구분합니다.
+   - `"OK"`(`LoginOk`, 등록된 기기): 액세스 토큰이 본문에, 갱신 토큰이 `Set-Cookie: refresh_token`으로 옵니다.
+   - `"DEVICE_VERIFICATION_REQUIRED"`(`DeviceChallenge`, 새 기기): 비밀번호는 맞지만 **세션도 쿠키도 주지 않습니다.** `POST /users/login/device/send`(챌린지로 등록 번호에 인증번호 발송) → `POST /verification/phone/verify`(인증번호 확인) → `POST /users/login/device`(챌린지 + 증표)로 마치면 `LoginOk`와 `refresh_token`·`device_token` 쿠키가 옵니다.
+2. **API 호출**: 액세스 토큰은 **프론트 메모리에만** 두고 `Authorization: Bearer ...`로 보냅니다(새로고침하면 사라지므로 3번으로 다시 받음). 쿠키는 일반 API(계좌·이체 등)에는 실리지 않습니다.
+3. **갱신** `POST /users/token/refresh`: **본문 없이** 쿠키만 보냅니다. 응답의 새 액세스 토큰을 쓰고, 새 `refresh_token` 쿠키가 내려옵니다(회전). 응답의 `expires_in`보다 조금 일찍 부릅니다.
+4. **로그아웃** `POST /users/logout`: 본문 없이 쿠키만. 서버의 세션을 폐기하고 `refresh_token` 쿠키를 지웁니다(`device_token`은 유지).
+
+**쿠키 2개** (`core/cookies.py`, 설정은 `core/config.py`):
+
+| 이름 | 내용 | Max-Age | 언제 내려오나 |
+|---|---|---|---|
+| `refresh_token` | 갱신 토큰 | `SESSION_EXPIRE_MINUTES`×60 = 1800초 (갱신할 때마다 새로 내려와 연장) | 로그인(`LoginOk`)·`login/device`·갱신·비밀번호 변경. 삭제(`Max-Age=0`): 로그아웃, 회원 탈퇴, 죽은 세션의 갱신 실패 401 |
+| `device_token` | 등록된 기기 표식 | `DEVICE_COOKIE_DAYS`×86400 = 365일 (발급 때 정해지고 쓸 때마다 늘지 않음) | `POST /users/login/device`. 삭제: 이 기기를 해제(`DELETE /users/me/devices/{id}`), 회원 탈퇴 |
+
+- 공통 속성: `HttpOnly`(JS가 못 읽음), `SameSite=Strict`, `Secure`(`COOKIE_SECURE`, 기본 true: http로 여는 개발·테스트에서만 끔), **`Path=/api/users`**(`REFRESH_COOKIE_PATH`). 삭제할 때도 같은 Path·속성으로 `Max-Age=0`을 보냅니다.
+- **프록시 `/api`:** 브라우저는 FastAPI를 직접 부르지 않고 프론트와 **같은 주소**의 `/api/...`로 부릅니다. Next의 rewrites(`frontend/next.config.ts`)가 `/api/:path*`를 `${API_ORIGIN}/:path*`(서버 전용 환경변수, 기본 `http://127.0.0.1:8000`)로 넘기고 `/api` 접두사는 떼어 냅니다. 그래서 쿠키 Path는 서버 입장의 `/users`가 아니라 브라우저가 보는 **`/api/users`**이고, 이 문서의 경로(`/users/...`)는 접두사를 뗀 FastAPI 경로입니다(브라우저에서는 `/api/users/...`). 이렇게 해야 쿠키가 제3자 쿠키로 막히지 않습니다. 테스트에서는 프록시가 없어 `REFRESH_COOKIE_PATH=/users`, `COOKIE_SECURE=false`를 씁니다.
+- **CSRF `Origin` 확인:** 쿠키를 쓰는 요청 — `POST /users/token/refresh`, `POST /users/logout`, `DELETE /users/me/devices/{device_id}` — 은 `Origin` 헤더가 **필수**이고 `CORS_ORIGINS` 목록에 있어야 합니다. 없거나 다르면 `403 CSRF_ORIGIN`("허용되지 않은 요청 출처입니다."). 브라우저는 POST·DELETE에 항상 Origin을 보냅니다(프록시도 그대로 전달). curl로 시험할 때는 `-H "Origin: http://localhost:5173"`을 붙입니다. `POST /users/login`·`/users/login/device`는 비밀번호·증표가 따로 필요해 이 확인을 하지 않습니다.
+- `login`은 요청의 `device_token` 쿠키를 읽어 **등록 기기**인지 **새 기기**인지 정합니다(인증 수단이 아니라 어느 실패 카운터로 셀지 정하는 용도). 비밀번호 변경·회원 탈퇴의 현재 비밀번호 확인도 같은 방식으로 채널을 정합니다.
+- 토큰이 담긴 응답에는 `Cache-Control: no-store`가 붙습니다.
 
 ## 공통 응답 형식
 
@@ -21,10 +45,12 @@
 |---|---|---|
 | 400 | 잔액 부족, 한도 초과 등 처리 불가 | `BadRequestException` |
 | 401 | 로그인 안 함, 토큰 만료 | `UnauthorizedException` |
-| 403 | 로그인 잠김(`ACCOUNT_LOCKED`), 계좌 비밀번호 잠김(`ACCOUNT_PASSWORD_LOCKED`) | `ForbiddenException` |
-| 404 | 계좌·카드·상품 없음 (남의 계좌·카드도 404, C-031) | `NotFoundException` |
+| 401 (코드별) | `INVALID_TOKEN`(액세스 토큰 무효·만료·끊긴 세션), `INVALID_CREDENTIALS`, `INVALID_REFRESH_TOKEN`·`REFRESH_TOKEN_REUSED`·`SESSION_REPLACED`(갱신), `INVALID_DEVICE_CHALLENGE`(새 기기 확인 만료) | `UnauthorizedException` |
+| 403 | 로그인 잠김(`ACCOUNT_LOCKED`), 계좌 비밀번호 잠김(`ACCOUNT_PASSWORD_LOCKED`), 쿠키 요청의 Origin 불허(`CSRF_ORIGIN`) | `ForbiddenException` |
+| 404 | 계좌·카드·상품·약관·등록 기기(`DEVICE_NOT_FOUND`) 없음 (남의 계좌·카드도 404, C-031) | `NotFoundException` |
 | 409 | 아이디·계좌번호 중복 | `ConflictException` |
-| 429 | IP당 로그인 실패·인증번호 요청이 너무 많음, 같은 아이디 동시 로그인 요청 (C-040, C-090) | `TooManyAttemptsException` / `ApiException` |
+| 429 | IP당 로그인 실패(`TOO_MANY_LOGIN_ATTEMPTS`)·인증번호 요청(`TOO_MANY_VERIFICATION_REQUESTS`)이 너무 많음, 같은 아이디 동시 로그인 요청(`TOO_MANY_LOGIN_ATTEMPTS`) (C-040, C-090) | `TooManyAttemptsException` / `ApiException` |
+| 500 | 처리하지 못한 서버 오류 `INTERNAL_SERVER_ERROR` (원인은 서버 로그에만) | `ApiException` |
 | 422 | 입력값 형식 오류 (FastAPI 자동) | — |
 | 503 | `/health`에서 DB에 연결할 수 없음 (C-046) | `ApiException` |
 
@@ -47,15 +73,21 @@
 | 상태 | 메서드 | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
 | ✅ | POST | `/users/signup` | | 회원가입 (휴대폰 인증 증표 필수) |
-| ✅ | POST | `/users/login` | | 로그인, 액세스·갱신 토큰 발급 |
-| ✅ | POST | `/users/token/refresh` | | 갱신 토큰으로 새 토큰 묶음 받기 (갱신 토큰은 교체됨) |
-| ✅ | POST | `/users/logout` | | 로그아웃 (이 기기의 세션 폐기) |
+| ✅ | POST | `/users/login` | | 로그인. 등록 기기면 `LoginOk`(액세스 토큰 + 갱신 토큰 쿠키), 새 기기면 `DeviceChallenge` |
+| ✅ | POST | `/users/login/device/send` | | 새 기기 인증번호 발송 (`challenge_token`, 등록 번호로만) |
+| ✅ | POST | `/users/login/device` | | 새 기기 로그인 마무리: 챌린지 + 인증 증표 → `LoginOk` + 쿠키, 기기 등록 |
+| ✅ | POST | `/users/token/refresh` | 쿠키 | 갱신 토큰 쿠키(본문 없음)로 새 액세스 토큰 받기 (갱신 토큰은 교체됨, Origin 필수) |
+| ✅ | POST | `/users/logout` | 쿠키 | 로그아웃 (이 기기의 세션 폐기, 본문 없음, Origin 필수) |
 | ✅ | POST | `/users/logout-all` | 🔒 | 모든 기기에서 로그아웃 (이 사용자의 모든 세션 폐기) |
 | ✅ | GET | `/users/me/withdrawal` | 🔒 | 회원 탈퇴 가능 여부·막는 사유 |
 | ✅ | POST | `/users/me/withdrawal` | 🔒 | 회원 탈퇴 (비밀번호 + 휴대폰 인증) |
 | ✅ | GET | `/users/me` | 🔒 | 내 정보 조회 |
 | ✅ | PATCH | `/users/me` | 🔒 | 이름, 닉네임, 전화번호 수정 (번호를 바꿀 때만 휴대폰 인증 증표) |
 | ✅ | PATCH | `/users/me/password` | 🔒 | 비밀번호 변경 (모든 세션 폐기 후 이 기기에 새 토큰) |
+| ✅ | GET | `/users/me/devices` | 🔒 | 등록된 기기 목록 (이 기기 표시) |
+| ✅ | DELETE | `/users/me/devices/{device_id}` | 🔒 | 기기 등록 해제 (Origin 필수, 세션은 유지) |
+
+표의 인증 칸 "쿠키"는 Bearer 헤더 없이 `refresh_token` 쿠키로 인증한다는 뜻입니다(위 **인증·쿠키·프록시**).
 
 **입력 규칙** (가입·내 정보 수정이 같은 규칙, `domains/users/validators.py`. 어기면 `422`, `msg`에 이유 문장)
 - 아이디: 앞뒤 공백 제거·소문자로 바꾼 뒤 `^[a-z0-9_]{4,20}$` (`" IronMan "` → `ironman`).
@@ -82,43 +114,67 @@
 ```json
 { "login_id": "ironman", "password": "Passw0rd!23" }
 ```
-→ `200` (토큰이 담긴 응답에는 `Cache-Control: no-store` 헤더가 붙습니다. 갱신·비밀번호 변경도 같음)
+→ `200` (토큰이 담긴 응답에는 `Cache-Control: no-store` 헤더가 붙습니다. 갱신·비밀번호 변경도 같음). 요청의 `device_token` 쿠키가 이 사용자의 등록 기기면 **`LoginOk`**:
 ```json
-{ "data": { "access_token": "eyJhbGciOi...", "token_type": "bearer", "refresh_token": "Xk3...(임의 문자열)", "expires_in": 300, "session_expires_at": "2026-11-08T10:30:00Z" }, "message": null }
+{ "data": { "status": "OK", "access_token": "eyJhbGciOi...", "token_type": "bearer", "expires_in": 300, "session_expires_at": "2026-11-08T10:30:00Z" }, "message": null }
 ```
++ 헤더 `Set-Cookie: refresh_token=Xk3...; Max-Age=1800; Path=/api/users; HttpOnly; Secure; SameSite=Strict`. **갱신 토큰은 본문에 없습니다.**
+
+기기 쿠키가 없거나 무효(새 기기)면 비밀번호가 맞아도 세션을 주지 않고 **`DeviceChallenge`**를 줍니다(쿠키도 없음):
+```json
+{ "data": { "status": "DEVICE_VERIFICATION_REQUIRED", "challenge_token": "eyJhbGciOi...", "phone_masked": "010-****-5678" }, "message": "새 기기입니다. 휴대폰 인증이 필요합니다." }
+```
+- 챌린지 토큰은 10분 유효하고 "비밀번호가 맞았다"는 증명입니다. 이어서 `/users/login/device/send` → `/verification/phone/verify` → `/users/login/device`(아래).
 - **단일 세션:** 로그인하면 이 사용자의 **다른 모든 세션이 끊깁니다**(다른 곳에서 로그인돼 있던 기기는 다음 요청부터 401, 갱신하면 `401 SESSION_REPLACED`).
 - `expires_in`: 액세스 토큰 수명(초). 프론트는 이보다 조금 일찍 갱신하면 됩니다. `session_expires_at`: 갱신 토큰 만료 시각(UTC). 그때까지 갱신하지 않으면 다시 로그인해야 합니다.
 - 아이디는 앞뒤 공백 제거·소문자로 바꿔서 찾습니다. **형식 검사는 하지 않으므로** 아이디 규칙에 맞지 않는 값도 `422`가 아니라 `401`입니다(아이디 규칙을 흘리지 않고, 옛 규칙으로 만든 계정도 막지 않기 위해).
 - 실패 `401 INVALID_CREDENTIALS`(없는 아이디·틀린 비밀번호 구분 없음).
 - **로그인 잠금(은행식, C-090):** 같은 아이디로 **5회 연속** 틀리면 그 아이디가 잠깁니다. 5번째 실패의 응답부터 `403 ACCOUNT_LOCKED`("비밀번호를 5회 잘못 입력해 로그인이 잠겼습니다. 비밀번호 찾기에서 본인 확인 후 해제해 주세요.")이고, **잠긴 뒤에는 맞는 비밀번호도 거절**합니다. 시간이 지나도 풀리지 않습니다.
-  - 해제: **비밀번호 찾기**(`POST /recovery/password`), 관리자 명령(`uv run python -m avengers_bank.admin unlock|reset-password <login_id>`), 개발용 `POST /dev/users/{login_id}/unlock`.
+  - 해제: **비밀번호 찾기**(`POST /recovery/password`), 관리자 명령(`uv run python -m avengers_bank.admin unlock|reset-password <login_id>`), 개발용 `POST /dev/users/{login_id}/unlock`. 모두 두 채널(등록 기기·새 기기)의 잠금을 함께 풉니다.
   - 로그인에 성공하면 실패 횟수가 0이 됩니다('연속' 실패만 셈). 비밀번호 변경에서 현재 비밀번호를 틀린 것도 **같은 카운터**로 셉니다.
-  - DB(`users.failed_login_count`·`login_locked_at`)에 세므로 서버를 재시작해도, 서버가 여러 대여도 유지됩니다. 없는 아이디는 행이 없어 잠금이 없고 IP 한도만 적용됩니다.
+  - DB에 세므로 서버를 재시작해도, 서버가 여러 대여도 유지됩니다. 없는 아이디(와 탈퇴한 아이디)는 행이 없어 잠금이 없고 IP 한도만 적용됩니다.
+  - **카운터는 채널별로 둘입니다(C-096):** 등록 기기(`device_failed_login_count`·`device_login_locked_at`)와 새 기기(`failed_login_count`·`login_locked_at`). 요청의 `device_token` 쿠키로 채널을 정하므로(비밀번호 검증 전), 남이 새 기기 채널을 5번 틀려 잠가도 주인은 등록 기기에서 로그인할 수 있습니다. 성공하면 그 채널만 0이 됩니다. 새 기기 채널이 잠기면 `/users/login/device`도 `403 ACCOUNT_LOCKED`입니다.
   - **동시 요청:** 비밀번호를 검증하기 *전에* 'UPDATE ... 횟수 < 5인 행만 +1' 한 문장으로 시도를 먼저 세므로, 같은 아이디로 동시에 30개를 보내도 정확히 5번만 검증됩니다. 이미 동시 요청들이 시도 5번을 가져가 검증 중이라 잠긴 것은 아닐 때는 `429 TOO_MANY_LOGIN_ATTEMPTS`("로그인 요청이 동시에 너무 많습니다.", `Retry-After: 1`)입니다(잠긴 게 아니므로 잠시 후 다시 시도하면 됨).
 - **IP 한도:** 한 IP에서 15분 안에 로그인 실패 20회면 `429 TOO_MANY_LOGIN_ATTEMPTS`(`Retry-After` 헤더에 남은 초). 아이디를 바꿔 가며 찔러 보는 공격용이고, 성공한 시도는 이번 한 건만 기록에서 빠집니다. 프로세스 메모리로 세므로 서버 재시작 시 초기화되고, 서버(워커)가 여러 개면 각자 셉니다.
 
-`POST /users/token/refresh` (인증 헤더 불필요: 액세스 토큰이 만료됐을 때 부르는 API)
+`POST /users/login/device/send` (로그인 불필요, 새 기기 확인용)
 ```json
-{ "refresh_token": "Xk3..." }
+{ "challenge_token": "eyJhbGciOi..." }
 ```
-→ `200`, 로그인과 같은 모양의 토큰 묶음. `session_expires_at`은 지금부터 다시 30분으로 연장됩니다.
-- **갱신 토큰은 한 번 쓰면 교체됩니다.** 응답의 새 `refresh_token`을 저장하고, 쓴 토큰은 버립니다.
-- `401 INVALID_REFRESH_TOKEN`: 모르는 토큰, 만료(30분 미사용), 로그아웃·비밀번호 변경 등으로 끊긴 세션. → 다시 로그인.
+→ `200 { "data": { "verification_id": 12, "expires_in": 600 }, "message": "인증번호를 보냈습니다." }` (`/verification/phone/send-for-me`와 같은 모양·같은 발송 한도)
+- **등록된 번호로만** 보냅니다(번호를 받지 않음: 남의 번호로 보내게 할 수 없음). 챌린지가 만료·위조거나 탈퇴한 사용자면 `401 INVALID_DEVICE_CHALLENGE`, 발송 한도(번호당 15분 3번, IP당 10번)를 넘으면 `429 TOO_MANY_VERIFICATION_REQUESTS`.
+- 인증번호 확인은 기존 `POST /verification/phone/verify`를 그대로 씁니다(`verification_id` + `code` → `verification_token`, purpose `NEW_DEVICE`).
+
+`POST /users/login/device` (로그인 불필요)
+```json
+{ "challenge_token": "eyJhbGciOi...", "phone_verification_token": "eyJhbGciOi..." }
+```
+→ `200 { "data": <LoginOk>, "message": "새 기기가 등록되었습니다." }` + `refresh_token`·`device_token` 쿠키
+- **증표 소비(1회)·다른 세션 폐기(단일 세션)·기기 등록·토큰 발급이 한 트랜잭션**입니다. 같은 증표로 두 번은 못 쓰므로 기기를 등록할 때마다 새 문자 인증이 필요합니다. 기기 이름(`label`)은 `User-Agent`에서 만듭니다("Chrome · Windows" 같은 형태).
+- 오류: `401 INVALID_DEVICE_CHALLENGE`, `400 INVALID_VERIFICATION_TOKEN`(증표 만료·위조·이미 사용·다른 용도/번호), `403 ACCOUNT_LOCKED`(새 기기 채널이 잠김).
+
+`POST /users/token/refresh` (액세스 토큰 헤더 불필요: 액세스 토큰이 만료됐을 때 부르는 API. **본문 없음**, `refresh_token` 쿠키만 보냄, **`Origin` 헤더 필수**)
+→ `200`, `data`는 `TokenResponse`(`access_token`, `token_type`, `expires_in`, `session_expires_at`. 갱신 토큰과 `status` 필드는 없음) + 새 `refresh_token` 쿠키. `session_expires_at`은 지금부터 다시 30분으로 연장됩니다.
+```json
+{ "data": { "access_token": "eyJhbGciOi...", "token_type": "bearer", "expires_in": 300, "session_expires_at": "2026-11-08T11:00:00Z" }, "message": null }
+```
+- `403 CSRF_ORIGIN`: Origin이 없거나 `CORS_ORIGINS`에 없음(쿠키 확인보다 먼저).
+- **갱신 토큰은 한 번 쓰면 교체됩니다.** 새 쿠키는 브라우저가 알아서 저장하므로 클라이언트가 할 일은 없고, 동시에 두 탭이 같은 옛 쿠키로 부르지 않게만 합니다(프론트는 Web Locks 사용).
+- `401 INVALID_REFRESH_TOKEN`: 쿠키 없음, 모르는 토큰, 만료(30분 미사용), 로그아웃·비밀번호 변경 등으로 끊긴 세션. → 다시 로그인.
+- **세션이 죽은 401**(`INVALID_REFRESH_TOKEN`·`REFRESH_TOKEN_REUSED`·`SESSION_REPLACED`)에는 `refresh_token` 쿠키 삭제(`Max-Age=0`)가 함께 옵니다(브라우저가 죽은 쿠키를 계속 보내지 않게). 그 밖의 오류에는 쿠키를 지우지 않습니다.
 - `401 SESSION_REPLACED`("다른 곳에서 로그인되어 로그아웃되었습니다."): 같은 아이디로 다른 곳에서 로그인해 이 세션이 끊김. 화면은 본인이 아니면 비밀번호를 바꾸라고 안내합니다.
 - `401 REFRESH_TOKEN_REUSED`: **이미 교체된 토큰을 다시 냄** = 토큰이 새어 나갔을 수 있으므로 그 세션(같은 로그인에서 이어진 토큰 전체)을 폐기합니다. 진짜 사용자도 다시 로그인해야 합니다.
 
-`POST /users/logout` (인증 헤더 불필요: 액세스 토큰이 만료된 상태에서도 로그아웃할 수 있게)
-```json
-{ "refresh_token": "Xk3..." }
-```
-→ `200 { "data": null, "message": "로그아웃되었습니다." }`
-- 그 토큰의 세션(이 기기)을 폐기합니다. 다른 기기의 세션은 그대로입니다.
-- **멱등**: 모르는 토큰·이미 끊긴 토큰이어도 `200`.
+`POST /users/logout` (액세스 토큰 헤더 불필요: 액세스 토큰이 만료된 상태에서도 로그아웃할 수 있게. **본문 없음**, `refresh_token` 쿠키만 보냄, **`Origin` 헤더 필수**)
+→ `200 { "data": null, "message": "로그아웃되었습니다." }` + `refresh_token` 쿠키 삭제(`Max-Age=0`). `device_token`은 남깁니다(기기 등록은 로그아웃과 무관).
+- 그 쿠키의 세션(이 기기)을 폐기합니다. 다른 기기의 세션은 그대로입니다.
+- Origin 확인이 먼저라 Origin이 없거나 불허면 `403 CSRF_ORIGIN`.
+- **멱등**: 쿠키가 없거나 모르는 토큰·이미 끊긴 토큰이어도 `200`.
 - 그 세션의 액세스 토큰도 **다음 요청부터 바로** `401`입니다(5분이 남았어도).
 
 `POST /users/logout-all` 🔒 (본문 없음)
 → `200 { "data": null, "message": "모든 기기에서 로그아웃되었습니다." }`
-- 이 사용자의 **모든 세션(이 기기 포함)**을 폐기합니다. 비밀번호 변경과 같은 폐기이지만 새 세션은 주지 않습니다. 다른 기기에서 로그인해 둔 것이 걱정될 때 씁니다.
+- 이 사용자의 **모든 세션(이 기기 포함)**을 폐기합니다. 비밀번호 변경과 같은 폐기이지만 새 세션은 주지 않습니다. 응답은 쿠키를 지우지 않으므로(죽은 쿠키는 다음 갱신 때 `401`과 함께 삭제됨) 클라이언트가 메모리의 액세스 토큰을 버립니다. 등록 기기는 유지됩니다. 다른 기기에서 로그인해 둔 것이 걱정될 때 씁니다.
 - `/users/logout`과 달리 **액세스 토큰이 필요**합니다(남의 모든 세션을 끊는 데 쓰이면 안 되므로). 없으면 `401`.
 - 다른 기기의 액세스 토큰도 다음 요청부터 바로 `401`입니다.
 
@@ -131,7 +187,8 @@
 ```
 → `200 { "data": null, "message": "회원 탈퇴가 완료되었습니다. 그동안 이용해 주셔서 감사합니다." }`
 - 증표: `POST /verification/phone/send-for-me` `{ "purpose": "WITHDRAWAL" }`(등록 번호로만 발송) → `verify`.
-- 현재 비밀번호는 로그인 실패 카운터와 같은 규칙(4번 `400 INVALID_CURRENT_PASSWORD`, 5번째 `403 ACCOUNT_LOCKED`).
+- 현재 비밀번호는 로그인 실패 카운터와 같은 규칙(4번 `400 INVALID_CURRENT_PASSWORD`, 5번째 `403 ACCOUNT_LOCKED`, 동시 요청이 5번을 다 가져갔으면 `429 TOO_MANY_LOGIN_ATTEMPTS`). 요청의 `device_token` 쿠키로 등록 기기/새 기기 채널을 정해 셉니다.
+- 성공하면 `refresh_token`·`device_token` 쿠키를 모두 지웁니다(`Max-Age=0`). 등록된 기기도 모두 해제됩니다.
 - 조건 불충족 `400 WITHDRAWAL_BLOCKED`(message에 첫 사유), 증표 문제 `400 INVALID_VERIFICATION_TOKEN`.
 - 처리: 이름·닉네임·전화 가림, 비밀번호 무효화, 입출금 계좌 닫기(`closed_at`), 카드 해지, 모든 세션 폐기, AI 대화·인증번호 삭제. **거래 기록·약관 동의 기록은 보존**, **같은 아이디로 재가입 불가**(가입은 기존 409 문구 그대로).
 - 탈퇴 후: 로그인은 없는 아이디와 같은 `401`, 기존 토큰 즉시 `401`, 아이디·비밀번호 찾기는 없는 계좌와 같은 응답, **남이 그 계좌로 이체하면 없는 계좌와 같은 `404`**(탈퇴와 입금이 겹쳐도 입출금 계좌 행 잠금으로 "탈퇴했는데 돈이 남는" 일이 없음).
@@ -152,22 +209,33 @@
 ```json
 { "current_password": "Passw0rd!23", "new_password": "N3wPassw0rd!" }
 ```
-→ `200`, 로그인과 같은 모양의 토큰 묶음 (`message`: "비밀번호가 변경되었습니다.")
-- **이 사용자의 모든 세션(모든 기기의 갱신 토큰)을 폐기하고, 지금 이 기기용 새 세션을 발급합니다.** 프론트는 응답의 토큰으로 바꿔 끼웁니다. 다른 기기의 액세스 토큰도 다음 요청부터 바로 `401`입니다.
+→ `200`, `TokenResponse`(`access_token`, `token_type`, `expires_in`, `session_expires_at`: 갱신 토큰·`status` 없음) + 새 `refresh_token` 쿠키 (`message`: "비밀번호가 변경되었습니다.")
+- **이 사용자의 모든 세션(모든 기기의 갱신 토큰)을 폐기하고, 지금 이 기기용 새 세션을 발급합니다.** 프론트는 응답의 액세스 토큰으로 바꿔 끼웁니다. **등록된 기기는 유지됩니다**(본인이 현재 비밀번호를 알고 바꾸는 것이므로. 비밀번호 *찾기*와 탈퇴는 기기를 모두 해제). 다른 기기의 액세스 토큰도 다음 요청부터 바로 `401`입니다.
 - `new_password`는 가입과 같은 강도 규칙(어기면 `422`). `current_password`는 규칙 없음.
 - `400 SAME_PASSWORD`: 새 비밀번호가 현재와 같음. `400 PASSWORD_SAME_AS_LOGIN_ID`: 새 비밀번호가 아이디와 같음(대소문자 무시).
 - `400 INVALID_CURRENT_PASSWORD`: 현재 비밀번호가 틀림(401은 로그아웃으로 오해될 수 있어 쓰지 않음).
-- **현재 비밀번호를 틀린 횟수는 로그인 잠금과 같은 DB 카운터로 셉니다**(연속 5번째면 `403 ACCOUNT_LOCKED`로 로그인까지 잠김, 이미 잠겼으면 `403 ACCOUNT_LOCKED`, 동시 요청이 5번을 다 가져갔으면 `429 TOO_MANY_LOGIN_ATTEMPTS`). `SAME_PASSWORD`·`PASSWORD_SAME_AS_LOGIN_ID`는 실패로 세지 않습니다.
+- **현재 비밀번호를 틀린 횟수는 로그인 잠금과 같은 DB 카운터로 셉니다**(요청의 `device_token` 쿠키로 정한 채널의 카운터, 연속 5번째면 `403 ACCOUNT_LOCKED`로 로그인까지 잠김, 이미 잠겼으면 `403 ACCOUNT_LOCKED`, 동시 요청이 5번을 다 가져갔으면 `429 TOO_MANY_LOGIN_ATTEMPTS`). `SAME_PASSWORD`·`PASSWORD_SAME_AS_LOGIN_ID`는 실패로 세지 않습니다.
+
+`GET /users/me/devices` 🔒 → `200` (해제 안 된 기기만, 최근 사용순)
+```json
+{ "data": [ { "device_id": 3, "label": "Chrome · Windows", "created_at": "2026-11-09T10:00:00Z", "last_used_at": "2026-11-09T10:20:00Z", "current": true } ], "message": null }
+```
+- `current`: 이 요청의 `device_token` 쿠키가 그 기기인가(프론트는 이 기기에 "이 기기" 표시).
+
+`DELETE /users/me/devices/{device_id}` 🔒 (본문 없음, **`Origin` 헤더 필수**: 기기 쿠키를 읽고 지우므로 쿠키 요청과 같은 CSRF 확인)
+→ `200 { "data": null, "message": "기기 등록을 해제했습니다." }`
+- 해제하면 그 기기는 **다음 로그인부터 휴대폰 인증을 다시** 해야 합니다. **현재 세션은 끊기지 않습니다.** 지금 이 브라우저의 기기였다면 `device_token` 쿠키도 지웁니다(`Max-Age=0`).
+- 오류: `404 DEVICE_NOT_FOUND`(없는·남의·이미 해제된 기기), `403 CSRF_ORIGIN`, `401`.
 </details>
 
 ## verification: 휴대폰 인증번호 (`domains/verification`)
 
-가입·번호 변경·계좌 비밀번호 재설정에 쓰는 문자 인증(C-090). 흐름: **발송**(`verification_id`) → **확인**(`verification_token` 증표) → 증표를 가입·번호 변경·계좌 비밀번호 요청에 넣으면 그 요청에서 **1회 사용**됩니다.
+가입·번호 변경·계좌 비밀번호 재설정·회원 탈퇴·새 기기 로그인에 쓰는 문자 인증(C-090, C-095, C-096). 흐름: **발송**(`verification_id`) → **확인**(`verification_token` 증표) → 증표를 가입·번호 변경·계좌 비밀번호·탈퇴·`/users/login/device` 요청에 넣으면 그 요청에서 **1회 사용**됩니다. 용도(purpose)는 `SIGNUP_PHONE`, `CHANGE_PHONE`, `ACCOUNT_PASSWORD_RESET`, `WITHDRAWAL`, `NEW_DEVICE`(새 기기 로그인: 발송은 `POST /users/login/device/send`, 확인은 이 `verify`)이고, 비밀번호 찾기·아이디 찾기(`PASSWORD_RESET`, `FIND_LOGIN_ID`)는 `/recovery/*`가 같은 장치를 씁니다.
 
 | 상태 | 메서드 | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
 | ✅ | POST | `/verification/phone/send` | | 인증번호 발송 (purpose `SIGNUP_PHONE`만) |
-| ✅ | POST | `/verification/phone/send-for-me` | 🔒 | 로그인한 사용자의 인증번호 발송 (`CHANGE_PHONE`, `ACCOUNT_PASSWORD_RESET`) |
+| ✅ | POST | `/verification/phone/send-for-me` | 🔒 | 로그인한 사용자의 인증번호 발송 (`CHANGE_PHONE`, `ACCOUNT_PASSWORD_RESET`, `WITHDRAWAL`) |
 | ✅ | POST | `/verification/phone/verify` | | 인증번호 확인 → `verification_token` |
 
 <details>
@@ -201,7 +269,7 @@
 - 오류:
   - `400 INVALID_VERIFICATION_CODE`: 인증번호가 틀림. 메시지에 `(N/5)`.
   - `400 VERIFICATION_EXPIRED`: 없는 `verification_id`, 10분 지남, 5회를 다 씀, 이미 확인함 → 다시 받기.
-  - `400 INVALID_VERIFICATION_TOKEN`: 증표를 쓰는 쪽(가입·번호 변경·계좌 비밀번호·비밀번호 찾기)에서, 만료·위조·용도/번호/사용자 불일치·이미 사용한 증표.
+  - `400 INVALID_VERIFICATION_TOKEN`: 증표를 쓰는 쪽(가입·번호 변경·계좌 비밀번호·탈퇴·새 기기 로그인·비밀번호 찾기)에서, 만료·위조·용도/번호/사용자 불일치·이미 사용한 증표.
   - `code`는 1~10자 아무 문자열이나 받습니다(형식이 틀려도 `422`가 아니라 틀린 시도 1회).
 - 실제 문자 발송은 아직 없습니다. 개발용 발송기(`SMS_SENDER=dev`, 다른 값이면 서버가 시작되지 않음)가 **서버 로그에 찍고 메모리 문자함에 쌓습니다** → 개발용 `GET /dev/sms?phone=...`로 읽습니다(아래 dev).
 </details>
@@ -246,7 +314,7 @@
 { "reset_token": "eyJhbGciOi...", "new_password": "N3wPassw0rd!" }
 ```
 → `200 { "data": null, "message": "비밀번호를 재설정했습니다. 새 비밀번호로 로그인해 주세요." }`
-- 새 비밀번호로 바꾸고 **로그인 잠금 해제(실패 0)**, **모든 기기의 세션 폐기**, 등록 휴대폰으로 **알림 문자**. **자동 로그인은 하지 않습니다**(토큰을 주지 않음).
+- 새 비밀번호로 바꾸고 **로그인 잠금 해제(등록 기기·새 기기 두 채널 모두 실패 0)**, **모든 기기의 세션 폐기**, **등록된 기기도 모두 해제**(다음 로그인부터 새 기기로 휴대폰 인증을 다시 함), 등록 휴대폰으로 **알림 문자**. **자동 로그인은 하지 않습니다**(토큰을 주지 않음).
 - `new_password`는 가입과 같은 강도 규칙(어기면 `422`).
 - `400 INVALID_VERIFICATION_TOKEN`: `reset_token`이 만료·위조·이미 사용됨.
 - `400 PASSWORD_SAME_AS_LOGIN_ID`, `400 SAME_PASSWORD`(현재 비밀번호와 같음): 이 경우 `reset_token` 사용이 되돌려지므로 고쳐서 다시 보낼 수 있습니다.
@@ -473,6 +541,33 @@
 청구서 생성은 이용 기간이 끝난 달만 가능합니다(`BILLING_PERIOD_NOT_ENDED`).
 
 
+## terms: 약관 (`domains/terms`, C-075)
+
+AI·임베딩을 쓰지 않아서 AI 장애 중에도 동작합니다. `{kind}` = `checking` · `deposit` · `savings` · `credit` · `debit`
+
+| 상태 | 메서드 | 경로 | 인증 | 설명 |
+|---|---|---|---|---|
+| ✅ | GET | `/terms/products/{kind}/{product_id}` | | 지금 이 상품에 가입할 때 동의할 약관 목록 (`revision_id`·`set_hash`를 가입 요청의 `terms`에 그대로 돌려보냄) |
+| ✅ | GET | `/terms/versions/{terms_version_id}` | | 저장된 그 버전의 전체 원문 (`body`, `body_sha256`, 조항 목록 `sections`, 데모용 약관 표시 `demo_only`) |
+| ✅ | GET | `/terms/consents/{kind}/{subject_id}` | 🔒 | 내 계좌·카드의 가입 당시 약관 동의 기록 (`subject_id` = 계좌·카드 id) |
+
+<details>
+<summary>응답 예시</summary>
+
+`GET /terms/products/checking/1` → `200`
+```json
+{ "data": { "product_kind": "checking", "product_id": 1, "product_code": "...", "revision_id": 1, "set_hash": "...", "items": [
+  { "terms_version_id": 1, "document_key": "...", "title": "...", "version": "...", "effective_from": "2026-11-01", "required": true, "order": 1 }
+] }, "message": null }
+```
+- 없는 상품 `404 PRODUCT_NOT_FOUND`, 현재 약관 묶음이 없으면 `409 TERMS_NOT_CONFIGURED`. 가입 요청의 `terms` 오류: `409 TERMS_OUTDATED`(약관 변경됨), `400 TERMS_INVALID`, `400 TERMS_REQUIRED_NOT_AGREED`.
+
+`GET /terms/versions/1`: 없는 버전 `404 TERMS_NOT_FOUND`.
+
+`GET /terms/consents/checking/1` 🔒 → `{ "subject_kind": "checking", "subject_id": 1, "has_record": true, "recorded_at": "...", "items": [ { "terms_version_id": 1, "document_key": "...", "title": "...", "version": "...", "effective_from": "...", "required": true, "agreed": true } ] }`
+- 약관 기능 도입 전에 가입한 계좌·카드는 `has_record: false`, `recorded_at: null`, `items: []`. 남의·없는 계좌·카드는 `404 SUBJECT_NOT_FOUND`.
+</details>
+
 ## agent: AI 금융 비서 (`domains/agent`)
 
 자세한 요청·응답, Tool 목록, 이체 확인 흐름은 [AGENT.md](AGENT.md).
@@ -482,6 +577,9 @@
 | ✅ | POST | `/agent/chat` | 🔒 | 채팅 질문. 이체 요청이면 실행하지 않고 `action`(이체 확인 카드)을 돌려줌 |
 | ✅ | POST | `/agent/transfers/{draft_id}/confirm` | 🔒 | 사용자가 확인 카드에서 계좌 비밀번호를 넣고 누른 이체 실행 (잔액·한도 재검사, 한 번만) |
 | ✅ | POST | `/agent/transfers/{draft_id}/cancel` | 🔒 | 이체 초안 취소 |
+| ✅ | GET | `/agent/conversations/{conversation_id}/messages` | 🔒 | 내 대화의 메시지 목록 (오래된 순, 이체 `action`·약관 `citations` 포함, 남의 대화는 404) |
+
+`POST /agent/chat` 본문은 `{ "message": "...", "conversation_id": null }`(`message` 1~1000자, `conversation_id`는 이어 갈 때만). 응답 `data`: `conversation_id`, `answer`, `action`(없으면 `null`), `citations`. 메시지 목록의 각 항목: `message_id`, `role`(`user`/`assistant`), `content`, `action`, `citations`, `created_at`.
 
 - 이체 확인 카드(`action`, `type: "TRANSFER_CONFIRMATION"`)에는 `from_account_id`(보내는 입출금 계좌 id)가 있습니다. 비밀번호 미설정·잠김 안내 링크를 그 계좌 상세로 보낼 때 씁니다(이 필드가 생기기 전에 저장된 대화 기록에서는 `null`).
 ```json
@@ -511,7 +609,11 @@
 
 `GET /dev/sms?phone=010-1234-5678` → `200 { "data": [ { "text": "[AvengersBank] 인증번호 123456 (10분 안에 입력). 타인에게 알려 주지 마세요.", "sent_at": "..." } ] }` (최신순, 최대 20건). 서버 메모리에 쌓은 것이라 재시작하면 비워집니다. 같은 내용이 서버 로그에도 `[개발용 문자]`로 찍힙니다. 화면의 '개발용 문자함'이 이 API를 씁니다.
 
-`POST /dev/users/ironman/unlock` (본문 없음) → `200 { "data": null, "message": "로그인 잠금을 해제했습니다." }`. 없는 아이디면 `404 USER_NOT_FOUND`.
+`POST /dev/users/ironman/unlock` (본문 없음) → `200 { "data": null, "message": "로그인 잠금을 해제했습니다." }`. 등록 기기·새 기기 두 채널의 잠금과 실패 횟수를 모두 풉니다. 없는(또는 탈퇴한) 아이디면 `404 USER_NOT_FOUND`.
+
+- 새 기기 로그인을 시험할 때: `POST /users/login` → `challenge_token` → `POST /users/login/device/send` → `GET /dev/sms`로 인증번호 확인 → `POST /verification/phone/verify` → `POST /users/login/device`.
+- `/dev/*`는 `Origin`·쿠키와 무관합니다(쿠키를 쓰는 갱신·로그아웃·기기 해제만 Origin 확인).
+- `ENABLE_DEV_ENDPOINTS`가 꺼져 있으면 이 경로들은 **등록되지 않아 `404`**입니다.
 
 ---
 

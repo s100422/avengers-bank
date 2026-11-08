@@ -19,11 +19,35 @@ erDiagram
         smallint failed_login_count "연속 로그인 실패 횟수, 기본 0"
         datetime login_locked_at "NULL, 5회 연속 실패로 잠긴 시각"
         datetime deleted_at "NULL, 회원 탈퇴 시각(소프트 삭제, C-095)"
+        smallint device_failed_login_count "등록 기기 채널 연속 실패 횟수, 기본 0(C-096)"
+        datetime device_login_locked_at "NULL, 등록 기기 채널 잠금 시각(C-096)"
+    }
+
+    refresh_tokens {
+        int refresh_token_id PK
+        int user_id FK "index"
+        string family_id "index, 로그인 1번 = family 1개(36자)"
+        string token_hash UK "SHA-256, 원문 저장 안 함"
+        datetime expires_at
+        datetime created_at
+        datetime revoked_at "NULL, 폐기 시각"
+        int replaced_by_id FK "NULL, 자기참조: 교체된 다음 토큰"
+        string revoked_reason "NULL, ROTATED/LOGOUT/LOGOUT_ALL/PASSWORD_CHANGED/REUSE_DETECTED/LOGIN_ELSEWHERE/WITHDRAWN"
+    }
+
+    user_devices {
+        int device_id PK
+        int user_id FK "index"
+        string token_hash UK "SHA-256, 기기 쿠키 원문 저장 안 함"
+        string label "예: Chrome · Windows"
+        datetime created_at
+        datetime last_used_at
+        datetime revoked_at "NULL, 해제 시각"
     }
 
     verification_codes {
         int verification_id PK
-        string purpose "SIGNUP_PHONE/CHANGE_PHONE/PASSWORD_RESET/FIND_LOGIN_ID/ACCOUNT_PASSWORD_RESET/WITHDRAWAL"
+        string purpose "SIGNUP_PHONE/CHANGE_PHONE/PASSWORD_RESET/FIND_LOGIN_ID/ACCOUNT_PASSWORD_RESET/WITHDRAWAL/NEW_DEVICE"
         string phone
         int user_id FK "NULL, 가입 전에는 없음"
         string code_hash "HMAC-SHA256, 원문 저장 안 함"
@@ -38,6 +62,7 @@ erDiagram
         int product_id PK
         string type "CHECKING/DEPOSIT/SAVINGS"
         string name
+        string product_code UK "NULL, 약관 manifest와 연결하는 안정적인 코드"
         text description
         decimal interest_rate "연 금리(%)"
         bigint min_amount "NULL, 최소 가입 금액(원), 예금 상품만"
@@ -47,6 +72,7 @@ erDiagram
         int product_id PK
         string type "CREDIT/DEBIT"
         string name
+        string product_code UK "NULL, 약관 manifest와 연결하는 안정적인 코드"
         text description
         bigint credit_limit "NULL, 신용카드 상품만"
     }
@@ -183,6 +209,119 @@ erDiagram
         datetime time
     }
 
+    agent_conversations {
+        int conversation_id PK
+        int user_id FK "index"
+        datetime created_at
+    }
+
+    agent_messages {
+        int agent_message_id PK
+        int conversation_id FK
+        string role "user/assistant"
+        text content
+        json tool_calls "NULL, Tool 이름·성공 여부만"
+        json action "NULL, 이체 확인 action(마스킹)"
+        json citations "NULL, 서버가 검증한 약관 출처"
+        datetime created_at
+    }
+
+    agent_transfer_drafts {
+        string draft_id PK "추측 불가 임의 문자열(43자)"
+        int user_id FK "index"
+        int from_checking_account_id FK
+        string to_account_num
+        string recipient_name
+        bigint amount "양수"
+        string status "PENDING/EXECUTED/EXPIRED/CANCELLED"
+        datetime expires_at
+        datetime executed_at "NULL"
+        datetime created_at
+    }
+
+    terms_versions {
+        int terms_version_id PK
+        string document_key "UK(document_key, version)"
+        string version
+        string title
+        string document_type
+        date effective_from
+        string status "published/retired"
+        text body "front matter 뺀 정규화 Markdown"
+        string body_sha256
+        json meta "원본 front matter"
+        datetime published_at
+    }
+
+    product_terms_revisions {
+        int revision_id PK
+        string product_kind "checking/deposit/savings/credit/debit, UK(product_kind, product_id, revision)"
+        int product_id "FK 없음(종류별 테이블이 다름)"
+        int revision
+        string set_hash
+        datetime created_at
+    }
+
+    product_terms_items {
+        int revision_id PK, FK
+        int terms_version_id PK, FK
+        boolean required
+        int display_order
+    }
+
+    terms_consents {
+        int consent_id PK
+        int user_id FK "index"
+        string subject_kind "checking/deposit/savings/credit/debit"
+        int subject_id "가입한 계좌·카드 ID, FK 없음"
+        int revision_id FK
+        int terms_version_id FK
+        boolean required
+        boolean agreed
+        string body_sha256 "동의 당시 본문 해시"
+        datetime recorded_at
+    }
+
+    terms_index_generations {
+        int generation_id PK
+        string embedding_model
+        int dimensions "0보다 큼"
+        string chunker_version
+        string status "building/active/retired, active는 1개만"
+        datetime created_at
+        datetime activated_at "NULL"
+    }
+
+    terms_index_entries {
+        int generation_id PK, FK
+        int terms_version_id PK, FK
+        string status "ready/failed"
+        int chunk_count
+        text error "NULL"
+        datetime updated_at
+    }
+
+    terms_chunks {
+        int chunk_id PK
+        int generation_id FK
+        int terms_version_id FK
+        int ordinal "UK(generation_id, terms_version_id, ordinal)"
+        string section_id
+        string section_title
+        string heading_path
+        int char_start
+        int char_end
+        text text
+        string text_sha256
+        vector embedding "PostgreSQL pgvector, SQLite는 JSON"
+    }
+
+    users ||--o{ refresh_tokens : "로그인 세션"
+    refresh_tokens |o--o| refresh_tokens : "교체(replaced_by_id)"
+    users ||--o{ user_devices : "등록 기기"
+    users ||--o{ agent_conversations : "AI 비서 대화"
+    users ||--o{ agent_transfer_drafts : "이체 초안"
+    users ||--o{ terms_consents : "약관 동의"
     users ||--o{ checking_accounts : "보유"
     users ||--o{ deposit_accounts : "보유"
     users ||--o{ savings_accounts : "보유"
@@ -206,6 +345,18 @@ erDiagram
     credit_cards ||--o{ credit_card_histories : "사용"
     credit_cards ||--o{ credit_card_bills : "청구"
     credit_card_bills |o--o{ credit_card_histories : "포함"
+
+    agent_conversations ||--o{ agent_messages : "메시지"
+    checking_accounts ||--o{ agent_transfer_drafts : "출금 계좌"
+
+    terms_versions ||--o{ product_terms_items : "구성"
+    product_terms_revisions ||--o{ product_terms_items : "약관 집합"
+    product_terms_revisions ||--o{ terms_consents : "동의 당시 집합"
+    terms_versions ||--o{ terms_consents : "동의한 버전"
+    terms_index_generations ||--o{ terms_index_entries : "색인 상태"
+    terms_versions ||--o{ terms_index_entries : "색인 상태"
+    terms_index_generations ||--o{ terms_chunks : "조각"
+    terms_versions ||--o{ terms_chunks : "조각"
     debit_cards ||--o{ debit_card_histories : "사용"
 ```
 
@@ -213,14 +364,22 @@ erDiagram
 
 | 테이블 | 설명 | 도메인 |
 |---|---|---|
-| `users` | 회원. `phone_verified_at`(휴대폰 인증 시각), `failed_login_count`·`login_locked_at`(같은 아이디 5회 연속 로그인 실패면 잠금, 비밀번호 찾기·관리자 명령으로 해제) | users |
-| `verification_codes` | 휴대폰 인증번호 1번 발송 = 1행. 코드는 HMAC만 저장, `purpose` CHECK 제약, 인덱스 `(phone, purpose, created_at)`. 번호당 발송 제한(15분 3번)도 이 행을 센다 | verification |
-| `account_products` / `card_products` | 계좌 상품 / 카드 상품 (`account_products.min_amount`: NULL이면 제한 없음, 값이 있으면 `> 0` CHECK) | products |
-| `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌. 3종 모두 `password_hash`(NULL = 미설정, 돈이 나가지 않음)·`password_failed_count`·`password_locked_at`(5회 실패 잠금) | accounts |
-| `*_account_histories` | 계좌별 거래내역 | accounts |
+| `users` | 회원. `phone_verified_at`(휴대폰 인증 시각), `failed_login_count`·`login_locked_at`('새 기기' 채널: 5회 연속 실패면 잠금, 비밀번호 찾기·관리자 명령으로 해제), `device_failed_login_count`·`device_login_locked_at`('등록 기기' 채널, 따로 센다, C-096), `deleted_at`(탈퇴 시각, 행은 지우지 않는 소프트 삭제, C-095) | users |
+| `refresh_tokens` | 갱신 토큰 1개 = 1행(SHA-256 해시만 저장). `family_id`가 세션 1개, `replaced_by_id` 자기참조로 회전·재사용 감지. CHECK: 교체됨 → 폐기 상태, `revoked_reason`은 목록 안의 값이고 폐기된 행에만 있음. 만료·폐기 행은 쌓이기만 함(정리 작업 없음) | users |
+| `user_devices` | 등록 기기(새 기기 휴대폰 인증 통과 시 생성, 쿠키 해시만 저장). `revoked_at`이 있으면 해제된 기기 | users |
+| `verification_codes` | 휴대폰 인증번호 1번 발송 = 1행. 코드는 HMAC만 저장, `purpose` CHECK 제약(`SIGNUP_PHONE`·`CHANGE_PHONE`·`PASSWORD_RESET`·`FIND_LOGIN_ID`·`ACCOUNT_PASSWORD_RESET`·`WITHDRAWAL`·`NEW_DEVICE`), 인덱스 `(phone, purpose, created_at)`. 번호당 발송 제한(15분 3번)도 이 행을 센다 | verification |
+| `account_products` / `card_products` | 계좌 상품 / 카드 상품. `type` CHECK, `product_code` UNIQUE(NULL 가능, 약관 연결용), `account_products.min_amount`: NULL이면 제한 없음·값이 있으면 `> 0` CHECK, `card_products.credit_limit`: 신용은 필수 `> 0`·체크는 NULL(CHECK) | products |
+| `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌. `balance >= 0` CHECK, 입출금은 `per_transfer_limit <= daily_transfer_limit` CHECK, 예금·적금은 `status`와 `closed_at`이 맞아야 함(CHECK), 적금 `monthly_deposit_date` 1~31 CHECK. 입출금의 `closed_at`은 회원 탈퇴로 닫힌 시각(예금·적금의 해지와 다름). 3종 모두 `password_hash`(NULL = 미설정, 돈이 나가지 않음)·`password_failed_count`·`password_locked_at`(5회 실패 잠금) | accounts |
+| `*_account_histories` | 계좌별 거래내역. `amount > 0`·`balance_after >= 0`·`type` 목록 CHECK(입출금: `TRANSFER_OUT`/`TRANSFER_IN`/`TO_SAVINGS`/`TO_DEPOSIT`/`CARD_PAYMENT`/`CARD_BILL_PAYMENT`/`DEV_CHARGE`/`CLOSE_IN`, 예금·적금: `TRANSFER_IN`/`INTEREST`/`CLOSE_OUT`), 인덱스 `(계좌 ID, date)` | accounts |
 | `credit_cards` / `debit_cards` | 신용카드 / 체크카드 | cards |
 | `*_card_histories` | 카드별 사용내역 | cards |
-| `credit_card_bills` | 신용카드 청구서 | cards |
+| `credit_card_bills` | 신용카드 청구서. UNIQUE `(credit_card_id, period_start)`, `total_amount > 0`, `period_end >= period_start`, `status`와 `paid_at`이 맞아야 함(CHECK) | cards |
+| `agent_conversations` / `agent_messages` | AI 비서 대화 / 메시지(`role` CHECK, 인덱스 `(conversation_id, agent_message_id)`). Tool 원본 결과는 저장하지 않고 이름·성공 여부(`tool_calls`), 마스킹된 이체 확인 `action`, 약관 출처 `citations`만 남김 | agent |
+| `agent_transfer_drafts` | AI가 만든 이체 초안. 사용자가 화면에서 확인해야 실행됨. `status` CHECK, `amount > 0` CHECK | agent |
+| `terms_versions` | 발행한 약관의 불변 스냅샷. UNIQUE `(document_key, version)`, `status` CHECK(`published`/`retired`) | terms |
+| `product_terms_revisions` / `product_terms_items` | 상품별 "가입 때 동의할 약관 집합"(바뀌면 revision을 하나 더 쌓음) / 그 구성(복합 PK). UNIQUE `(product_kind, product_id, revision)`, `product_kind` CHECK. 계좌·카드 상품 ID가 겹칠 수 있어 종류와 함께 쓰고 FK는 두지 않음 | terms |
+| `terms_consents` | 가입 때 서버가 기록한 동의. UNIQUE `(subject_kind, subject_id, terms_version_id)`, 인덱스 `(subject_kind, subject_id)`, `subject_id`는 FK 없음(종류별 테이블이 다름) | terms |
+| `terms_index_generations` / `terms_index_entries` / `terms_chunks` | 약관 검색 색인(언제든 다시 만들 수 있는 데이터). 세대(`status` CHECK, `active`는 부분 UNIQUE 인덱스로 1개만, `dimensions > 0`) / 세대 안 버전별 상태(복합 PK, `ready`/`failed`) / 조각(UNIQUE `(generation_id, terms_version_id, ordinal)`, `embedding`은 PostgreSQL에서 pgvector, SQLite에서 JSON) | terms |
 
 ## 코드에서 지켜야 할 규칙
 
@@ -236,7 +395,7 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
 8. **신용카드 청구는 API 호출로:** 스케줄러가 없으므로 본인이 청구서 생성·납부 API를 호출합니다. 이용 기간은 전월 1일~말일(KST), 납부 예정일은 다음 달 결제일(그 달에 없는 날이면 말일)입니다. 부분 납부·연체 이자·리볼빙은 범위 밖입니다.
 9. **돈이 움직이기 전에 행 잠금:** 잔액·한도·청구서 상태를 바꾸는 처리는 해당 행을 `SELECT ... FOR UPDATE`(`with_for_update()`)로 **먼저 잠그고, 잠근 뒤에** 검사합니다. 잠그기 전에 읽은 값으로 검사하면 동시 요청이 둘 다 통과합니다.
    - 잠금 순서는 항상 같게: 입출금 계좌(ID 오름차순) → 예금·적금 계좌 → 카드 → 청구서. 순서가 다르면 두 요청이 서로를 기다리는 데드락이 생깁니다.
-   - 로그인 세션(`refresh_tokens`)을 바꾸는 작업은 **사용자 행(`users`) → 갱신 토큰** 순서로 잠급니다(C-088). 아직 생기지 않은 새 토큰 행은 잠글 수 없어서, 사용자 행으로 같은 사용자의 로그인·갱신·로그아웃·비밀번호 변경을 한 줄로 세웁니다.
+   - 로그인 세션(`refresh_tokens`)·등록 기기(`user_devices`)를 바꾸는 작업은 **사용자 행(`users`) → 갱신 토큰·기기** 순서로 잠급니다(C-088, C-096). 아직 생기지 않은 새 토큰·기기 행은 잠글 수 없어서, 사용자 행으로 같은 사용자의 로그인·갱신·로그아웃·비밀번호 변경·기기 등록을 한 줄로 세웁니다. 회원 탈퇴(`users/withdrawal.py`)도 사용자 행을 먼저 잠근 뒤 계좌 등으로 내려갑니다(`users` → … → 계좌).
    - 계좌 비밀번호 검증(`accounts/password.py` `check_account_password`)은 본 작업 전에 **그 계좌 행 하나만 잠그는 짧은 트랜잭션을 먼저 커밋**합니다(실패 횟수 증가가 롤백되지 않게). 행 하나만 잠그고 끝나므로 위 잠금 순서와 엮여 데드락이 생기지 않습니다.
    - 잠금 쿼리에는 `.execution_options(populate_existing=True)`를 붙여 세션에 남아 있는 예전 값을 최신 값으로 덮어씁니다.
    - 테스트 DB(SQLite)는 `FOR UPDATE`를 무시하므로 동시성 테스트는 PostgreSQL에서 해야 합니다.
