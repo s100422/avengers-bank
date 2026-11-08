@@ -51,6 +51,8 @@
 | ✅ | POST | `/users/token/refresh` | | 갱신 토큰으로 새 토큰 묶음 받기 (갱신 토큰은 교체됨) |
 | ✅ | POST | `/users/logout` | | 로그아웃 (이 기기의 세션 폐기) |
 | ✅ | POST | `/users/logout-all` | 🔒 | 모든 기기에서 로그아웃 (이 사용자의 모든 세션 폐기) |
+| ✅ | GET | `/users/me/withdrawal` | 🔒 | 회원 탈퇴 가능 여부·막는 사유 |
+| ✅ | POST | `/users/me/withdrawal` | 🔒 | 회원 탈퇴 (비밀번호 + 휴대폰 인증) |
 | ✅ | GET | `/users/me` | 🔒 | 내 정보 조회 |
 | ✅ | PATCH | `/users/me` | 🔒 | 이름, 닉네임, 전화번호 수정 (번호를 바꿀 때만 휴대폰 인증 증표) |
 | ✅ | PATCH | `/users/me/password` | 🔒 | 비밀번호 변경 (모든 세션 폐기 후 이 기기에 새 토큰) |
@@ -120,6 +122,20 @@
 - `/users/logout`과 달리 **액세스 토큰이 필요**합니다(남의 모든 세션을 끊는 데 쓰이면 안 되므로). 없으면 `401`.
 - 다른 기기의 액세스 토큰도 다음 요청부터 바로 `401`입니다.
 
+`GET /users/me/withdrawal` 🔒 → `200 { "data": { "can_withdraw": false, "blockers": [ { "code": "CHECKING_BALANCE", "message": "잔액이 남은 입출금 계좌가 있습니다: 110-…(12,000원)", "account_type": "checking", "account_id": 3 } ] } }`
+- 탈퇴를 막는 사유: `ACTIVE_DEPOSIT`·`ACTIVE_SAVINGS`(해지하지 않은 예금·적금), `CHECKING_BALANCE`(잔액이 남은 입출금 계좌), `CARD_UNPAID`(신용카드 미결제 `outstanding_amount > 0`). 화면은 이 목록으로 "무엇을 먼저 할지"를 보여 줍니다.
+
+`POST /users/me/withdrawal` 🔒 (C-095)
+```json
+{ "current_password": "Passw0rd!23", "phone_verification_token": "eyJ..." }
+```
+→ `200 { "data": null, "message": "회원 탈퇴가 완료되었습니다. 그동안 이용해 주셔서 감사합니다." }`
+- 증표: `POST /verification/phone/send-for-me` `{ "purpose": "WITHDRAWAL" }`(등록 번호로만 발송) → `verify`.
+- 현재 비밀번호는 로그인 실패 카운터와 같은 규칙(4번 `400 INVALID_CURRENT_PASSWORD`, 5번째 `403 ACCOUNT_LOCKED`).
+- 조건 불충족 `400 WITHDRAWAL_BLOCKED`(message에 첫 사유), 증표 문제 `400 INVALID_VERIFICATION_TOKEN`.
+- 처리: 이름·닉네임·전화 가림, 비밀번호 무효화, 입출금 계좌 닫기(`closed_at`), 카드 해지, 모든 세션 폐기, AI 대화·인증번호 삭제. **거래 기록·약관 동의 기록은 보존**, **같은 아이디로 재가입 불가**(가입은 기존 409 문구 그대로).
+- 탈퇴 후: 로그인은 없는 아이디와 같은 `401`, 기존 토큰 즉시 `401`, 아이디·비밀번호 찾기는 없는 계좌와 같은 응답, **남이 그 계좌로 이체하면 없는 계좌와 같은 `404`**(탈퇴와 입금이 겹쳐도 입출금 계좌 행 잠금으로 "탈퇴했는데 돈이 남는" 일이 없음).
+
 `PATCH /users/me`: 보낸 필드만 바뀝니다. → `200`, 수정된 내 정보(`GET /users/me`와 같은 모양)
 ```json
 { "name": "페퍼 포츠", "nick_name": "CEO", "phone": "010-9999-8888" }
@@ -169,7 +185,7 @@
 { "purpose": "CHANGE_PHONE", "phone": "010-9999-8888" }
 ```
 - `CHANGE_PHONE`: 바꿀 **새 번호**로 보냅니다. `phone` 필수(없으면 `422`).
-- `ACCOUNT_PASSWORD_RESET`: **등록된 번호로만** 보냅니다. `phone`은 생략해도 되고, 보내도 무시합니다(훔친 세션으로 남의 번호를 넣어 계좌 비밀번호를 바꾸지 못하게). `{ "purpose": "ACCOUNT_PASSWORD_RESET" }`
+- `ACCOUNT_PASSWORD_RESET`·`WITHDRAWAL`: **등록된 번호로만** 보냅니다. `phone`은 생략해도 되고, 보내도 무시합니다(훔친 세션으로 남의 번호를 넣어 계좌 비밀번호를 바꾸지 못하게). `{ "purpose": "ACCOUNT_PASSWORD_RESET" }`
 - 응답은 `/send`와 같은 모양.
 
 `POST /verification/phone/verify`

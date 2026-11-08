@@ -18,11 +18,12 @@ erDiagram
         datetime phone_verified_at "NULL, 휴대폰 인증 시각(가입·번호 변경)"
         smallint failed_login_count "연속 로그인 실패 횟수, 기본 0"
         datetime login_locked_at "NULL, 5회 연속 실패로 잠긴 시각"
+        datetime deleted_at "NULL, 회원 탈퇴 시각(소프트 삭제, C-095)"
     }
 
     verification_codes {
         int verification_id PK
-        string purpose "SIGNUP_PHONE/CHANGE_PHONE/PASSWORD_RESET/FIND_LOGIN_ID/ACCOUNT_PASSWORD_RESET"
+        string purpose "SIGNUP_PHONE/CHANGE_PHONE/PASSWORD_RESET/FIND_LOGIN_ID/ACCOUNT_PASSWORD_RESET/WITHDRAWAL"
         string phone
         int user_id FK "NULL, 가입 전에는 없음"
         string code_hash "HMAC-SHA256, 원문 저장 안 함"
@@ -63,6 +64,7 @@ erDiagram
         string password_hash "NULL, 계좌 비밀번호(숫자 4자리) argon2 해시"
         smallint password_failed_count "연속 실패, 기본 0"
         datetime password_locked_at "NULL, 5회 실패로 잠긴 시각"
+        datetime closed_at "NULL, 회원 탈퇴로 닫힌 시각(닫힌 계좌로는 입금 불가, C-095)"
     }
 
     deposit_accounts {
