@@ -33,7 +33,7 @@
 
 ## 지금 상태
 
-팀 설계에 있던 기능(users, products, accounts, transfers, cards)은 모두 구현됐고 소스에 남은 TODO는 없다. 테스트 226개와 PostgreSQL 동시성 검증을 통과했다. 상품 약관 동의·약관 검색(RAG)은 C-075, 운영 안내는 `TERMS_RAG.md`(약관 문서는 아직 초안이라 발행 전). 이미 정한 것은 `DESIGN_CHANGES.md` 3부에 있다. 아래는 그 **다음 단계**다.
+팀 설계에 있던 기능(users, products, accounts, transfers, cards)은 모두 구현됐고 소스에 남은 TODO는 없다. 테스트 238개(SQLite, PostgreSQL 전용 3개는 skip)와 PostgreSQL 동시성 검증(예금 가입 금액 입금 C-079 포함)을 통과했다. 예금은 가입 때 가입 금액(필수)을 한 번만 입금하고 추가 입금은 막혀 있으며(C-079), 최소 가입 금액은 상품별이다(C-080, 약관 C-081). 상품 약관 동의·약관 검색(RAG)은 C-075, 운영 안내는 `TERMS_RAG.md`(약관 문서는 아직 초안이라 발행 전). 이미 정한 것은 `DESIGN_CHANGES.md` 3부에 있다. 아래는 그 **다음 단계**다.
 
 ---
 

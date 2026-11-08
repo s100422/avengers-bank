@@ -1,7 +1,7 @@
 # 설계 변경 기록
 
 팀 초기 설계(docs/ERD.md, API_ENDPOINTS.md, PROJECT_STRUCTURE.md 및 원본 코드)를 바탕으로 **개인으로 작업하면서** 바꾼 것, 구현한 것, 앞으로 할 것을 모아 둔 문서다.
-팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-06, 변경 항목 C-001 ~ C-069)
+팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-08, 변경 항목 C-001 ~ C-081)
 
 | 알고 싶은 것 | 볼 곳 |
 |---|---|
@@ -81,20 +81,20 @@
 |---|---|---|---|
 | users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음 | C-024 |
 | products | 4 / 4 | ✅ 구현 | C-019 |
-| accounts | 7 / 7 | ✅ 구현 | C-020 |
-| transfers | 3 / 3 | ✅ 구현 | C-022 |
+| accounts | 7 / 7 | ✅ 구현 (예금은 개설 때 가입 금액을 필수로 입금 C-076·C-079, 상품별 최소 가입 금액 C-080) | C-020, C-076, C-079, C-080 |
+| transfers | 2 / 2 | ✅ 구현 (`POST /transfers/deposit`는 C-079에서 삭제: 예금은 가입 후 추가 입금 불가) | C-022, C-079 |
 | cards | 10 / 10 | ✅ 구현 | C-023 |
 | dev (설계 외) | 1 | ✅ 구현 | C-021 |
-| terms (설계 외) | 3 + 가입 5종 동의 + Agent Tool 2개 | ✅ 구현 (문서는 초안, 발행 전) | C-075 |
-| 인프라 | 최초 마이그레이션, docker compose, 시드 | ✅ | C-014, C-015, C-019 |
+| terms (설계 외) | 3 + 가입 5종 동의 + Agent Tool 2개 | ✅ 구현. 예금 약관 4개는 1.1.0으로 개정·발행 (나머지 17개는 1.0.0) | C-075, C-081 |
+| 인프라 | 최초 마이그레이션, docker compose, 시드(상품 `seed.py`, 데모 사용자·계좌 `seed_demo.py`) | ✅ | C-014, C-015, C-019, C-078 |
 
 ### 검증 현황
 
 | 방법 | 범위 | 결과 |
 |---|---|---|
-| pytest (SQLite) | 전체 | 226개 통과 (PostgreSQL 통합 테스트 포함 실행, C-075) |
+| pytest (SQLite) | 전체 | 238개 통과, 3개 skip (C-081까지. skip은 PostgreSQL이 필요한 테스트로 이번에는 실행하지 않음) |
 | 실제 PostgreSQL: 마이그레이션 | upgrade → downgrade → upgrade, `alembic check` | 통과 (C-014) |
-| 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025) |
+| 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023), 해지(C-043, C-079에서 적금 납입 경합으로 수정), 예금 가입 금액 입금(C-079) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025) |
 | 서버를 띄운 HTTP 확인 | 계좌, 충전, 이체, 카드, 청구서 | 통과 |
 
 - SQLite는 `FOR UPDATE` 잠금을 무시한다. **pytest가 통과해도 동시성은 검증된 것이 아니다**(C-017 결정: pytest는 SQLite 유지).
@@ -3622,6 +3622,249 @@ async with db.begin():
 
 ---
 
+### C-076. 예금 가입 때 가입 금액을 입출금 계좌에서 바로 입금
+
+- **날짜:** 2026-11-08
+- **분류:** API · 구조
+- **상태:** 적용 후 C-079에서 필드를 필수로 바꿈 (SQLite pytest와 서버를 띄운 HTTP·브라우저 확인. PostgreSQL 동시성은 C-079에서 `scripts/pg_deposit_open_concurrency.py`로 확인)
+- **바뀐 파일:**
+  - `accounts/schemas.py` `DepositAccountCreate`: 선택 필드 `initial_amount`, `from_checking_account_id`, 하나만 오면 422하는 `_amount_with_account`
+  - `accounts/service.py` `open_deposit`·`_open`: 선택 인자 `after_open(db, account)`, 약관 동의 기록 뒤 같은 트랜잭션에서 호출
+  - `transfers/service.py`: `_pay`의 본체를 `_pay_in_tx`(트랜잭션을 열지 않음)로 분리, `_pay`는 `begin`으로 감싼 얇은 래퍼, `pay_deposit_in_tx` 추가
+  - `accounts/router.py` `open_deposit`: `initial_amount`가 있으면 `after_open`에 `pay_deposit_in_tx`를 연결
+  - `tests/test_transfers.py`: 8건 추가
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx`: 예금 가입 화면에 가입 금액·출금 계좌 입력
+  - `docs/API_ENDPOINTS.md`: `POST /accounts/deposit` 요청·규칙·오류
+
+#### 변경 전
+```
+POST /accounts/deposit  { "product_id": 2, "maturity_date": "2027-12-10" }
+→ 잔액 0원 예금이 만들어지고, 돈은 나중에 POST /transfers/deposit 으로 따로 넣는다
+```
+
+#### 변경 후
+```
+POST /accounts/deposit  { "product_id": 2, "maturity_date": "2027-12-10",
+                          "initial_amount": 3000000, "from_checking_account_id": 1 }
+→ 개설·약관 동의 기록·입출금 → 예금 이체가 한 트랜잭션. balance == initial_amount
+```
+- `initial_amount`와 `from_checking_account_id`는 **함께 보내거나 둘 다 생략**한다(하나만 오면 422). 둘 다 생략하면 이전과 똑같이 0원 예금이다.
+- 거래내역은 기존 입금과 같다: 입출금 쪽 `TO_DEPOSIT`(상대 = 예금 계좌번호), 예금 쪽 `TRANSFER_IN`(상대 = 입출금 계좌번호). 1회·1일 이체 한도는 적용하지 않는다(`/transfers/deposit`과 같은 정책).
+- 실패하면 예금 계좌도 약관 동의 기록도 남지 않는다: 잔액 부족 `400 INSUFFICIENT_BALANCE`, 없는·남의 입출금 계좌 `404 ACCOUNT_NOT_FOUND`.
+- 화면은 항상 두 값을 보낸다. 출금 계좌 목록에 잔액을 보여 주고, 금액이 잔액보다 크면 입력 중에 한 줄 경고를 낸다(제출은 막지 않고 서버가 최종 판단). 입출금 계좌가 없으면 먼저 만들라는 안내를 낸다.
+
+#### 이유
+- 실제 정기예금은 가입할 때 금액을 정해 한 번에 맡긴다. 기존 방식은 가입이 끝났는데 돈이 0원이라 이자도 0원인 예금이 만들어지고, 사용자가 "가입했는데 왜 금액을 안 묻지?"라고 느낀다.
+- 개설과 이체를 두 번의 호출로 나누면 개설만 되고 입금이 실패한 예금이 남는다 → 한 트랜잭션으로 묶었다.
+- `accounts.service`가 `transfers.service`를 import하면 순환 import가 된다 → 서비스에는 콜백 자리(`after_open`)만 두고 router에서 연결했다. 계좌번호 충돌 재시도 루프에서 롤백 뒤 다시 불려도 안전하다.
+
+#### 영향 범위
+- **API는 하위 호환이다.** 두 필드가 선택이라 금액 없이 호출하는 기존 코드·테스트(AI 비서 테스트 포함)는 그대로 동작한다.
+- `_pay`의 동작과 오류 코드는 그대로다(적금 납입·예금 입금 테스트가 계속 통과).
+- 잠금 순서(입출금 → 예금·적금, ERD 규칙 9)는 유지된다. 새 예금 행은 다른 트랜잭션이 볼 수 없다.
+- 소유권·잔액 검사가 예금 행 INSERT **뒤**에 일어난다. 실패하면 롤백되어 결과는 같지만, 잘못된 계좌 id여도 개설 쿼리 몇 개는 먼저 실행된다.
+
+#### 검증
+- `tests/test_transfers.py` 8건: 정상 가입(잔액 감소·양쪽 거래내역), 잔액 부족 롤백(예금 없음·약관 동의 기록 없음), 남의 계좌·없는 계좌 404, 한쪽만 보냄 422, 금액 없음 → 기존 동작, 금액 0·음수 422.
+- 서버를 띄워 확인: 150만 원 가입 → 생활비 통장 13,000,000 → 11,500,000, 예금 1,500,000, 예금 쪽 `TRANSFER_IN` 1건. 99,999,999원은 400 `INSUFFICIENT_BALANCE`이고 계좌 수와 잔액이 그대로. 한쪽만 보내면 422.
+- **하지 않은 것:** 같은 입출금 계좌로 개설과 이체를 동시에 보내는 PostgreSQL 동시성 확인(`scripts/` 기준). 잠금 순서는 코드로만 확인했다.
+
+#### 팀 논의 포인트
+- **결정됨(2026-11-08, C-079·C-080·C-081에서 구현):** 두 필드는 필수로, 가입 후 추가 입금은 막고, 최소 가입 금액은 상품별로 둔다. 이 항목은 필드를 **선택**으로 두었던 첫 단계의 기록이다.
+
+---
+
+### C-077. 약관 전문 보기: 같은 탭으로 열고, 돌아와도 입력값 유지
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (프론트)
+- **상태:** 적용 (브라우저에서 확인)
+- **바뀐 파일:**
+  - `frontend/components/terms/ConsentRecord.tsx`: 계좌·카드 상세의 "전문 보기" 링크에서 `target="_blank"` 제거
+  - `frontend/app/terms/[versionId]/page.tsx`: 맨 아래 링크를 "← 이전 페이지"(브라우저 뒤로 가기, 이전 페이지가 없으면 `/products`)로. 가입 화면에서 왔으면 기존대로 "← 가입 화면으로"
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx`: 입력칸을 `fields` 상태로 들고 있고, 약관 전문으로 나갈 때 `sessionStorage`에 맡겼다가 돌아오면 복원
+
+#### 변경 전
+- 계좌 상세의 "전문 보기"는 새 탭으로 열려서 돌아갈 이전 페이지가 없고, 아래 링크는 `/products`로 고정이었다.
+- 가입 화면에서 "전문 보기" 뒤 돌아오면 상품·금액·만기일·별명·약관 동의가 모두 초기화됐다. 입력칸이 `defaultValue`만 쓰는 비제어 입력이라 화면이 새로 그려지면 기본값으로 돌아갔다.
+
+#### 변경 후
+- "전문 보기"는 같은 탭으로 열리고, 아래 링크가 이전 페이지로 돌려보낸다.
+- 입력칸(납입액·납입일·결제일·만기일·별명·가입 금액·출금 계좌)과 상품 선택은 React 상태(`fields`, `bind()`)로 들고 있다. 동의 체크는 **같은 상품·같은 약관 묶음(`set_hash`)이면 유지**하고, 약관이 새 버전이 됐으면 처음부터 다시 동의한다.
+- 화면이 아예 새로 열리는 경우(링크로 이동)를 위해 "전문 보기"를 누를 때 값을 `sessionStorage`(`open-draft:{kind}`)에 맡기고, 돌아오면 한 번 꺼내 쓰고 지운다.
+
+#### 이유
+- 재현 1: 적금 가입 화면에서 납입액·별명을 넣고 "전문 보기" → "← 가입 화면으로" → 전부 기본값.
+- 재현 2(처음 고쳤을 때 놓친 경로): 같은 화면에서 **브라우저 뒤로 가기**로 돌아오면 Next가 이전 화면을 다시 살려 쓰는데, 그때 비제어 입력값과 동의 체크가 초기화되고 `sessionStorage`도 읽히지 않았다. 입력값을 상태로 들고 동의 초기화 조건을 "묶음이 바뀔 때만"으로 바꿔 고쳤다.
+
+#### 영향 범위
+- 가입 화면 5종(입출금·예금·적금·신용카드·체크카드)이 같은 코드라 모두 적용된다. 백엔드 변경 없음.
+- 가입에 성공해도 화면은 `sessionStorage`를 따로 지우지 않지만, 초안은 돌아올 때 한 번 꺼내면서 지워지므로 찌꺼기가 남지 않는다(브라우저에서 확인).
+
+#### 검증
+- 브라우저: 적금·예금 가입 화면에서 입력 → "전문 보기" → ① "← 가입 화면으로" ② 브라우저 뒤로 가기, 두 경로 모두 상품·입력값·동의 4개가 그대로 복원됨. 저장소는 비어 있음.
+- `npx tsc --noEmit`, `npx eslint` 에러·경고 0.
+- **하지 않은 것:** 계좌 상세의 "가입 당시 약관 보기 → 전문 보기 → 이전 페이지"를 브라우저로 눌러 확인하지는 않았다(코드만 확인).
+
+#### 팀 논의 포인트
+- 약관 전문에서 돌아오면 계좌 상세의 "가입 당시 약관 보기" 펼침 상태는 접힌 채로 다시 열린다.
+
+---
+
+### C-078. 데모 사용자·계좌 시드 스크립트 `seed_demo.py`
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (개발 편의)
+- **상태:** 적용
+- **바뀐 파일:**
+  - `src/avengers_bank/seed_demo.py` (새): `uv run python -m avengers_bank.seed_demo [login_id] [password]`
+
+#### 변경 전
+- 상품만 `seed.py`로 넣을 수 있었고, 데모 계좌를 만들려면 가입·로그인·약관 동의·개설·충전을 손으로 반복해야 했다. 새 계정으로 로그인하면 계좌가 하나도 없어 "데이터가 없어졌다"고 느꼈다.
+
+#### 변경 후
+- 실행 중인 API로 사용자 가입(있으면 로그인)→입출금 2개(생활비 통장 **정확히 13,000,000원**, 월급 통장 2,000,000원)→정기예금(가입 금액 3,000,000원, C-076)→적금(월 30만 원)을 만들고 계좌 표를 출력한다. 생활비 통장 충전액은 예금 가입 금액만큼 더해서(16,000,000) 최종 잔액이 13,000,000원이 되게 했다.
+- 서버(`fastapi dev`), 상품 시드, **약관 발행**(`terms.publish`)이 먼저 필요하고 `ENABLE_DEV_ENDPOINTS=true`여야 한다. 실행할 때마다 계좌가 새로 추가된다(중복 방지 없음).
+
+#### 이유
+- DB 직접 삽입이 아니라 실제 API를 거치므로 약관 동의·번호 발급·충전이 서비스 코드 그대로 검증된다(스크립트 자체가 끝에서 끝까지 확인 역할).
+
+#### 영향 범위
+- 앱 코드는 건드리지 않는다. 약관 발행·색인(`terms.publish`, `terms.indexing`)은 이 스크립트가 하지 않으며, 로컬 DB에 약관 청크가 없으면 AI 비서의 약관 검색이 "지금은 이용할 수 없다"고 답한다(`TERMS_RAG.md`의 색인 단계).
+
+#### 검증
+- 새 계정으로 실행해 표를 확인했다: 생활비 통장 13,000,000원, 월급 통장 2,000,000원, 목돈 예금 3,000,000원, 여행 적금 0원.
+
+#### 팀 논의 포인트
+- 이미 있는 아이디의 비밀번호를 모르면 로그인에서 멈춘다(의도). 비밀번호를 인자로 받는다.
+
+---
+
+### C-079. 예금 가입 금액 필수화, 가입 후 추가 입금 금지 (`POST /transfers/deposit` 삭제)
+
+- **날짜:** 2026-11-08
+- **분류:** API · 구조
+- **상태:** 적용 (C-076의 결정 사항을 확정)
+- **바뀐 파일:**
+  - `accounts/schemas.py` `DepositAccountCreate`: `initial_amount`, `from_checking_account_id` 필수, `_amount_with_account` validator 삭제
+  - `accounts/router.py` `open_deposit`: 항상 `after_open`으로 입금
+  - `transfers/router.py`·`schemas.py`·`service.py`: `POST /transfers/deposit`, `DepositPaymentCreate`, `pay_deposit` 삭제 (`pay_deposit_in_tx`, `_pay_in_tx`, 적금 납입은 유지)
+  - `frontend/app/accounts/[type]/[id]/page.tsx`: 예금 상세의 "예금에 입금하기" 폼 삭제, `PayIn`은 적금 전용
+  - `tests/`: 개설 호출 전부 새 계약으로, 새 도우미 `tests/helpers.py`의 `open_deposit()` 하나
+  - `scripts/pg_close_concurrency.py`: 시나리오 2를 예금 입금 → 적금 납입으로, `scripts/pg_deposit_open_concurrency.py`(새), `scripts/_common.py` `cleanup`에 `terms_consents` 삭제 추가, `scripts/README.md`
+  - `docs/API_ENDPOINTS.md`, `docs/ERD.md`, `README.md`, `docs/PROJECT_STRUCTURE.md`
+
+#### 변경 전
+```
+POST /accounts/deposit  initial_amount, from_checking_account_id 선택 (둘 다 생략하면 0원 예금)
+POST /transfers/deposit 입출금 → 내 예금 입금 (만기 전 여러 번)
+```
+
+#### 변경 후
+```
+POST /accounts/deposit  initial_amount, from_checking_account_id 필수 (없으면 422)
+POST /transfers/deposit 삭제 (404). 예금 가입 후 추가 입금 불가, 가입 금액이 곧 원금
+```
+- 적금 납입(`POST /transfers/savings`)은 그대로다. transfers는 3개 → 2개 엔드포인트.
+- 예금 계좌 거래내역의 입금(`TRANSFER_IN`)은 가입 때 한 번만 생긴다. 입출금 쪽 `TO_DEPOSIT`도 가입 금액 입금 때만 생긴다.
+
+#### 이유
+- 사용자 결정(실제 정기예금처럼 가입 때 금액을 정하고 추가 입금은 막는다). 0원 예금이 만들어지지 않는다.
+
+#### 영향 범위
+- **하위 호환이 깨진다.** 금액 없이 예금을 여는 호출과 `/transfers/deposit` 호출은 더는 동작하지 않는다. AI 비서에는 예금 개설·입금 도구가 없어 코드 변경은 없고, 테스트의 호출만 고쳤다.
+- 해지된 예금·만기 후 예금에 입금하는 경로가 없어져 `ACCOUNT_CLOSED`·`ACCOUNT_MATURED` 검사는 적금 납입에서만 의미가 있다(`_pay_in_tx`에 그대로 둠).
+- **놓칠 뻔한 곳 두 가지:** ① 예금 상세 화면의 입금 폼은 경로를 `/transfers/${kind}`로 조립해서 `grep transfers/deposit`에 잡히지 않았다. 지우지 않았다면 화면에서 404가 났다. ② `scripts/pg_close_concurrency.py`가 삭제된 `DepositPaymentCreate`·`pay_deposit`를 import하고 있었다. 예금에는 입금 경로가 없으므로 시나리오 2(해지와 입금 섞기)를 **적금 해지와 납입**으로 바꿨다.
+
+#### 검증
+- `tests/`: 삭제 `test_pay_deposit`·`test_open_deposit_without_amount_is_empty`(의미가 없어짐), 예금 입금 거절 검증(해지·만기)은 적금만 남김, 추가: `/transfers/deposit` 404, 필수 필드 누락 422, 0원 예금이 불가능해져 `test_close_empty_account_records_no_history`는 적금으로. 해지 금액·이자 기대값은 그대로 나온다.
+- 서버를 띄워 확인: 필수 필드 누락 422, `/transfers/deposit` 404.
+- **PostgreSQL 동시성:** `scripts/pg_deposit_open_concurrency.py`: 잔액 1,000,000원에서 100,000원짜리 가입 20번 동시 → 정확히 10건 성공·10건 `INSUFFICIENT_BALANCE`, 입출금 0원·예금 합계 1,000,000원, 동의 기록 10건. 잠금을 뺀 대조군은 20건이 모두 가입돼 합계가 2,000,000원이 됨. `pg_close_concurrency.py`도 통과(적금 해지 2 + 납입 20).
+
+#### 팀 논의 포인트
+- 삭제된 `POST /transfers/deposit`를 쓰던 외부 호출이 있으면 깨진다(이 저장소에서는 프론트·테스트·스크립트를 모두 고침).
+
+---
+
+### C-080. 예금 상품별 최소 가입 금액 (`account_products.min_amount`)
+
+- **날짜:** 2026-11-08
+- **분류:** DB 스키마 · API
+- **상태:** 적용 (개발 DB에 마이그레이션·시드 적용. 운영 DB에는 적용하지 않음)
+- **바뀐 파일:**
+  - `products/models.py` `AccountProduct.min_amount` + CHECK `ck_account_products_min_amount_positive`, `products/schemas.py`
+  - `alembic/versions/2026_11_08_1000-b8d5f7a9c1e3_add_product_min_amount.py` (새)
+  - `accounts/service.py` `open_deposit`: 돈을 옮기기 전에 최소 금액 검사
+  - `seed.py`: 이미 있는 상품도 `min_amount`를 갱신
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx`, `app/products/page.tsx`, `lib/api.ts`
+  - `tests/test_deposit_min_amount.py`(새), `tests/test_products.py`
+
+#### 변경 전
+- 최소 가입 금액이 없다(1원 이상이면 가입).
+
+#### 변경 후
+- `account_products.min_amount BIGINT NULL` (NULL = 제한 없음). 값은 예금만: 어벤져스 정기예금 100,000원, 스타 정기예금 1,000,000원, 모바일 특판예금 500,000원.
+- `GET /products/accounts`, `/products/accounts/{id}` 응답에 `min_amount`.
+- `POST /accounts/deposit`에서 `initial_amount < min_amount`이면 `400 BELOW_MIN_AMOUNT`("이 상품의 최소 가입 금액은 1,000,000원입니다."). 개설 트랜잭션 안에서 이체 전에 검사하므로 예금·약관 동의 기록·이체 어느 것도 남지 않는다.
+- 화면: 가입 화면의 상품 카드와 입력칸 아래에 "최소 N원", 입력값이 최소보다 작으면 입력 중 경고, 입력칸 `min` 속성, 상품 목록의 예금 카드에 "최소 가입 N원". 상품을 바꾸면 안내가 바뀐다.
+
+#### 이유
+- 사용자 결정(상품별로 둔다). 상품 소개와 약관에 같은 숫자가 있어야 해서 값은 데이터(`min_amount`)가 정하고 약관(C-081)은 그 숫자를 적는다.
+
+#### 영향 범위
+- 마이그레이션은 컬럼만 추가하고 기존 행은 NULL로 둔다. **값은 `seed.py`가 채운다**(마이그레이션 뒤 `uv run python -m avengers_bank.seed` 필요). 운영 DB에는 둘 다 아직 적용하지 않았다.
+- 입출금·적금 상품은 NULL이라 동작이 그대로다. 테스트 픽스처 상품도 NULL이라 기존 테스트는 영향이 없다.
+- `min_amount`를 바꾸면 약관 문서의 숫자도 같이 고쳐야 한다(자동 동기화 없음).
+
+#### 검증
+- `tests/test_deposit_min_amount.py`: 정확히 최소 금액이면 성공, 미만이면 400이고 예금 계좌·동의 기록·입출금 잔액 불변, NULL 상품은 1원도 성공, 상품 API 응답에 `min_amount`.
+- 서버를 띄워 확인: 스타 정기예금에 999,999원은 400 `BELOW_MIN_AMOUNT`(계좌 수 그대로), 1,000,000원은 201. 브라우저에서 카드·경고·`min` 속성이 상품 선택에 따라 바뀌는 것 확인.
+- 개발 DB: `alembic upgrade head` 뒤 `seed`로 3개 상품 값 확인(100000 / 1000000 / 500000).
+
+#### 팀 논의 포인트
+- 최소 금액은 예금에만 있다. 적금의 월 납입액 최소, 최대 가입 한도는 없다.
+- 약관의 숫자와 `min_amount`를 자동으로 맞추는 장치는 없다(수동).
+
+---
+
+### C-081. 예금 약관 개정 (1.1.0): 가입 금액·최소 금액·추가 입금 불가
+
+- **날짜:** 2026-11-08
+- **분류:** 문서 · 약관
+- **상태:** 적용 (개발 DB에 발행·색인). 사용자가 `docs/terms/` 본문 수정을 명시적으로 허락함 (`docs/terms/README.md`의 "본문 임의 수정 금지" 규칙은 그대로 둠)
+- **바뀐 파일:**
+  - `docs/terms/corpus/common/ab.deposit.rules.md`, `corpus/products/deposit-basic.md`, `deposit-star.md`, `deposit-mobile.md`: 1.0.0 → 1.1.0
+  - `docs/terms/manifest.json`: 해당 4개 문서와 상품 연결 참조를 1.1.0으로
+  - `docs/terms/evaluation.json`, `docs/terms/IMPLEMENTATION_NOTES.md`
+
+#### 변경 전
+- `[funding] 입금과 납입`: "만기 전에는 현재 구현상 여러 차례 입금할 수 있습니다." 최소 가입 금액 언급 없음.
+
+#### 변경 후
+- `ab.deposit.rules@1.1.0` `[funding]`: 가입할 때 가입 금액을 정해 본인 입출금계좌에서 한 번에 입금, 잔액 부족 시 가입 안 됨(동의 기록도 안 남음), **가입 후 추가 입금 불가**, 최소 가입 금액은 상품별(상품 문서). `[opening]`에 가입 금액·출금 계좌가 필수라는 설명 추가. 섹션 id는 모두 유지.
+- 상품 문서 3개의 `[conditions]`: 최소 가입 금액(100,000 / 1,000,000 / 500,000원)과 "가입 후 추가 입금 불가, 가입 금액이 곧 원금". 에이전트가 요청 범위 밖으로 `[interest]`와 `[early-close-example]`의 "각 납입 건/납입금" 표현을 "가입 금액/입금일"로 고쳤다(계산식은 그대로).
+- 평가 질문: T06 질문·기대 답을 새 동작으로, T04~T08의 기대 문서 버전을 1.1.0으로, 새 질문 T28(정기예금 최소 금액)·T29(스타 정기예금 최소 금액)·T30(잔액 부족 때) 추가.
+- 발행(`publish --effective-from 2026-11-08`): 문서 4개 inserted(1.1.0), 예금 3종의 약관 묶음이 revision 2, 이전 1.0.0 4개는 retired. 색인: 문서 4개·청크 25개(Gemini 임베딩).
+
+#### 이유
+- 추가 입금을 막으면 약관의 "여러 차례 입금할 수 있다"가 사실과 달라지고, AI 비서가 이 조항을 근거로 틀리게 답한다. 최소 가입 금액은 약관에 아예 없었다.
+- 발행된 본문은 덮어쓸 수 없어서 새 버전(1.1.0)으로 올렸다.
+
+#### 영향 범위
+- 예금 3종의 가입 화면은 새 약관 묶음(revision 2)으로 동의를 받는다. 약관 화면을 열어 둔 사용자는 `TERMS_OUTDATED` 안내를 받고 새로 동의한다. **이미 가입한 예금의 동의 기록은 가입 당시 1.0.0 그대로**이고 "가입 당시 약관 보기"도 1.0.0을 보여 준다.
+- 이미 가입한 예금은 추가 입금이 안 되는 상태가 됐다(1.0.0 약관에는 "여러 차례 입금 가능"이라고 적혀 있음). 개발 데이터라 문제는 없지만, 실제 서비스라면 기존 가입자 고지가 필요한 변경이다.
+
+#### 검증
+- `publish --dry-run`(문서 4 inserted, 예금 3종 rev 2, 4 retired) → 본 발행, `indexing --dry-run`(문서 4, 청크 25) → 본 색인(실패 0).
+- AI 비서에 실제로 물어봄: "스타 정기예금 최소 가입 금액" → 1,000,000원, 출처 `스타 정기예금 상품설명 및 특약 1.1.0 #conditions`. "정기예금에 가입한 뒤 추가로 입금할 수 있어?" → 추가 입금 불가, 출처 `예금 이용약관 1.1.0 #funding`.
+- **확인하지 못한 것:** 상품명 없이 "예금 가입하고 나서 돈을 더 넣을 수 있어?"라고 물으면 검색 없이 "상품에 따라 불가할 수 있다"고 얼버무리고 출처가 없었다(상품을 되묻지도 않음). 모델 답변이 매번 같지 않다는 C-075의 알려진 한계다. `scripts/eval_terms.py` 평가는 실행하지 않았다(Gemini 호출 비용; `--fake` 옵션은 있음).
+
+#### 팀 논의 포인트
+- 예금은 가입 금액이 곧 원금이라는 문장이 약관·화면·API 문서에 모두 들어갔다. 만기 후 처리 같은 다른 조항은 그대로다.
+- 상품명 없는 질문에서 모델이 검색을 건너뛰는 문제는 프롬프트 강화가 필요할 수 있다.
+
+---
+
 ## 부록 A. 초기 리뷰(2026-11-04) 항목 처리 현황
 
 처음 코드 리뷰에서 나온 9개 항목의 처리 결과다. 취소선은 처리 완료이고 오른쪽이 처리한 항목 번호다. **9개 모두 처리됐다**(9번은 보류했다가 C-026에서 처리).
@@ -3717,6 +3960,12 @@ async with db.begin():
 | C-073 | 2026-11-07 | 구조 | AI 비서 패널 폭을 경계선 끌기·←→ 키로 조절 | 적용 |
 | C-074 | 2026-11-07 | 구조 | AI 답변 서식(굵게·목록 카드) + 등장·입력 중 애니메이션 | 적용 |
 | C-075 | 2026-11-07 | DB 스키마 | 상품 약관 동의(버전 보존·동시성) + 약관 검색 RAG Tool(pgvector) + 검증된 출처 | 적용 |
+| C-076 | 2026-11-08 | API | 예금 가입 때 가입 금액·출금 계좌를 받아 개설과 같은 트랜잭션에서 입금 | 적용 |
+| C-077 | 2026-11-08 | 구조 | 약관 전문 보기를 같은 탭으로, 돌아와도 가입 입력값·동의 유지 | 적용 |
+| C-078 | 2026-11-08 | 구조 | 데모 사용자·계좌 시드 스크립트 `seed_demo.py` | 적용 |
+| C-079 | 2026-11-08 | API | 예금 가입 금액 필수화, 가입 후 추가 입금 금지(`POST /transfers/deposit` 삭제) | 적용 |
+| C-080 | 2026-11-08 | DB 스키마 | 예금 상품별 최소 가입 금액 `account_products.min_amount` | 적용 |
+| C-081 | 2026-11-08 | 문서 | 예금 약관 1.1.0 개정(가입 금액·최소 금액·추가 입금 불가) + 발행·색인 | 적용 |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`
