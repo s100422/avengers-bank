@@ -13,7 +13,7 @@
     },
     {
       "document_key": "ab.deposit.rules",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "path": "corpus/common/ab.deposit.rules.md"
     },
     {
@@ -43,17 +43,17 @@
     },
     {
       "document_key": "ab.product.deposit-basic",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "path": "corpus/products/deposit-basic.md"
     },
     {
       "document_key": "ab.product.deposit-star",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "path": "corpus/products/deposit-star.md"
     },
     {
       "document_key": "ab.product.deposit-mobile",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "path": "corpus/products/deposit-mobile.md"
     },
     {
@@ -171,13 +171,13 @@
         },
         {
           "document_key": "ab.deposit.rules",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "required": true,
           "order": 2
         },
         {
           "document_key": "ab.product.deposit-basic",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "required": true,
           "order": 3
         }
@@ -196,13 +196,13 @@
         },
         {
           "document_key": "ab.deposit.rules",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "required": true,
           "order": 2
         },
         {
           "document_key": "ab.product.deposit-star",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "required": true,
           "order": 3
         }
@@ -221,13 +221,13 @@
         },
         {
           "document_key": "ab.deposit.rules",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "required": true,
           "order": 2
         },
         {
           "document_key": "ab.product.deposit-mobile",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "required": true,
           "order": 3
         }
