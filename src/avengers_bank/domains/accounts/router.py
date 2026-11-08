@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
@@ -18,6 +19,7 @@ from avengers_bank.domains.accounts.schemas import (
     CheckingAccountResponse,
     DepositAccountCreate,
     DepositAccountResponse,
+    HistoryFilter,
     SavingsAccountCreate,
     SavingsAccountResponse,
 )
@@ -94,8 +96,18 @@ async def get_histories(
     user: CurrentUser,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    types: Annotated[list[str] | None, Query()] = None,
+    min_amount: Annotated[int | None, Query(ge=0)] = None,
+    max_amount: Annotated[int | None, Query(ge=0)] = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
 ):
-    histories = await account_service.get_histories(db, type, account_id, user, limit, offset)
+    """거래 내역 (최신순). 날짜(KST, 양끝 포함), 거래 종류(여러 개), 금액 범위, 상대 계좌·이름 검색으로 거를 수 있다."""
+    f = HistoryFilter(
+        date_from=date_from, date_to=date_to, types=types, min_amount=min_amount, max_amount=max_amount, q=q
+    )
+    histories = await account_service.get_histories(db, type, account_id, user, limit, offset, f)
     return SuccessResponse[list[AccountHistoryResponse]](data=histories)
 
 

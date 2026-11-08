@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from avengers_bank.core.timezone import today_kst
+from avengers_bank.domains.terms.schemas import TermsConsentIn
 
 # 입출금 계좌를 개설할 때 한도를 생략하면 쓰는 값 (임시 예시, 팀이 정하면 바꾼다)
 DEFAULT_PER_TRANSFER_LIMIT = 1_000_000
@@ -24,6 +25,7 @@ def _require_future(value: date) -> date:
 
 class CheckingAccountCreate(BaseModel):
     product_id: int
+    terms: TermsConsentIn  # 화면에서 본 약관 집합과 항목별 동의 (C-075)
     nickname: str | None = Field(default=None, max_length=50)
     per_transfer_limit: Amount = DEFAULT_PER_TRANSFER_LIMIT
     daily_transfer_limit: Amount = DEFAULT_DAILY_TRANSFER_LIMIT
@@ -37,6 +39,7 @@ class CheckingAccountCreate(BaseModel):
 
 class DepositAccountCreate(BaseModel):
     product_id: int
+    terms: TermsConsentIn  # 화면에서 본 약관 집합과 항목별 동의 (C-075)
     maturity_date: date
     nickname: str | None = Field(default=None, max_length=50)
 
@@ -45,6 +48,7 @@ class DepositAccountCreate(BaseModel):
 
 class SavingsAccountCreate(BaseModel):
     product_id: int
+    terms: TermsConsentIn  # 화면에서 본 약관 집합과 항목별 동의 (C-075)
     monthly_payment: Amount
     monthly_deposit_date: int = Field(ge=1, le=31)
     maturity_date: date
@@ -59,6 +63,17 @@ class AccountUpdate(BaseModel):
     nickname: str | None = Field(default=None, max_length=50)
     per_transfer_limit: Amount | None = None
     daily_transfer_limit: Amount | None = None
+
+
+class HistoryFilter(BaseModel):
+    """GET .../histories 검색 조건. 비운 값은 조건에서 뺀다 (C-064)."""
+
+    date_from: date | None = None  # KST 날짜, 그날 포함
+    date_to: date | None = None  # KST 날짜, 그날 포함
+    types: list[str] | None = None  # 거래 종류 코드 (TRANSFER_OUT, CARD_PAYMENT ...)
+    min_amount: int | None = Field(default=None, ge=0)
+    max_amount: int | None = Field(default=None, ge=0)
+    q: str | None = Field(default=None, max_length=100)  # 상대 계좌번호·이름(사용처) 일부
 
 
 class AccountCloseRequest(BaseModel):

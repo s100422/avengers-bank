@@ -9,6 +9,8 @@
 | [docs/ERD.md](docs/ERD.md) | ER 다이어그램 (Mermaid), 코드에서 지킬 규칙 · 원본: [AvengersBankDiagram.drawio](docs/AvengersBankDiagram.drawio) · 최신(현재 코드): [AvengersBankDiagram_v2.drawio](docs/AvengersBankDiagram_v2.drawio) |
 | [docs/API_ENDPOINTS.md](docs/API_ENDPOINTS.md) | API 엔드포인트 목록, 요청·응답 형식, 구현 상태 |
 | [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | 폴더 구조, 계층(router → service → repository) 설명, 역할 분담 |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | AWS 배포 흐름(EC2 + RDS + Caddy), 다시 접속·코드 업데이트 방법, 겪은 문제 |
+| [docs/AGENT.md](docs/AGENT.md) | AI 금융 비서: 실행 방법, 환경변수, Tool 목록, 이체 확인 흐름, 보안 |
 | [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) | 회고록(작성 중): 기술 선택과 이유(예: nginx 대신 Caddy), 배운 점 |
 
 ## 시작하기
@@ -29,11 +31,23 @@ docker compose up -d --wait   # PostgreSQL 17을 127.0.0.1:5435에 띄움 (docke
 
 ```bash
 uv run alembic upgrade head
-uv run python -m avengers_bank.seed   # 개발용 상품 데이터 (이미 있으면 건너뜀)
+uv run python -m avengers_bank.seed   # 개발용 상품 데이터 (같은 이름은 건너뛰고 새 상품만 추가)
 uv run fastapi dev
 ```
 
 최초 마이그레이션(`alembic/versions/6e15576e9ff5_create_initial_tables.py`)은 저장소에 들어 있으므로 `upgrade head`만 실행합니다.
+
+### 프론트엔드 (Next.js)
+
+API 서버를 띄운 상태에서 다른 터미널로 실행하고 http://localhost:5173 을 엽니다. 포트를 5173으로 고정해서 API의 CORS 기본값과 맞췄습니다.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+다른 API(예: 배포 서버)를 부르려면 `frontend/.env.example`을 `.env.local`로 복사해 `NEXT_PUBLIC_API_BASE_URL`을 바꿉니다.
 
 ### 개발용 잔액 충전
 
@@ -85,3 +99,4 @@ uv run python scripts/pg_transfer_concurrency.py
 | accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정 |
 | transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입, 예금 입금 |
 | cards | ✅ 신용·체크카드 발급, 조회, 결제(사용), 신용카드 청구서 생성·납부 |
+| agent | ✅ AI 금융 비서(Tool Calling): 자산 요약·거래내역·카드값 조회, 이체 초안 → 화면 확인 후 실행 ([docs/AGENT.md](docs/AGENT.md)) |

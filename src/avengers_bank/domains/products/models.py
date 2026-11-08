@@ -17,6 +17,8 @@ class AccountProduct(Base):
     product_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # CHECKING / DEPOSIT / SAVINGS
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # 약관 연결용 안정적인 코드 (docs/terms/manifest.json의 product_code, C-075). 약관 발행 때 채운다
+    product_code: Mapped[str | None] = mapped_column(String(50), unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     interest_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)  # 연 금리(%)
 
@@ -37,6 +39,8 @@ class CardProduct(Base):
     product_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # CREDIT / DEBIT
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # 약관 연결용 안정적인 코드 (docs/terms/manifest.json의 product_code, C-075). 약관 발행 때 채운다
+    product_code: Mapped[str | None] = mapped_column(String(50), unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     # 이 상품으로 발급하는 신용카드의 한도(원). 발급 때 credit_cards.credit_limit으로 복사한다.
     credit_limit: Mapped[int | None] = mapped_column(BigInteger)

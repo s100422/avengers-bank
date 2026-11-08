@@ -18,6 +18,7 @@ from avengers_bank.domains.accounts.models import (  # noqa: F401
     SavingsAccount,
     SavingsAccountHistory,
 )
+from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft  # noqa: F401
 from avengers_bank.domains.cards.models import (  # noqa: F401
     CreditCard,
     CreditCardBill,
@@ -26,6 +27,7 @@ from avengers_bank.domains.cards.models import (  # noqa: F401
     DebitCardHistory,
 )
 from avengers_bank.domains.products.models import AccountProduct, CardProduct  # noqa: F401
+import avengers_bank.domains.terms.models  # noqa: F401,E402
 from avengers_bank.domains.users.models import User  # noqa: F401
 
 config = context.config

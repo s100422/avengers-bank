@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/* shortcut: 라이트 모드만 둔다. 다크 모드는 피치·코랄 팔레트를 따로 잡을 때 추가한다 */
+:root {
+  color-scheme: light;
+  --porcelain: #fff4ee; /* 페이지 바탕 (피치) */
+  --paper: #ffffff; /* 카드 */
+  --ink: #1f1a17; /* 본문 글자 */
+  --slate: #7a6d66; /* 보조 글자 */
+  --line: #f2ddd2; /* 테두리 */
+  --coral: #dd3b24; /* 주 버튼, 강조 */
+  --coral-soft: #fde3d7; /* 아이콘 원, 선택 배경 */
+  --seal: #d9381e; /* 도장, 오류, 입금 금액 */
+}
+
+@theme inline {
+  --color-porcelain: var(--porcelain);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-slate: var(--slate);
+  --color-line: var(--line);
+  --color-coral: var(--coral);
+  --color-coral-soft: var(--coral-soft);
+  --color-seal: var(--seal);
+  --font-sans: var(--font-pretendard), system-ui, sans-serif;
+}
+
+body {
+  background: var(--porcelain);
+  color: var(--ink);
+  letter-spacing: -0.01em; /* Pretendard는 살짝 좁혀야 한글이 단단해 보인다 */
+}
+
+/* 은행 도장(인감) 모양: 브랜드 표시와 완료 표시에 같이 쓴다 */
+.seal {
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid var(--seal);
+  color: var(--seal);
+  border-radius: 4px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stamp {
+  animation: stamp 260ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  transform: rotate(-8deg);
+}
+
+@keyframes stamp {
+  from {
+    opacity: 0;
+    transform: rotate(-8deg) scale(1.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stamp {
+    animation: none;
+  }
+}
+
+/* AI 금융 비서가 열리면 넓은 화면에서는 패널 폭만큼 화면을 왼쪽으로 민다 (좁으면 패널이 전체 화면) */
+@media (min-width: 64rem) {
+  body[data-assistant-open] {
+    padding-right: var(--assistant-w, 340px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  body:not([data-assistant-resizing]) {
+    transition: padding-right 200ms ease-out;
+  }
+}
+
+/* 폭을 끄는 동안 글자가 선택되지 않게 한다 */
+body[data-assistant-resizing] {
+  user-select: none;
+  cursor: col-resize;
+}
+
+/* AI 금융 비서: 메시지가 살짝 떠오르며 나타나고, 답변을 기다리는 동안 점 세 개가 통통 튄다 */
+@media (prefers-reduced-motion: no-preference) {
+  .msg-in {
+    animation: msg-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  .typing > span[aria-hidden] {
+    animation: typing 1s ease-in-out infinite;
+  }
+
+  .typing > span[aria-hidden]:nth-of-type(3) {
+    animation-delay: 150ms;
+  }
+
+  .typing > span[aria-hidden]:nth-of-type(4) {
+    animation-delay: 300ms;
+  }
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}

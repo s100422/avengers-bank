@@ -1,0 +1,488 @@
+{
+  "schema_version": 1,
+  "documents": [
+    {
+      "document_key": "ab.common",
+      "version": "1.0.0",
+      "path": "corpus/common/ab.common.md"
+    },
+    {
+      "document_key": "ab.checking.rules",
+      "version": "1.0.0",
+      "path": "corpus/common/ab.checking.rules.md"
+    },
+    {
+      "document_key": "ab.deposit.rules",
+      "version": "1.0.0",
+      "path": "corpus/common/ab.deposit.rules.md"
+    },
+    {
+      "document_key": "ab.savings.rules",
+      "version": "1.0.0",
+      "path": "corpus/common/ab.savings.rules.md"
+    },
+    {
+      "document_key": "ab.credit.rules",
+      "version": "1.0.0",
+      "path": "corpus/common/ab.credit.rules.md"
+    },
+    {
+      "document_key": "ab.debit.rules",
+      "version": "1.0.0",
+      "path": "corpus/common/ab.debit.rules.md"
+    },
+    {
+      "document_key": "ab.product.checking-basic",
+      "version": "1.0.0",
+      "path": "corpus/products/checking-basic.md"
+    },
+    {
+      "document_key": "ab.product.checking-salary",
+      "version": "1.0.0",
+      "path": "corpus/products/checking-salary.md"
+    },
+    {
+      "document_key": "ab.product.deposit-basic",
+      "version": "1.0.0",
+      "path": "corpus/products/deposit-basic.md"
+    },
+    {
+      "document_key": "ab.product.deposit-star",
+      "version": "1.0.0",
+      "path": "corpus/products/deposit-star.md"
+    },
+    {
+      "document_key": "ab.product.deposit-mobile",
+      "version": "1.0.0",
+      "path": "corpus/products/deposit-mobile.md"
+    },
+    {
+      "document_key": "ab.product.savings-basic",
+      "version": "1.0.0",
+      "path": "corpus/products/savings-basic.md"
+    },
+    {
+      "document_key": "ab.product.savings-flexible",
+      "version": "1.0.0",
+      "path": "corpus/products/savings-flexible.md"
+    },
+    {
+      "document_key": "ab.product.savings-youth",
+      "version": "1.0.0",
+      "path": "corpus/products/savings-youth.md"
+    },
+    {
+      "document_key": "ab.product.credit-basic",
+      "version": "1.0.0",
+      "path": "corpus/products/credit-basic.md"
+    },
+    {
+      "document_key": "ab.product.credit-premium",
+      "version": "1.0.0",
+      "path": "corpus/products/credit-premium.md"
+    },
+    {
+      "document_key": "ab.product.credit-shopping",
+      "version": "1.0.0",
+      "path": "corpus/products/credit-shopping.md"
+    },
+    {
+      "document_key": "ab.product.credit-travel",
+      "version": "1.0.0",
+      "path": "corpus/products/credit-travel.md"
+    },
+    {
+      "document_key": "ab.product.debit-basic",
+      "version": "1.0.0",
+      "path": "corpus/products/debit-basic.md"
+    },
+    {
+      "document_key": "ab.product.debit-nori",
+      "version": "1.0.0",
+      "path": "corpus/products/debit-nori.md"
+    },
+    {
+      "document_key": "ab.product.debit-travel",
+      "version": "1.0.0",
+      "path": "corpus/products/debit-travel.md"
+    }
+  ],
+  "products": [
+    {
+      "product_code": "checking-basic",
+      "kind": "checking",
+      "seed_name": "어벤져스 입출금통장",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.checking.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.checking-basic",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "checking-salary",
+      "kind": "checking",
+      "seed_name": "어벤져스 월급통장",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.checking.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.checking-salary",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "deposit-basic",
+      "kind": "deposit",
+      "seed_name": "어벤져스 정기예금",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.deposit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.deposit-basic",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "deposit-star",
+      "kind": "deposit",
+      "seed_name": "어벤져스 스타 정기예금",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.deposit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.deposit-star",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "deposit-mobile",
+      "kind": "deposit",
+      "seed_name": "어벤져스 모바일 특판예금",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.deposit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.deposit-mobile",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "savings-basic",
+      "kind": "savings",
+      "seed_name": "어벤져스 정기적금",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.savings.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.savings-basic",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "savings-flexible",
+      "kind": "savings",
+      "seed_name": "어벤져스 내맘대로 적금",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.savings.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.savings-flexible",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "savings-youth",
+      "kind": "savings",
+      "seed_name": "어벤져스 청년 도약 적금",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.savings.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.savings-youth",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "credit-basic",
+      "kind": "credit",
+      "seed_name": "어벤져스 일반 신용카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.credit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.credit-basic",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "credit-premium",
+      "kind": "credit",
+      "seed_name": "어벤져스 프리미엄 신용카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.credit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.credit-premium",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "credit-shopping",
+      "kind": "credit",
+      "seed_name": "어벤져스 쇼핑 신용카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.credit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.credit-shopping",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "credit-travel",
+      "kind": "credit",
+      "seed_name": "어벤져스 트래블 신용카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.credit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.credit-travel",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "debit-basic",
+      "kind": "debit",
+      "seed_name": "어벤져스 체크카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.debit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.debit-basic",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "debit-nori",
+      "kind": "debit",
+      "seed_name": "어벤져스 노리 체크카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.debit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.debit-nori",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    },
+    {
+      "product_code": "debit-travel",
+      "kind": "debit",
+      "seed_name": "어벤져스 트래블 체크카드",
+      "terms": [
+        {
+          "document_key": "ab.common",
+          "version": "1.0.0",
+          "required": true,
+          "order": 1
+        },
+        {
+          "document_key": "ab.debit.rules",
+          "version": "1.0.0",
+          "required": true,
+          "order": 2
+        },
+        {
+          "document_key": "ab.product.debit-travel",
+          "version": "1.0.0",
+          "required": true,
+          "order": 3
+        }
+      ]
+    }
+  ]
+}
+

@@ -21,7 +21,7 @@
 **시작하기 전 준비** (코드를 고치거나 서버·검증 스크립트를 돌릴 때):
 - Docker Desktop을 켜고 `docker compose up -d --wait` (DB가 `127.0.0.1:5435`에서 떠야 한다)
 - `.env`가 있어야 한다 (`.env.example` 복사). Windows에서는 서버를 `uv run fastapi dev`로 띄운다(`fastapi run`은 안 됨, README 참고)
-- 상태 확인: `uv run pytest -q`가 전부 통과해야 한다(지금 166개). `uv run alembic current`가 최신(head)이어야 한다
+- 상태 확인: `uv run pytest -q`가 전부 통과해야 한다(지금 226개, `TEST_PG_DATABASE_URL`이 없으면 PostgreSQL 통합 테스트 3개는 건너뜀). `uv run alembic current`가 최신(head)이어야 한다
 
 **작업 규칙** (메모리에도 저장돼 있다):
 - 항목 하나를 정하면 구현하고, `DESIGN_CHANGES.md` 4부에 C-항목을 쓰고(부록 B 행 추가, 1·2부 갱신), 3부 "이미 정한 것"에 추가하고, 여기서 상태를 ✅로 바꾼다.
@@ -33,7 +33,7 @@
 
 ## 지금 상태
 
-팀 설계에 있던 기능(users, products, accounts, transfers, cards)은 모두 구현됐고 소스에 남은 TODO는 없다. 테스트 166개(SQLite)와 PostgreSQL 동시성 검증을 통과했다. 이미 정한 것은 `DESIGN_CHANGES.md` 3부에 있다. 아래는 그 **다음 단계**다.
+팀 설계에 있던 기능(users, products, accounts, transfers, cards)은 모두 구현됐고 소스에 남은 TODO는 없다. 테스트 226개와 PostgreSQL 동시성 검증을 통과했다. 상품 약관 동의·약관 검색(RAG)은 C-075, 운영 안내는 `TERMS_RAG.md`(약관 문서는 아직 초안이라 발행 전). 이미 정한 것은 `DESIGN_CHANGES.md` 3부에 있다. 아래는 그 **다음 단계**다.
 
 ---
 

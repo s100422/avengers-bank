@@ -1,0 +1,218 @@
+import logging
+import re
+from datetime import datetime, timezone
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from avengers_bank.core.database import SessionLocal
+from avengers_bank.core.exceptions import ApiException, ConflictException, NotFoundException
+from avengers_bank.core.timezone import today_kst
+from avengers_bank.domains.agent.model_client import (
+    AssistantTurn,
+    ModelClient,
+    ModelError,
+    ModelReply,
+    ModelTimeout,
+    ToolResult,
+    ToolResultsTurn,
+    ToolSpec,
+    Turn,
+    UserTurn,
+)
+from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft
+from avengers_bank.domains.agent.prompts import build_system_prompt
+from avengers_bank.domains.agent.repository import agent_repository
+from avengers_bank.domains.agent.schemas import (
+    ChatRequest,
+    Citation,
+    ChatResponse,
+    DraftCancelResponse,
+    DraftConfirmResponse,
+    MessageItem,
+    TransferAction,
+)
+from avengers_bank.domains.agent.tools import TOOLS, run_tool
+from avengers_bank.domains.agent.tools.common import as_utc, mask_num
+from avengers_bank.domains.agent.tools.terms import request_sources
+from avengers_bank.domains.terms.search import Passage
+from avengers_bank.domains.transfers.schemas import TransferCreate
+from avengers_bank.domains.transfers.service import transfer_service
+from avengers_bank.domains.users.schemas import UserResponse
+
+logger = logging.getLogger(__name__)
+
+MAX_MODEL_CALLS = 6  # 질문 하나에 모델을 부르는 최대 횟수 (무한 반복 방지)
+MAX_TOOL_CALLS = 8  # 질문 하나에 실행하는 Tool 최대 개수
+HISTORY_MESSAGES = 10  # 모델에 넘기는 지난 대화 (사용자·AI 메시지 합계)
+
+LIMIT_TEXT = "질문을 처리하는 데 단계가 너무 많이 필요합니다. 조금 더 구체적으로 나눠서 물어봐 주세요."
+EMPTY_TEXT = "답변을 만들지 못했습니다. 다시 질문해 주세요."
+
+# 모델이 답변에 붙이는 인용 표시. 사용자에게는 지우고 citations로만 보여 준다
+CITATION_MARKER = re.compile(r"\s?\[\[src:([^\]\s]{1,120})\]\]")
+
+TOOL_SPECS = [ToolSpec(t.name, t.description, t.input_schema) for t in TOOLS.values()]
+
+
+class AgentService:
+    # ── 채팅 ──────────────────────────────────────────────────────────
+
+    async def chat(self, data: ChatRequest, user: UserResponse, client: ModelClient) -> ChatResponse:
+        token = request_sources.set({})  # 이번 요청에서 검색된 약관 출처만 인용·열람할 수 있다
+        try:
+            return await self._chat(data, user, client)
+        finally:
+            request_sources.reset(token)
+
+    async def _chat(self, data: ChatRequest, user: UserResponse, client: ModelClient) -> ChatResponse:
+        turns: list[Turn] = [*await self._history(data.conversation_id, user), UserTurn(data.message)]
+        system = build_system_prompt(today_kst())
+        tool_log: list[dict] = []
+        action: TransferAction | None = None
+        answer = LIMIT_TEXT
+
+        for _ in range(MAX_MODEL_CALLS):
+            reply = await self._respond(client, system, turns)
+            if not reply.tool_calls:
+                answer = reply.text.strip() or EMPTY_TEXT
+                break
+            if len(tool_log) + len(reply.tool_calls) > MAX_TOOL_CALLS:
+                logger.warning("agent tool 호출 상한 도달 (user_id=%s)", user.user_id)
+                break
+            turns.append(AssistantTurn(reply))
+            results = []
+            for call in reply.tool_calls:
+                outcome = await run_tool(call.name, call.arguments, user)
+                tool_log.append({"name": call.name if call.name in TOOLS else "unknown", "ok": outcome.ok})
+                if isinstance(outcome.result, TransferAction):
+                    action = outcome.result
+                results.append(ToolResult(call.id, outcome.content, not outcome.ok))
+            turns.append(ToolResultsTurn(results))
+        else:
+            logger.warning("agent 모델 호출 상한 도달 (user_id=%s)", user.user_id)
+
+        answer, citations = extract_citations(answer, request_sources.get())
+        conversation_id = await self._save(data, user, answer, tool_log, action, citations)
+        return ChatResponse(conversation_id=conversation_id, answer=answer, action=action, citations=citations)
+
+    async def _respond(self, client: ModelClient, system: str, turns: list[Turn]) -> ModelReply:
+        try:
+            return await client.respond(system, turns, TOOL_SPECS)
+        except ModelTimeout:
+            raise ApiException(504, "AGENT_TIMEOUT", "AI 비서의 응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주세요.") from None
+        except ModelError:
+            raise ApiException(503, "AGENT_UNAVAILABLE", "AI 비서를 지금 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.") from None
+
+    async def _history(self, conversation_id: int | None, user: UserResponse) -> list[Turn]:
+        if conversation_id is None:
+            return []
+        async with SessionLocal() as db:
+            await self._owned_conversation(db, conversation_id, user)
+            messages = await agent_repository.find_recent_messages(db, conversation_id, HISTORY_MESSAGES)
+        turns = [UserTurn(m.content) if m.role == "user" else AssistantTurn(ModelReply(m.content)) for m in messages]
+        while turns and not isinstance(turns[0], UserTurn):  # 대화는 사용자 메시지로 시작해야 한다
+            turns.pop(0)
+        return turns
+
+    async def _owned_conversation(self, db: AsyncSession, conversation_id: int, user: UserResponse) -> AgentConversation:
+        conversation = await agent_repository.find_conversation(db, conversation_id)
+        # 남의 대화도 404로 알려서 ID가 있는지 드러나지 않게 한다 (C-031과 같은 방식)
+        if conversation is None or conversation.user_id != user.user_id:
+            raise NotFoundException(code="CONVERSATION_NOT_FOUND", message="대화를 찾을 수 없습니다.")
+        return conversation
+
+    async def _save(
+        self, data: ChatRequest, user: UserResponse, answer: str, tool_log: list[dict], action: TransferAction | None,
+        citations: list[Citation],
+    ) -> int:
+        async with SessionLocal() as db, db.begin():
+            if data.conversation_id is None:
+                conversation = await agent_repository.save(db, AgentConversation(user_id=user.user_id))
+            else:
+                conversation = await self._owned_conversation(db, data.conversation_id, user)
+            cid = conversation.conversation_id
+            await agent_repository.save(db, AgentMessage(conversation_id=cid, role="user", content=data.message))
+            await agent_repository.save(db, AgentMessage(
+                conversation_id=cid, role="assistant", content=answer, tool_calls=tool_log or None,
+                action=action.model_dump(mode="json") if action else None,
+                citations=[c.model_dump() for c in citations] or None,
+            ))
+        return cid
+
+    async def list_messages(self, db: AsyncSession, conversation_id: int, user: UserResponse) -> list[MessageItem]:
+        await self._owned_conversation(db, conversation_id, user)
+        return [
+            MessageItem(
+                message_id=m.agent_message_id, role=m.role, content=m.content, action=m.action,
+                citations=m.citations or [], created_at=m.created_at,
+            )
+            for m in await agent_repository.find_messages(db, conversation_id)
+        ]
+
+    # ── 이체 초안 확인·취소 (사용자가 화면에서 직접 누른다. Tool로 등록하지 않는다) ──
+
+    async def confirm_draft(self, db: AsyncSession, draft_id: str, user: UserResponse) -> DraftConfirmResponse:
+        now = datetime.now(timezone.utc)
+        async with db.begin():
+            draft = await self._pending_draft(db, draft_id, user)
+            expired = as_utc(draft.expires_at) <= now
+            if expired:
+                await agent_repository.transition_pending(db, draft_id, user.user_id, "EXPIRED", now)
+        if expired:
+            raise ConflictException(code="DRAFT_EXPIRED", message="이체 확인 시간이 지났습니다. 다시 요청해 주세요.")
+
+        async with db.begin():
+            # PENDING → EXECUTED를 먼저 차지한 요청만 이체한다 (동시 클릭·재시도로 두 번 나가지 않게).
+            # 같은 트랜잭션이라 아래 이체가 실패하면(잔액·한도 재검사) 상태도 PENDING으로 되돌아간다.
+            if not await agent_repository.transition_pending(
+                db, draft_id, user.user_id, "EXECUTED", now, require_unexpired=True
+            ):
+                raise ConflictException(code="DRAFT_NOT_PENDING", message="이미 처리되었거나 만료된 이체입니다.")
+            result = await transfer_service.transfer_in_tx(
+                db,
+                TransferCreate(
+                    from_checking_account_id=draft.from_checking_account_id,
+                    to_account_num=draft.to_account_num, amount=draft.amount,
+                ),
+                user,
+            )
+        return DraftConfirmResponse(
+            draft_id=draft_id, from_account_num_masked=mask_num(result.from_account_num),
+            to_account_num_masked=mask_num(result.to_account_num), recipient_name=draft.recipient_name,
+            amount=result.amount, balance_after=result.balance_after,
+        )
+
+    async def cancel_draft(self, db: AsyncSession, draft_id: str, user: UserResponse) -> DraftCancelResponse:
+        now = datetime.now(timezone.utc)
+        async with db.begin():
+            await self._pending_draft(db, draft_id, user)
+            if not await agent_repository.transition_pending(db, draft_id, user.user_id, "CANCELLED", now):
+                raise ConflictException(code="DRAFT_NOT_PENDING", message="이미 처리된 이체입니다.")
+        return DraftCancelResponse(draft_id=draft_id)
+
+    async def _pending_draft(self, db: AsyncSession, draft_id: str, user: UserResponse) -> TransferDraft:
+        draft = await agent_repository.find_draft(db, draft_id)
+        if draft is None or draft.user_id != user.user_id:
+            raise NotFoundException(code="DRAFT_NOT_FOUND", message="이체 초안을 찾을 수 없습니다.")
+        if draft.status != "PENDING":
+            raise ConflictException(code="DRAFT_NOT_PENDING", message="이미 처리되었거나 만료된 이체입니다.")
+        return draft
+
+
+def extract_citations(answer: str, sources: dict[str, Passage] | None) -> tuple[str, list[Citation]]:
+    """답변의 [[src:id]] 표시를 모두 지우고, 이번 요청에서 실제로 검색된 id만 인용으로 남긴다 (처음 나온 순서).
+    모르는 id(지어낸 것·원문 속 주입 문구)는 버리고, 검색됐지만 인용하지 않은 출처는 보여 주지 않는다."""
+    sources = sources or {}
+    citations: dict[str, Citation] = {}
+    for sid in CITATION_MARKER.findall(answer):
+        p = sources.get(sid)
+        if p is not None and sid not in citations:
+            citations[sid] = Citation(
+                source_id=sid, document_version_id=p.terms_version_id, title=p.title, version=p.version,
+                section_id=p.section_id, section_title=p.section_title, url=p.url,
+            )
+    text = CITATION_MARKER.sub("", answer).strip()
+    return text or EMPTY_TEXT, list(citations.values())
+
+
+agent_service = AgentService()

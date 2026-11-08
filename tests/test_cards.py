@@ -290,6 +290,8 @@ async def test_pay_bill_withdraws_and_restores_limit(client, world):
     history = (await client.get("/accounts/checking/1/histories", headers=tony)).json()["data"][0]
     assert (history["type"], history["amount"], history["balance_after"], history["counterpart_account"]) == (
         "CARD_BILL_PAYMENT", 500_000, 500_000, card["card_num"])
+    product = (await client.get(f"/products/cards/{card['product_id']}")).json()["data"]
+    assert history["counterpart_name"] == product["name"]  # 거래 내역에는 카드 이름 (C-064)
     assert await card_amount(client, tony, "credit", cid) == 0  # 갚은 만큼 한도가 돌아온다
 
     assert error_of(await client.post(f"{path}/payments", headers=tony)) == (409, "BILL_ALREADY_PAID")

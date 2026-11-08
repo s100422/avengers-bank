@@ -12,8 +12,10 @@ from avengers_bank.core.exceptions import ApiException
 from avengers_bank.core.responses import SuccessResponse, error_responses
 from avengers_bank.domains.accounts.dev import router as dev_router
 from avengers_bank.domains.accounts.router import router as account_router
+from avengers_bank.domains.agent.router import router as agent_router
 from avengers_bank.domains.cards.router import router as card_router
 from avengers_bank.domains.products.router import router as product_router
+from avengers_bank.domains.terms.router import router as terms_router
 from avengers_bank.domains.transfers.router import router as transfer_router
 from avengers_bank.domains.users.router import router as user_router
 
@@ -44,6 +46,8 @@ app.include_router(product_router)
 app.include_router(account_router)
 app.include_router(transfer_router)
 app.include_router(card_router)
+app.include_router(agent_router)
+app.include_router(terms_router)
 if get_settings().enable_dev_endpoints:
     app.include_router(dev_router)
 
