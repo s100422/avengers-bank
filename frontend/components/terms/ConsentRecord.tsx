@@ -52,7 +52,7 @@ export function ConsentRecord({ kind, subjectId }: { kind: TermsKind; subjectId:
                           {href && (
                             <>
                               {" · "}
-                              <Link href={href} target="_blank" className="underline underline-offset-4 hover:text-ink">
+                              <Link href={href} className="underline underline-offset-4 hover:text-ink">
                                 전문 보기
                               </Link>
                             </>

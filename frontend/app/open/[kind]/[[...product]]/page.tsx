@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, ErrorText, Field, MoneyField, Shell } from "@/components/ui";
-import { AccountSummary, ApiError, TermsSet, api, termsHref } from "@/lib/api";
+import { AccountSummary, ApiError, TermsSet, api, termsHref, won } from "@/lib/api";
 
 // 상품 가입(계좌 개설·카드 발급) 화면 하나로 다섯 종류를 처리한다. /open/{kind}/{상품 id(선택)}
 const KINDS = {
@@ -16,8 +16,10 @@ const KINDS = {
 } as const;
 type Kind = keyof typeof KINDS;
 
-type Product = { product_id: number; name: string; description: string; interest_rate?: string; credit_limit?: number | null };
+type Product = { product_id: number; name: string; description: string; interest_rate?: string; credit_limit?: number | null; min_amount?: number | null };
 type Opened = { account_num?: string; card_num?: string };
+// 약관 전문을 보러 나갈 때 입력값을 sessionStorage에 맡겼다가, 돌아오면 한 번만 꺼내 채운다
+type Draft = { productId: number | null; setHash?: string; agreed: Record<number, boolean>; fields: Record<string, string> };
 
 // 날짜 입력칸 값(YYYY-MM-DD). 오늘에서 days일 뒤.
 const dayAfter = (days: number) => {
@@ -50,11 +52,39 @@ function Open() {
   const [termsReload, setTermsReload] = useState(0);
   const [terms, setTerms] = useState<{ key: string; data?: TermsSet; error?: string; code?: string } | null>(null);
   const [agreed, setAgreed] = useState<Record<number, boolean>>({});
+  // 입력칸 값은 상태로 들고 있다 → 화면이 다시 살아나도(뒤로 가기 등) 그대로다. 안 건드린 칸은 기본값
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const bind = (name: string, fallback: string | number = "") => ({
+    name,
+    value: fields[name] ?? String(fallback),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setFields((f) => ({ ...f, [name]: e.target.value })),
+  });
+  const needsChecking = conf?.card || kind === "deposit"; // 카드는 결제·출금 계좌, 예금은 가입 금액을 뺄 계좌
+  const fromAcc = checking?.find((a) => String(a.account_id) === (fields.checking_account_id ?? String(checking[0]?.account_id)));
+  const draftKey = `open-draft:${kind}`;
+  const draftRef = useRef<Draft | null>(null); // 전문을 보러 나갈 때 맡겨 둔 값. 다시 새로 열린 화면이 한 번 꺼내 쓴다
+  const agreedFor = useRef<string | null>(null); // 지금 동의 상태가 어느 상품·약관 묶음의 것인지
+
+  useEffect(() => {
+    let d: Draft | null = null;
+    try {
+      const raw = sessionStorage.getItem(draftKey);
+      if (raw) d = JSON.parse(raw);
+      sessionStorage.removeItem(draftKey);
+    } catch {}
+    if (!d) return;
+    draftRef.current = d;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sessionStorage는 마운트 뒤에만 읽을 수 있다
+    setFields(d.fields);
+    setProductId(d.productId);
+  }, [draftKey]);
 
   // 주소의 상품 id가 이 종류에 없으면 첫 상품을 고른다
   const has = (id: number | null) => products.some((p) => p.product_id === id);
   const selected = has(productId) ? productId : has(picked) ? picked : products[0]?.product_id;
   const termsKey = `${kind}:${selected}:${termsReload}`;
+  const selectedMin = products.find((p) => p.product_id === selected)?.min_amount ?? null; // 예금만 값이 온다
+  const minAmount = selectedMin ?? 1;
 
   useEffect(() => {
     if (!conf || !selected) return;
@@ -65,7 +95,14 @@ function Open() {
         if (!alive) return;
         if (d.product_kind !== kind || d.product_id !== selected) throw new Error("약관을 불러오지 못했습니다.");
         setTerms({ key, data: d });
-        setAgreed({}); // 상품이나 약관 묶음이 바뀌면 동의는 처음부터
+        // 상품이나 약관 묶음이 바뀌면 동의는 처음부터. 같은 묶음이면 그대로 둔다 (전문을 보고 돌아온 경우 포함)
+        const sig = `${selected}:${d.set_hash}`;
+        const back = draftRef.current;
+        if (agreedFor.current !== sig) {
+          setAgreed(back && back.productId === selected && back.setHash === d.set_hash ? back.agreed : {});
+          agreedFor.current = sig;
+        }
+        draftRef.current = null;
       })
       .catch((e) => alive && setTerms({ key, error: e.message, code: e instanceof ApiError ? e.code : undefined }));
     return () => {
@@ -89,6 +126,13 @@ function Open() {
 
   if (!conf) return <p className="mt-10 text-slate">없는 상품 종류입니다.</p>;
 
+  function saveDraft() {
+    const d: Draft = { productId: selected ?? null, setHash: termsNow?.data?.set_hash, agreed, fields };
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify(d));
+    } catch {}
+  }
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -96,7 +140,13 @@ function Open() {
     const nickname = f.get("nickname") || null;
     const body = {
       checking: { product_id: num("product_id"), nickname },
-      deposit: { product_id: num("product_id"), maturity_date: f.get("maturity_date"), nickname },
+      deposit: {
+        product_id: num("product_id"),
+        initial_amount: num("initial_amount"),
+        from_checking_account_id: num("checking_account_id"),
+        maturity_date: f.get("maturity_date"),
+        nickname,
+      },
       savings: {
         product_id: num("product_id"),
         monthly_payment: num("monthly_payment"),
@@ -133,6 +183,7 @@ function Open() {
         <span className="seal stamp size-20 text-lg">{conf.stamp}</span>
         <h1 className="mt-6 text-2xl font-semibold">{conf.done}</h1>
         <p className="mt-2 text-slate tabular-nums">{opened.account_num ?? opened.card_num}</p>
+        {kind === "deposit" && <p className="mt-1 text-sm text-slate tabular-nums">가입 금액 {won(Number(fields.initial_amount))}</p>}
         <Link href="/accounts" className="mt-8 inline-block rounded-xl bg-coral px-6 py-3 font-medium text-paper">
           홈으로
         </Link>
@@ -140,10 +191,10 @@ function Open() {
     );
   }
 
-  if (conf.card && checking?.length === 0) {
+  if (needsChecking && checking?.length === 0) {
     return (
       <p className="mt-10 text-center text-slate">
-        카드를 만들려면 결제할 입출금 계좌가 먼저 필요합니다.{" "}
+        {kind === "deposit" ? "가입하려면 출금할 입출금 계좌가 먼저 필요합니다." : "카드를 만들려면 결제할 입출금 계좌가 먼저 필요합니다."}{" "}
         <Link href="/open/checking" className="text-ink underline underline-offset-4">
           입출금 계좌 만들기
         </Link>
@@ -178,40 +229,56 @@ function Open() {
                 <span className="block font-medium">{p.name}</span>
                 <span className="block text-sm text-slate">{p.description}</span>
                 {p.interest_rate && <span className="block text-sm font-medium text-coral">연 {Number(p.interest_rate)}%</span>}
+                {kind === "deposit" && p.min_amount != null && (
+                  <span className="block text-sm text-slate tabular-nums">최소 가입 {won(p.min_amount)}</span>
+                )}
               </span>
             </label>
           ))}
         </fieldset>
 
-        {conf.card && (
+        {kind === "deposit" && (
+          <div>
+            <MoneyField label="가입 금액 (원)" min={minAmount} {...bind("initial_amount")} required />
+            {selectedMin != null && <span className="mt-1 block text-sm text-slate tabular-nums">최소 {won(selectedMin)}</span>}
+            {selectedMin != null && fields.initial_amount && Number(fields.initial_amount) < selectedMin && (
+              <span className="mt-1 block text-sm text-seal">이 상품의 최소 가입 금액은 {won(selectedMin)}입니다.</span>
+            )}
+          </div>
+        )}
+        {needsChecking && (
           <label className="block">
             <span className="mb-1 block text-sm text-slate">{kind === "credit" ? "결제 계좌" : "출금 계좌"}</span>
             <select
-              name="checking_account_id"
+              {...bind("checking_account_id", checking?.[0]?.account_id ?? "")}
+              onChange={(e) => setFields((f) => ({ ...f, checking_account_id: e.target.value }))}
               required
               className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 outline-none focus:border-coral"
             >
               {checking?.map((a) => (
                 <option key={a.account_id} value={a.account_id}>
-                  {a.nickname ?? "입출금"} {a.account_num}
+                  {a.nickname ?? "입출금"} {a.account_num}{kind === "deposit" && ` · ${won(a.balance)}`}
                 </option>
               ))}
             </select>
+            {kind === "deposit" && fromAcc && Number(fields.initial_amount) > fromAcc.balance && (
+              <span className="mt-1 block text-sm text-seal">출금 계좌 잔액({won(fromAcc.balance)})보다 큽니다.</span>
+            )}
           </label>
         )}
         {kind === "credit" && (
-          <Field label="매월 결제일 (1~31일)" name="payment_date" type="number" min={1} max={31} defaultValue={14} required />
+          <Field label="매월 결제일 (1~31일)" type="number" min={1} max={31} {...bind("payment_date", 14)} required />
         )}
         {kind === "savings" && (
           <>
-            <MoneyField label="매월 납입액 (원)" name="monthly_payment" min={1} defaultValue={100000} required />
-            <Field label="매월 납입일 (1~31일)" name="monthly_deposit_date" type="number" min={1} max={31} defaultValue={25} required />
+            <MoneyField label="매월 납입액 (원)" min={1} {...bind("monthly_payment", 100000)} required />
+            <Field label="매월 납입일 (1~31일)" type="number" min={1} max={31} {...bind("monthly_deposit_date", 25)} required />
           </>
         )}
         {(kind === "deposit" || kind === "savings") && (
-          <Field label="만기일" name="maturity_date" type="date" min={dayAfter(1)} defaultValue={dayAfter(365)} required />
+          <Field label="만기일" type="date" min={dayAfter(1)} {...bind("maturity_date", dayAfter(365))} required />
         )}
-        {!conf.card && <Field label="계좌 별명 (선택)" name="nickname" maxLength={50} />}
+        {!conf.card && <Field label="계좌 별명 (선택)" maxLength={50} {...bind("nickname")} />}
 
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm text-slate">약관 동의</legend>
@@ -262,7 +329,7 @@ function Open() {
                         </span>
                       </label>
                       {href && (
-                        <Link href={href} target="_blank" className="shrink-0 text-slate underline underline-offset-4 hover:text-ink">
+                        <Link href={href} onClick={saveDraft} className="shrink-0 text-slate underline underline-offset-4 hover:text-ink">
                           전문 보기
                         </Link>
                       )}

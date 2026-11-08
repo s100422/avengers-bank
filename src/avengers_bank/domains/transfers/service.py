@@ -14,7 +14,6 @@ from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccou
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.accounts.service import account_service
 from avengers_bank.domains.transfers.schemas import (
-    DepositPaymentCreate,
     SavingsPaymentCreate,
     TransferCreate,
     TransferResponse,
@@ -109,40 +108,46 @@ class TransferService:
             db, user, data.from_checking_account_id, KINDS["savings"], data.savings_account_id, data.amount, TO_SAVINGS
         )
 
-    async def pay_deposit(self, db: AsyncSession, data: DepositPaymentCreate, user: UserResponse) -> TransferResponse:
-        """입출금 → 내 예금 입금."""
-        return await self._pay(
-            db, user, data.from_checking_account_id, KINDS["deposit"], data.deposit_account_id, data.amount, TO_DEPOSIT
-        )
-
     async def _pay(
         self, db: AsyncSession, user: UserResponse, from_id: int, to_kind: AccountKind,
         to_id: int, amount: int, out_type: str,
     ) -> TransferResponse:
-        # 적금·예금은 본인 계좌에만 넣을 수 있다. 1회·1일 이체 한도는 입출금→입출금 이체에만 적용한다.
         async with db.begin():
-            await account_service.get_owned(db, KINDS["checking"], from_id, user)
-            target = await account_service.get_owned(db, to_kind, to_id, user)
-            # 만기일은 바뀌지 않는 정보라 잠그기 전에 확인한다. 만기일 당일부터 거절한다 (C-033)
-            if target.maturity_date <= today_kst():
-                raise BadRequestException(code="ACCOUNT_MATURED", message="만기가 지난 계좌에는 입금할 수 없습니다.")
+            return await self._pay_in_tx(db, user, from_id, to_kind, to_id, amount, out_type)
 
-            (sender,) = await account_repository.lock_checking_accounts(db, [from_id])  # 입출금 먼저
-            target = await account_repository.lock_account(db, to_kind, to_id)  # 그다음 예금·적금
-            if target.status == "CLOSED":  # 잠근 뒤에 확인해야 해지와 동시에 와도 해지된 계좌에 돈이 남지 않는다
-                raise BadRequestException(code="ACCOUNT_CLOSED", message="해지된 계좌에는 입금할 수 없습니다.")
+    async def pay_deposit_in_tx(
+        self, db: AsyncSession, user: UserResponse, from_id: int, deposit_id: int, amount: int
+    ) -> TransferResponse:
+        """예금 가입 금액 입금. 호출한 쪽이 연 트랜잭션 안에서 실행한다 (가입 후 추가 입금은 없다)."""
+        return await self._pay_in_tx(db, user, from_id, KINDS["deposit"], deposit_id, amount, TO_DEPOSIT)
 
-            _require_funds(sender, amount)
-            sender.balance -= amount
-            target.balance += amount
-            await self._save_checking_history(db, sender, out_type, amount, target.account_num)
-            await account_repository.save_history(
-                db,
-                to_kind.history_model(
-                    **{to_kind.id_column: to_id}, amount=amount, balance_after=target.balance,
-                    type=TRANSFER_IN, counterpart_account=sender.account_num,
-                ),
-            )
+    async def _pay_in_tx(
+        self, db: AsyncSession, user: UserResponse, from_id: int, to_kind: AccountKind,
+        to_id: int, amount: int, out_type: str,
+    ) -> TransferResponse:
+        # 적금·예금은 본인 계좌에만 넣을 수 있다. 1회·1일 이체 한도는 입출금→입출금 이체에만 적용한다.
+        await account_service.get_owned(db, KINDS["checking"], from_id, user)
+        target = await account_service.get_owned(db, to_kind, to_id, user)
+        # 만기일은 바뀌지 않는 정보라 잠그기 전에 확인한다. 만기일 당일부터 거절한다 (C-033)
+        if target.maturity_date <= today_kst():
+            raise BadRequestException(code="ACCOUNT_MATURED", message="만기가 지난 계좌에는 입금할 수 없습니다.")
+
+        (sender,) = await account_repository.lock_checking_accounts(db, [from_id])  # 입출금 먼저
+        target = await account_repository.lock_account(db, to_kind, to_id)  # 그다음 예금·적금
+        if target.status == "CLOSED":  # 잠근 뒤에 확인해야 해지와 동시에 와도 해지된 계좌에 돈이 남지 않는다
+            raise BadRequestException(code="ACCOUNT_CLOSED", message="해지된 계좌에는 입금할 수 없습니다.")
+
+        _require_funds(sender, amount)
+        sender.balance -= amount
+        target.balance += amount
+        await self._save_checking_history(db, sender, out_type, amount, target.account_num)
+        await account_repository.save_history(
+            db,
+            to_kind.history_model(
+                **{to_kind.id_column: to_id}, amount=amount, balance_after=target.balance,
+                type=TRANSFER_IN, counterpart_account=sender.account_num,
+            ),
+        )
 
         return TransferResponse(
             from_account_num=sender.account_num, to_account_num=target.account_num,

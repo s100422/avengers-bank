@@ -84,6 +84,11 @@
 |---|---|---|---|---|
 | ✅ | GET | `/products/accounts?type=` | | 계좌 상품 목록 (`type` = CHECKING·DEPOSIT·SAVINGS, 생략하면 전체) |
 | ✅ | GET | `/products/accounts/{product_id}` | | 계좌 상품 상세 |
+
+계좌 상품 응답에는 `min_amount`(최소 가입 금액, 원)가 있습니다. 예금 상품에만 값이 있고(어벤져스 정기예금 100,000 / 스타 정기예금 1,000,000 / 모바일 특판예금 500,000) 나머지는 `null`(제한 없음)입니다.
+```json
+{ "product_id": 3, "type": "DEPOSIT", "name": "어벤져스 정기예금", "description": "목돈을 맡기고 만기에 이자를 받는 예금", "interest_rate": "3.00", "min_amount": 100000 }
+```
 | ✅ | GET | `/products/cards?type=` | | 카드 상품 목록 (`type` = CREDIT·DEBIT, 생략하면 전체) |
 | ✅ | GET | `/products/cards/{product_id}` | | 카드 상품 상세 |
 
@@ -118,7 +123,13 @@
 ```json
 { "product_id": 1, "nickname": "생활비", "per_transfer_limit": 1000000, "daily_transfer_limit": 5000000 }
 ```
-`POST /accounts/deposit` → `201`: `{ "product_id": 2, "maturity_date": "2027-12-10" }` (만기일은 오늘보다 뒤)
+`POST /accounts/deposit` → `201`: `{ "product_id": 2, "maturity_date": "2027-12-10", "initial_amount": 3000000, "from_checking_account_id": 1 }` (만기일은 오늘보다 뒤)
+- `initial_amount`(가입 금액, 양의 정수 원)와 `from_checking_account_id`(출금할 내 입출금 계좌)는 **둘 다 필수**입니다. 하나라도 없거나 금액이 0 이하면 `422`. 가입 금액 없이 0원 예금을 만들 수는 없습니다.
+- **계좌 개설(약관 동의 기록 포함)과 입출금 계좌 → 새 예금 이체는 같은 트랜잭션**입니다. 잔액이 모자라거나 실패하면 예금 계좌도 약관 동의 기록도 남지 않습니다(롤백). 응답의 `balance`는 `initial_amount`와 같습니다.
+- **상품별 최소 가입 금액:** `initial_amount`가 상품의 `min_amount`보다 작으면 `400 BELOW_MIN_AMOUNT`("이 상품의 최소 가입 금액은 100,000원입니다."), 아무것도 만들어지지 않습니다. `min_amount`가 null이면 1원 이상이면 됩니다.
+- 예금은 가입 후 **추가 입금이 불가능**합니다(가입 금액이 곧 원금).
+- 거래내역: 입출금 쪽 `TO_DEPOSIT`(상대 계좌 = 예금 계좌번호), 예금 쪽 `TRANSFER_IN`(상대 계좌 = 입출금 계좌번호). 1회·1일 이체 한도는 적용하지 않습니다.
+- 실패 예시: `400 INSUFFICIENT_BALANCE`, `400 BELOW_MIN_AMOUNT`, `404 ACCOUNT_NOT_FOUND`(없는 계좌·남의 입출금 계좌), `422`(필수 필드 누락, 금액 0 이하)
 
 `POST /accounts/savings` → `201`: `{ "product_id": 3, "monthly_payment": 100000, "monthly_deposit_date": 25, "maturity_date": "2027-12-10" }`
 
@@ -165,7 +176,8 @@
 |---|---|---|---|---|
 | ✅ | POST | `/transfers` | 🔒 | 입출금 → 입출금 이체 (잔액, 1회·1일 한도 검사) |
 | ✅ | POST | `/transfers/savings` | 🔒 | 입출금 → 적금 납입 |
-| ✅ | POST | `/transfers/deposit` | 🔒 | 입출금 → 예금 입금 |
+
+예금은 가입 후 추가 입금이 불가능합니다(가입 금액이 곧 원금). 가입 금액은 `POST /accounts/deposit`에서 냅니다.
 
 <details>
 <summary>요청·응답 예시</summary>
@@ -185,10 +197,9 @@
 - **1일 한도**는 오늘 00:00 KST부터 이 계좌에서 나간 *이체*(`TRANSFER_OUT`)의 합계입니다. 들어온 돈과 적금·예금으로 보낸 돈은 세지 않습니다.
 
 `POST /transfers/savings`: `{ "from_checking_account_id": 1, "savings_account_id": 1, "amount": 100000 }` → `201`, 같은 모양의 응답
-`POST /transfers/deposit`: `{ "from_checking_account_id": 1, "deposit_account_id": 1, "amount": 200000 }` → `201`
-- 적금·예금은 **내 계좌**에만 넣을 수 있습니다(남의 계좌는 `404`). 1회·1일 이체 한도는 적용하지 않고 잔액만 검사합니다. 만기일 당일부터는 `400 ACCOUNT_MATURED`로 거절합니다.
+- 적금은 **내 계좌**에만 넣을 수 있습니다(남의 계좌는 `404`). 1회·1일 이체 한도는 적용하지 않고 잔액만 검사합니다. 만기일 당일부터는 `400 ACCOUNT_MATURED`로 거절합니다.
 
-거래내역에는 보낸 쪽과 받은 쪽에 한 줄씩 남습니다(`type`): 이체 `TRANSFER_OUT` / `TRANSFER_IN`, 적금 납입 입출금 쪽 `TO_SAVINGS`, 예금 입금 입출금 쪽 `TO_DEPOSIT`, 받은 적금·예금 쪽 `TRANSFER_IN`.
+거래내역에는 보낸 쪽과 받은 쪽에 한 줄씩 남습니다(`type`): 이체 `TRANSFER_OUT` / `TRANSFER_IN`, 적금 납입 입출금 쪽 `TO_SAVINGS`, 받은 적금 쪽 `TRANSFER_IN`. (예금 가입 금액의 `TO_DEPOSIT`은 `POST /accounts/deposit` 참고)
 실패 예시: `400 INSUFFICIENT_BALANCE`, `400 SAME_ACCOUNT_TRANSFER`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `400 ACCOUNT_MATURED`, `404 ACCOUNT_NOT_FOUND`
 </details>
 

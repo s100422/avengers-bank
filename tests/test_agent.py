@@ -26,6 +26,7 @@ from avengers_bank.domains.cards.models import CreditCardHistory
 from avengers_bank.domains.products.models import CardProduct
 from avengers_bank.domains.users.schemas import UserResponse
 from avengers_bank.main import app
+from tests.helpers import open_deposit
 
 pytestmark = pytest.mark.anyio
 
@@ -174,8 +175,7 @@ async def add_credit_card(client, headers):
 
 async def test_financial_summary_is_computed_by_backend(client, world):
     tony = world["tony"]
-    dep = (await client.post("/accounts/deposit", json={"product_id": 2, "maturity_date": FUTURE}, headers=tony)).json()["data"]
-    await client.post("/transfers/deposit", json={"from_checking_account_id": 1, "deposit_account_id": dep["account_id"], "amount": 200_000}, headers=tony)
+    assert (await open_deposit(client, tony, 200_000, from_id=1)).status_code == 201
     card = await add_credit_card(client, tony)
     await client.post(f"/cards/credit/{card['card_id']}/payments", json={"place_of_use": "마트", "used_amount": 300_000}, headers=tony)
 

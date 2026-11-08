@@ -42,6 +42,9 @@ class DepositAccountCreate(BaseModel):
     terms: TermsConsentIn  # 화면에서 본 약관 집합과 항목별 동의 (C-075)
     maturity_date: date
     nickname: str | None = Field(default=None, max_length=50)
+    # 가입 금액과 출금할 입출금 계좌는 필수다. 가입 후 추가 입금은 없다.
+    initial_amount: Amount
+    from_checking_account_id: int
 
     _maturity = field_validator("maturity_date")(_require_future)
 

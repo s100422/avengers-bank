@@ -17,14 +17,14 @@ type Account = {
   monthly_payment?: number; // 적금만
 };
 
-// 예금 입금·적금 납입: 내 입출금 계좌에서 이 계좌로 돈을 옮긴다
+// 적금 납입: 내 입출금 계좌에서 이 계좌로 돈을 옮긴다 (예금은 가입 때 한 번만 넣는다)
 function PayIn({
   kind,
   accountId,
   suggested,
   onDone,
 }: {
-  kind: "deposit" | "savings" | "checking";
+  kind: "savings";
   accountId: number;
   suggested?: number;
   onDone: () => void;
@@ -32,7 +32,7 @@ function PayIn({
   const [checking, setChecking] = useState<AccountSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const label = kind === "savings" ? "납입" : "입금";
+  const label = "납입";
 
   const loadChecking = () =>
     api<AccountSummary[]>("/accounts").then((a) => setChecking(a.filter((x) => x.account_type === "checking")));
@@ -63,7 +63,7 @@ function PayIn({
   if (checking.length === 0) return null;
   return (
     <form onSubmit={onSubmit} className="mt-6 space-y-3 rounded-2xl bg-paper p-5">
-      <h2 className="font-semibold">{kind === "savings" ? "적금 납입하기" : "예금에 입금하기"}</h2>
+      <h2 className="font-semibold">적금 납입하기</h2>
       <label className="block">
         <span className="mb-1 block text-sm text-slate">출금 계좌</span>
         <select name="from" className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 outline-none focus:border-coral">
@@ -128,9 +128,9 @@ function AccountDetail() {
               이체하기
             </Link>
           )}
-          {account.account_type !== "checking" && account.status !== "CLOSED" && (
+          {account.account_type === "savings" && account.status !== "CLOSED" && (
             <PayIn
-              kind={account.account_type}
+              kind="savings"
               accountId={Number(id)}
               suggested={account.monthly_payment}
               onDone={() => setReload((n) => n + 1)}

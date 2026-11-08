@@ -97,6 +97,6 @@ uv run python scripts/pg_transfer_concurrency.py
 | users | ✅ 회원가입, 로그인, 내 정보 조회·수정 |
 | products | ✅ 계좌·카드 상품 목록/상세 조회, 상품 종류 검증 메서드 |
 | accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정 |
-| transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입, 예금 입금 |
+| transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입 (예금은 가입 시 입출금 계좌에서 가입 금액 이체) |
 | cards | ✅ 신용·체크카드 발급, 조회, 결제(사용), 신용카드 청구서 생성·납부 |
 | agent | ✅ AI 금융 비서(Tool Calling): 자산 요약·거래내역·카드값 조회, 이체 초안 → 화면 확인 후 실행 ([docs/AGENT.md](docs/AGENT.md)) |

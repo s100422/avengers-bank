@@ -12,6 +12,7 @@ type Product = {
   description: string;
   interest_rate?: string;
   credit_limit?: number | null;
+  min_amount?: number | null; // 예금만. null이면 최소 없음
 };
 
 // 상품 종류 → 가입 화면(/open/{kind}), 이름, 아이콘 타일 색
@@ -313,6 +314,9 @@ function Catalog({
                   <span className="text-slate">{TYPE[p.type].label}, </span>
                   <span className="text-lg font-bold text-coral tabular-nums">{rateText(p)}</span>
                 </span>
+                {p.type === "DEPOSIT" && p.min_amount != null && (
+                  <span className="mt-1 block text-sm text-slate tabular-nums">최소 가입 {won(p.min_amount)}</span>
+                )}
               </Link>
               {/* 찜 버튼은 링크 밖에 둔다 (누르면 가입 화면으로 넘어가지 않게) */}
               <button

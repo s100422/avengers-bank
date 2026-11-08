@@ -19,14 +19,6 @@ class SavingsPaymentCreate(BaseModel):
     amount: Amount
 
 
-class DepositPaymentCreate(BaseModel):
-    """POST /transfers/deposit — 입출금 → 내 예금 입금"""
-
-    from_checking_account_id: int
-    deposit_account_id: int
-    amount: Amount
-
-
 class TransferResponse(BaseModel):
     from_account_num: str
     to_account_num: str

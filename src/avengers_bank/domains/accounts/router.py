@@ -24,6 +24,7 @@ from avengers_bank.domains.accounts.schemas import (
     SavingsAccountResponse,
 )
 from avengers_bank.domains.accounts.service import account_service
+from avengers_bank.domains.transfers.service import transfer_service
 from avengers_bank.domains.users.schemas import UserResponse
 
 router = APIRouter(
@@ -59,7 +60,13 @@ async def open_checking(data: CheckingAccountCreate, db: DbSession, user: Curren
     responses=error_responses(400, 404),
 )
 async def open_deposit(data: DepositAccountCreate, db: DbSession, user: CurrentUser):
-    account = await account_service.open_deposit(db, data, user)
+    # 가입 금액은 계좌 개설과 같은 트랜잭션에서 옮긴다 (실패하면 개설도 약관 동의 기록도 롤백)
+    async def after_open(db, account):
+        await transfer_service.pay_deposit_in_tx(
+            db, user, data.from_checking_account_id, account.deposit_account_id, data.initial_amount
+        )
+
+    account = await account_service.open_deposit(db, data, user, after_open)
     return SuccessResponse[DepositAccountResponse](data=account, message=OPENED)
 
 

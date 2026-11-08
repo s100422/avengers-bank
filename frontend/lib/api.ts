@@ -79,7 +79,7 @@ export const HISTORY_TYPE: Record<string, [string, boolean]> = {
   DEV_CHARGE: ["충전(개발용)", false],
 };
 
-export type Product = { product_id: number; name: string; description: string; interest_rate: string };
+export type Product = { product_id: number; name: string; description: string; interest_rate: string; min_amount?: number | null };
 
 export const won = (n: number) => n.toLocaleString("ko-KR") + "원";
 

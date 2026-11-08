@@ -23,6 +23,7 @@ erDiagram
         string name
         text description
         decimal interest_rate "연 금리(%)"
+        bigint min_amount "NULL, 최소 가입 금액(원), 예금 상품만"
     }
 
     card_products {
@@ -185,7 +186,7 @@ erDiagram
 | 테이블 | 설명 | 도메인 |
 |---|---|---|
 | `users` | 회원 | users |
-| `account_products` / `card_products` | 계좌 상품 / 카드 상품 | products |
+| `account_products` / `card_products` | 계좌 상품 / 카드 상품 (`account_products.min_amount`: NULL이면 제한 없음, 값이 있으면 `> 0` CHECK) | products |
 | `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌 | accounts |
 | `*_account_histories` | 계좌별 거래내역 | accounts |
 | `credit_cards` / `debit_cards` | 신용카드 / 체크카드 | cards |
@@ -211,6 +212,6 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
 
 ## 팀에서 정해야 할 것
 
-- 각 `type` 컬럼에 들어갈 값 목록. 계좌 거래내역은 현재 코드가 `TRANSFER_OUT`, `TRANSFER_IN`, `TO_SAVINGS`, `TO_DEPOSIT`, `DEV_CHARGE`를 쓴다(`accounts/kinds.py`). 카드 관련은 `CARD_PAYMENT`(체크카드 결제), `CARD_BILL_PAYMENT`(청구서 납부)를 쓴다(`cards/kinds.py`)
+- 각 `type` 컬럼에 들어갈 값 목록. 계좌 거래내역은 현재 코드가 `TRANSFER_OUT`, `TRANSFER_IN`, `TO_SAVINGS`, `TO_DEPOSIT`, `DEV_CHARGE`를 쓴다(`accounts/kinds.py`). `TO_DEPOSIT`은 예금 가입 금액을 낼 때만 생긴다(가입 후 추가 입금은 없음). 카드 관련은 `CARD_PAYMENT`(체크카드 결제), `CARD_BILL_PAYMENT`(청구서 납부)를 쓴다(`cards/kinds.py`)
 - 카드번호 형식: 지금은 신용 `4000-`, 체크 `5000-` + 무작위 12자리(`cards/kinds.py`), 실제 카드번호 체계(Luhn 검사 등)는 아님
 - 이체 한도 기본값

@@ -68,9 +68,25 @@ class AccountService:
             daily_transfer_limit=data.daily_transfer_limit,
         )
 
-    async def open_deposit(self, db: AsyncSession, data: DepositAccountCreate, user: UserResponse):
+    async def open_deposit(
+        self, db: AsyncSession, data: DepositAccountCreate, user: UserResponse, after_open=None
+    ):
+        """after_open(db, account): 개설과 같은 트랜잭션 안에서 호출된다 (가입 금액 입금용)."""
+        inner = after_open
+
+        async def checked_after_open(db, account):
+            # 돈을 옮기기 전에 상품별 최소 가입 금액을 확인한다 (실패하면 개설 전체 롤백)
+            product = await product_service.get_account_product(db, data.product_id)
+            if data.initial_amount is not None and product.min_amount and data.initial_amount < product.min_amount:
+                raise BadRequestException(
+                    code="BELOW_MIN_AMOUNT",
+                    message=f"이 상품의 최소 가입 금액은 {product.min_amount:,}원입니다.",
+                )
+            if inner:
+                await inner(db, account)
+
         return await self._open(
-            db, KINDS["deposit"], user, data.product_id, data.terms,
+            db, KINDS["deposit"], user, data.product_id, data.terms, after_open=checked_after_open,
             nickname=data.nickname, maturity_date=data.maturity_date,
         )
 
@@ -83,7 +99,7 @@ class AccountService:
 
     async def _open(
         self, db: AsyncSession, kind: AccountKind, user: UserResponse, product_id: int, terms: TermsConsentIn,
-        **fields,
+        after_open=None, **fields,
     ):
         # 같은 테이블 안에서 번호가 겹치면 unique 제약(IntegrityError)이 막는다. 새 번호로 다시 시도한다.
         for _ in range(MAX_NUMBER_ATTEMPTS):
@@ -100,6 +116,8 @@ class AccountService:
                     await terms_service.record_consent(
                         db, user, kind.name, getattr(account, kind.id_column), current, agreed
                     )
+                    if after_open:
+                        await after_open(db, account)
                     await db.refresh(account)
                 return to_response(kind, account)
             except IntegrityError as e:

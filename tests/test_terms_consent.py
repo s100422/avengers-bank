@@ -83,7 +83,8 @@ def bodies(checking_id):
     """종류별 (경로, 상품 ID, 가입 본문)."""
     return {
         "checking": ("/accounts/checking", 1, {"product_id": 1}),
-        "deposit": ("/accounts/deposit", 2, {"product_id": 2, "maturity_date": FUTURE}),
+        "deposit": ("/accounts/deposit", 2, {"product_id": 2, "maturity_date": FUTURE, "initial_amount": 1000,
+                                              "from_checking_account_id": checking_id}),
         "savings": ("/accounts/savings", 3, {"product_id": 3, "maturity_date": FUTURE,
                                               "monthly_payment": 10_000, "monthly_deposit_date": 5}),
         "credit": ("/cards/credit", 1, {"product_id": 1, "checking_account_id": checking_id, "payment_date": 14}),
@@ -100,7 +101,9 @@ async def make_checking(client, headers) -> int:
     data = await terms_of(client, "checking", 1)
     r = await client.post("/accounts/checking", json={"product_id": 1, "terms": consent(data)}, headers=headers)
     assert r.status_code == 201, r.text
-    return r.json()["data"]["account_id"]
+    account_id = r.json()["data"]["account_id"]
+    await client.post(f"/dev/accounts/checking/{account_id}/charge", json={"amount": 10_000}, headers=headers)  # 예금 가입용
+    return account_id
 
 
 # ── 발행 ──────────────────────────────────────────────────────────────
@@ -284,8 +287,9 @@ async def test_consent_failure_rolls_back_account(products, client, make_user, m
 
 async def test_stale_screen_requires_reconsent_and_old_consent_is_preserved(products, client, make_user, tmp_path):
     headers = await make_user()
+    checking_id = await make_checking(client, headers)
     v1 = await terms_of(client, "deposit", 2)
-    body = {"product_id": 2, "maturity_date": FUTURE}
+    body = {"product_id": 2, "maturity_date": FUTURE, "initial_amount": 1000, "from_checking_account_id": checking_id}
     r = await client.post("/accounts/deposit", json={**body, "terms": consent(v1)}, headers=headers)
     old_account = r.json()["data"]["account_id"]
     old_version_id = v1["items"][1]["terms_version_id"]

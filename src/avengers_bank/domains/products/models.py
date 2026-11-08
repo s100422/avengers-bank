@@ -12,6 +12,10 @@ class AccountProduct(Base):
         CheckConstraint(
             "type IN ('CHECKING', 'DEPOSIT', 'SAVINGS')", name="ck_account_products_type"
         ),
+        # NULL = 최소 금액 없음(1원 이상). 예금 상품만 값을 가진다.
+        CheckConstraint(
+            "min_amount IS NULL OR min_amount > 0", name="ck_account_products_min_amount_positive"
+        ),
     )
 
     product_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -21,6 +25,7 @@ class AccountProduct(Base):
     product_code: Mapped[str | None] = mapped_column(String(50), unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     interest_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)  # 연 금리(%)
+    min_amount: Mapped[int | None] = mapped_column(BigInteger)  # 예금 최소 가입 금액(원)
 
 
 class CardProduct(Base):

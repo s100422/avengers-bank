@@ -40,6 +40,7 @@ async def test_get_account_product(client, products):
     response = await client.get("/products/accounts/1")
     assert response.status_code == 200
     assert response.json()["data"]["interest_rate"] is not None
+    assert response.json()["data"]["min_amount"] is None
 
 
 async def test_get_account_product_not_found(client, products):

@@ -8,6 +8,7 @@ from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.timezone import today_kst
 from avengers_bank.domains.accounts.interest import calc_interest
 from avengers_bank.domains.accounts.kinds import KINDS
+from tests.helpers import open_deposit
 
 pytestmark = pytest.mark.anyio
 
@@ -54,11 +55,10 @@ async def world(client, make_user, account_products):
     tony, bruce = await make_user("ironman"), await make_user("hulk")
     await client.post("/accounts/checking", json={"product_id": 1}, headers=tony)
     await client.post("/accounts/checking", json={"product_id": 1}, headers=bruce)
-    await client.post("/accounts/deposit", json={"product_id": 2, "maturity_date": FUTURE}, headers=tony)
+    await client.post("/dev/accounts/checking/1/charge", json={"amount": 1_000_000}, headers=tony)
+    await open_deposit(client, tony, 300_000, from_id=1)
     savings = {"product_id": 3, "monthly_payment": 100_000, "monthly_deposit_date": 25, "maturity_date": FUTURE}
     await client.post("/accounts/savings", json=savings, headers=tony)
-    await client.post("/dev/accounts/checking/1/charge", json={"amount": 1_000_000}, headers=tony)
-    await client.post("/transfers/deposit", json={"from_checking_account_id": 1, "deposit_account_id": 1, "amount": 300_000}, headers=tony)
     await client.post("/transfers/savings", json={"from_checking_account_id": 1, "savings_account_id": 1, "amount": 200_000}, headers=tony)
     return {"tony": tony, "bruce": bruce}  # 입출금 잔액 500,000
 
@@ -124,14 +124,20 @@ async def test_close_early_pays_half_rate(client, world):
     assert (data["interest"], data["early_close"]) == (1_000, True)  # 20만 × 1% × 0.5
 
 
-async def test_closed_account_rejects_deposit_and_second_close(client, world):
+async def test_closed_account_rejects_second_close(client, world):
     tony = world["tony"]
     await close(client, tony, "deposit")
-    pay = {"from_checking_account_id": 1, "deposit_account_id": 1, "amount": 1000}
-    assert error_of(await client.post("/transfers/deposit", json=pay, headers=tony)) == (400, "ACCOUNT_CLOSED")
     assert error_of(await close(client, tony, "deposit")) == (400, "ACCOUNT_CLOSED")
     # 거절된 요청은 돈을 움직이지 않는다
     assert (await get(client, tony, "checking"))["balance"] == 800_000
+
+
+async def test_closed_savings_rejects_payment(client, world):
+    tony = world["tony"]
+    await close(client, tony, "savings")
+    pay = {"from_checking_account_id": 1, "savings_account_id": 1, "amount": 1000}
+    assert error_of(await client.post("/transfers/savings", json=pay, headers=tony)) == (400, "ACCOUNT_CLOSED")
+    assert (await get(client, tony, "checking"))["balance"] == 700_000
 
 
 async def test_close_errors_change_nothing(client, world):
@@ -145,13 +151,15 @@ async def test_close_errors_change_nothing(client, world):
 
 
 async def test_close_empty_account_records_no_history(client, make_user, account_products):
+    # 예금은 가입 금액이 있어야 열리므로 빈 계좌는 적금으로 확인한다
     tony = await make_user("ironman")
     await client.post("/accounts/checking", json={"product_id": 1}, headers=tony)
-    await client.post("/accounts/deposit", json={"product_id": 2, "maturity_date": FUTURE}, headers=tony)
-    data = (await close(client, tony, "deposit")).json()["data"]
+    savings = {"product_id": 3, "monthly_payment": 100_000, "monthly_deposit_date": 25, "maturity_date": FUTURE}
+    await client.post("/accounts/savings", json=savings, headers=tony)
+    data = (await close(client, tony, "savings")).json()["data"]
     assert (data["principal"], data["interest"], data["total_amount"]) == (0, 0, 0)
-    assert (await client.get("/accounts/deposit/1/histories", headers=tony)).json()["data"] == []
-    assert (await get(client, tony, "deposit"))["status"] == "CLOSED"
+    assert (await client.get("/accounts/savings/1/histories", headers=tony)).json()["data"] == []
+    assert (await get(client, tony, "savings"))["status"] == "CLOSED"
 
 
 async def test_summary_list_shows_status(client, world):
