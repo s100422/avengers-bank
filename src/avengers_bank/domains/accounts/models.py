@@ -16,7 +16,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 from avengers_bank.core.database import Base
 
 
-class CheckingAccount(Base):
+class AccountPasswordMixin:
+    """계좌 비밀번호 (accounts/password.py). 기존 계좌는 NULL = 미설정이라 돈이 나가지 않는다."""
+
+    password_hash: Mapped[str | None] = mapped_column(String(255))  # argon2 해시. 응답에 절대 넣지 않는다
+    password_failed_count: Mapped[int] = mapped_column(
+        SmallInteger, default=0, server_default="0", nullable=False
+    )
+    password_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 5회 틀리면 잠김
+
+
+class CheckingAccount(AccountPasswordMixin, Base):
     """입출금 계좌"""
 
     __tablename__ = "checking_accounts"
@@ -44,7 +54,7 @@ class CheckingAccount(Base):
     )
 
 
-class DepositAccount(Base):
+class DepositAccount(AccountPasswordMixin, Base):
     """예금 계좌"""
 
     __tablename__ = "deposit_accounts"
@@ -74,7 +84,7 @@ class DepositAccount(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class SavingsAccount(Base):
+class SavingsAccount(AccountPasswordMixin, Base):
     """적금 계좌"""
 
     __tablename__ = "savings_accounts"

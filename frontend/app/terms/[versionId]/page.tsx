@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Brand, ErrorText } from "@/components/ui";
 import { TermsMarkdown } from "@/components/terms/TermsMarkdown";
-import { ASSISTANT_ASK, SECTION_ID, TermsVersion, api, token } from "@/lib/api";
+import { ASSISTANT_ASK, SECTION_ID, TermsVersion, api, session } from "@/lib/api";
 
 // 약관 전문. 로그인 없이 볼 수 있고, 불러올 때 AI를 부르지 않는다.
 // useParams는 프리렌더 중 멈출 수 있어 Suspense로 감싼다 (cacheComponents)
@@ -30,7 +30,7 @@ function Terms() {
   useEffect(() => {
     // AI 비서는 로그인했을 때만 떠 있다 (AssistantGate)
     // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage는 마운트 뒤에만 읽을 수 있다
-    setAuthed(!!token.get());
+    setAuthed(!!session.active());
   }, []);
 
   useEffect(() => {

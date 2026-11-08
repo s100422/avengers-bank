@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Button, ErrorText, Field, MoneyField, Shell } from "@/components/ui";
+import { ACCOUNT_PASSWORD_RULE, AccountPasswordField, MoneyErrorText, accountPasswordProblem } from "@/components/account-password";
+import { Button, Field, MoneyField, Shell } from "@/components/ui";
 import { AccountSummary, ApiError, TermsSet, api, termsHref, won } from "@/lib/api";
 
 // 상품 가입(계좌 개설·카드 발급) 화면 하나로 다섯 종류를 처리한다. /open/{kind}/{상품 id(선택)}
@@ -18,7 +19,8 @@ type Kind = keyof typeof KINDS;
 
 type Product = { product_id: number; name: string; description: string; interest_rate?: string; credit_limit?: number | null; min_amount?: number | null };
 type Opened = { account_num?: string; card_num?: string };
-// 약관 전문을 보러 나갈 때 입력값을 sessionStorage에 맡겼다가, 돌아오면 한 번만 꺼내 채운다
+// 약관 전문을 보러 나갈 때 입력값을 sessionStorage에 맡겼다가, 돌아오면 한 번만 꺼내 채운다.
+// 계좌 비밀번호는 fields에 넣지 않는다(비제어 입력) → 저장소에 남지 않고, 돌아오면 비밀번호만 다시 입력한다
 type Draft = { productId: number | null; setHash?: string; agreed: Record<number, boolean>; fields: Record<string, string> };
 
 // 날짜 입력칸 값(YYYY-MM-DD). 오늘에서 days일 뒤.
@@ -44,7 +46,7 @@ function Open() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [checking, setChecking] = useState<AccountSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null); // Error 또는 ApiError (계좌 비밀번호 오류면 링크를 붙인다)
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [productId, setProductId] = useState<number | null>(null);
@@ -117,11 +119,11 @@ function Open() {
 
   useEffect(() => {
     if (!conf) return;
-    api<Product[]>(`/products/${conf.list}?type=${conf.type}`).then(setProducts).catch((e) => setError(e.message));
+    api<Product[]>(`/products/${conf.list}?type=${conf.type}`).then(setProducts).catch(setError);
     // 카드는 결제·출금할 입출금 계좌를 골라야 한다
     api<AccountSummary[]>("/accounts")
       .then((a) => setChecking(a.filter((x) => x.account_type === "checking")))
-      .catch((e) => setError(e.message));
+      .catch(setError);
   }, [conf]);
 
   if (!conf) return <p className="mt-10 text-slate">없는 상품 종류입니다.</p>;
@@ -138,14 +140,21 @@ function Open() {
     const f = new FormData(e.currentTarget);
     const num = (k: string) => Number(f.get(k));
     const nickname = f.get("nickname") || null;
+    const account_password = String(f.get("account_password") ?? "");
+    if (!conf.card) {
+      const problem = accountPasswordProblem(account_password, String(f.get("account_password_confirm") ?? ""));
+      if (problem) return setError(new Error(problem));
+    }
     const body = {
-      checking: { product_id: num("product_id"), nickname },
+      checking: { product_id: num("product_id"), nickname, account_password },
       deposit: {
         product_id: num("product_id"),
         initial_amount: num("initial_amount"),
         from_checking_account_id: num("checking_account_id"),
+        from_account_password: f.get("from_account_password"),
         maturity_date: f.get("maturity_date"),
         nickname,
+        account_password,
       },
       savings: {
         product_id: num("product_id"),
@@ -153,6 +162,7 @@ function Open() {
         monthly_deposit_date: num("monthly_deposit_date"),
         maturity_date: f.get("maturity_date"),
         nickname,
+        account_password,
       },
       credit: { product_id: num("product_id"), checking_account_id: num("checking_account_id"), payment_date: num("payment_date") },
       debit: { product_id: num("product_id"), checking_account_id: num("checking_account_id") },
@@ -170,9 +180,9 @@ function Open() {
       setOpened(await api<Opened>(conf.endpoint, { ...body, terms: termsBody }));
     } catch (err) {
       if (err instanceof ApiError && err.code === "TERMS_OUTDATED") {
-        setError("약관이 변경되었습니다. 최신 약관을 확인하고 다시 동의해 주세요.");
+        setError(new Error("약관이 변경되었습니다. 최신 약관을 확인하고 다시 동의해 주세요."));
         setTermsReload((n) => n + 1);
-      } else setError((err as Error).message);
+      } else setError(err);
     }
     setBusy(false);
   }
@@ -279,6 +289,14 @@ function Open() {
           <Field label="만기일" type="date" min={dayAfter(1)} {...bind("maturity_date", dayAfter(365))} required />
         )}
         {!conf.card && <Field label="계좌 별명 (선택)" maxLength={50} {...bind("nickname")} />}
+        {!conf.card && (
+          <div className="space-y-3">
+            <AccountPasswordField label="새 계좌 비밀번호" />
+            <AccountPasswordField label="새 계좌 비밀번호 확인" name="account_password_confirm" />
+            <p className="text-sm text-slate">{ACCOUNT_PASSWORD_RULE}. 이체·납입·해지할 때 입력합니다.</p>
+          </div>
+        )}
+        {kind === "deposit" && <AccountPasswordField label="출금 계좌 비밀번호" name="from_account_password" />}
 
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm text-slate">약관 동의</legend>
@@ -341,7 +359,8 @@ function Open() {
           )}
         </fieldset>
 
-        <ErrorText message={error} />
+        {/* 예금 가입에서 계좌 비밀번호를 확인하는 곳은 출금 입출금 계좌뿐이다 */}
+        <MoneyErrorText error={error} accountHref={fromAcc ? `/accounts/checking/${fromAcc.account_id}` : undefined} />
         <Button busy={busy} disabled={products.length === 0 || !allRequired}>
           {kind === "checking" ? "계좌 만들기" : `${conf.stamp}하기`}
         </Button>

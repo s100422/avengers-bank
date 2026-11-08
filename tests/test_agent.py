@@ -275,6 +275,7 @@ async def test_prepare_transfer_only_creates_draft(client, world, fake):
     action, f = await prepare(client, world, fake)
     full = world["b"]["account_num"]
     assert action["type"] == "TRANSFER_CONFIRMATION"
+    assert action["from_account_id"] == 1  # 비밀번호 안내 링크용
     assert (action["from_account_name"], action["recipient_name"], action["amount"], action["expected_balance_after"]) == (
         "생활비 통장", "김철수", 50_000, 950_000)
     assert action["to_account_num_masked"] == f"{full[:3]}-***-**{full[-4:]}" and len(action["draft_id"]) >= 40

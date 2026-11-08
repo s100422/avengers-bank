@@ -11,7 +11,7 @@ from avengers_bank.domains.accounts.service import account_service
 from avengers_bank.domains.agent.models import TransferDraft
 from avengers_bank.domains.agent.schemas import TransferAction
 from avengers_bank.domains.agent.tools.common import ToolArgs, account_name, mask_num
-from avengers_bank.domains.transfers.schemas import TransferCreate
+from avengers_bank.domains.transfers.schemas import TransferTarget
 from avengers_bank.domains.transfers.service import transfer_service
 from avengers_bank.domains.users.schemas import UserResponse
 
@@ -26,7 +26,7 @@ class PrepareTransferArgs(ToolArgs):
 
 async def prepare_transfer(db: AsyncSession, user: UserResponse, args: PrepareTransferArgs) -> TransferAction:
     """이체 초안만 만든다. 돈은 움직이지 않는다 — 사용자가 화면에서 확인해야 /agent/transfers/{id}/confirm이 실행한다."""
-    data = TransferCreate(
+    data = TransferTarget(  # 초안에는 계좌 비밀번호가 필요 없다. 확인(confirm) 때만 받는다
         from_checking_account_id=args.from_account_id, to_account_num=args.to_account_num.strip(), amount=args.amount
     )
     # 출금 계좌가 틀렸는지 받는 계좌가 틀렸는지 모델이 구분할 수 있게 출금 계좌부터 따로 확인한다
@@ -51,7 +51,7 @@ async def prepare_transfer(db: AsyncSession, user: UserResponse, args: PrepareTr
         db.add(draft)
         from_name = await account_name(db, sender)
     return TransferAction(
-        draft_id=draft.draft_id, from_account_name=from_name,
+        draft_id=draft.draft_id, from_account_id=sender.checking_account_id, from_account_name=from_name,
         from_account_num_masked=mask_num(sender.account_num), recipient_name=recipient_name,
         to_account_num_masked=mask_num(receiver.account_num), amount=data.amount,
         expected_balance_after=sender.balance - data.amount, expires_at=draft.expires_at,

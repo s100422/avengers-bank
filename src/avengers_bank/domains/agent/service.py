@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.exceptions import ApiException, ConflictException, NotFoundException
 from avengers_bank.core.timezone import today_kst
+from avengers_bank.domains.accounts.kinds import KINDS as ACCOUNT_KINDS
+from avengers_bank.domains.accounts.password import check_account_password
 from avengers_bank.domains.agent.model_client import (
     AssistantTurn,
     ModelClient,
@@ -35,7 +37,7 @@ from avengers_bank.domains.agent.tools import TOOLS, run_tool
 from avengers_bank.domains.agent.tools.common import as_utc, mask_num
 from avengers_bank.domains.agent.tools.terms import request_sources
 from avengers_bank.domains.terms.search import Passage
-from avengers_bank.domains.transfers.schemas import TransferCreate
+from avengers_bank.domains.transfers.schemas import TransferTarget
 from avengers_bank.domains.transfers.service import transfer_service
 from avengers_bank.domains.users.schemas import UserResponse
 
@@ -151,7 +153,9 @@ class AgentService:
 
     # ── 이체 초안 확인·취소 (사용자가 화면에서 직접 누른다. Tool로 등록하지 않는다) ──
 
-    async def confirm_draft(self, db: AsyncSession, draft_id: str, user: UserResponse) -> DraftConfirmResponse:
+    async def confirm_draft(
+        self, db: AsyncSession, draft_id: str, account_password: str, user: UserResponse
+    ) -> DraftConfirmResponse:
         now = datetime.now(timezone.utc)
         async with db.begin():
             draft = await self._pending_draft(db, draft_id, user)
@@ -161,6 +165,11 @@ class AgentService:
         if expired:
             raise ConflictException(code="DRAFT_EXPIRED", message="이체 확인 시간이 지났습니다. 다시 요청해 주세요.")
 
+        # 보내는 계좌 비밀번호는 초안이 아직 PENDING일 때만, 이체 트랜잭션 전에 따로 확인·커밋한다
+        # (틀린 횟수가 롤백되지 않게, password.py). 틀려도 초안은 PENDING으로 남아 다시 입력할 수 있다
+        await check_account_password(
+            db, ACCOUNT_KINDS["checking"], draft.from_checking_account_id, account_password, user
+        )
         async with db.begin():
             # PENDING → EXECUTED를 먼저 차지한 요청만 이체한다 (동시 클릭·재시도로 두 번 나가지 않게).
             # 같은 트랜잭션이라 아래 이체가 실패하면(잔액·한도 재검사) 상태도 PENDING으로 되돌아간다.
@@ -170,7 +179,7 @@ class AgentService:
                 raise ConflictException(code="DRAFT_NOT_PENDING", message="이미 처리되었거나 만료된 이체입니다.")
             result = await transfer_service.transfer_in_tx(
                 db,
-                TransferCreate(
+                TransferTarget(
                     from_checking_account_id=draft.from_checking_account_id,
                     to_account_num=draft.to_account_num, amount=draft.amount,
                 ),

@@ -7,11 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from avengers_bank.core.database import get_db
 from avengers_bank.core.dependencies import get_current_user
 from avengers_bank.core.responses import SuccessResponse, error_responses
-from avengers_bank.domains.accounts.kinds import AccountType
+from avengers_bank.domains.accounts.kinds import KINDS, AccountType
+from avengers_bank.domains.accounts.password import reset_account_password
 from avengers_bank.domains.accounts.schemas import (
     AccountCloseRequest,
     AccountCloseResponse,
     AccountHistoryResponse,
+    AccountPasswordReset,
     AccountResponse,
     AccountSummaryResponse,
     AccountUpdate,
@@ -128,6 +130,21 @@ async def close_account(
 ):
     result = await account_service.close_account(db, type, account_id, data, user)
     return SuccessResponse[AccountCloseResponse](data=result, message="계좌가 해지되었습니다.")
+
+
+@router.post(
+    "/{type}/{account_id}/password",
+    response_model=SuccessResponse[None],
+    responses=error_responses(400, 404),
+)
+async def reset_password(
+    type: AccountType, account_id: int, data: AccountPasswordReset, db: DbSession, user: CurrentUser
+):
+    """계좌 비밀번호 설정·재설정 (처음 설정도, 5회 잠금 해제도 이것). 등록 휴대폰 인증 증표가 필요하다."""
+    await reset_account_password(
+        db, KINDS[type], account_id, data.new_account_password, data.phone_verification_token, user
+    )
+    return SuccessResponse[None](data=None, message="계좌 비밀번호를 설정했습니다.")
 
 
 @router.patch(

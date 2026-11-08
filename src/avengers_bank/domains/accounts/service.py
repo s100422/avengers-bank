@@ -20,6 +20,7 @@ from avengers_bank.domains.accounts.kinds import (
     AccountKind,
 )
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
+from avengers_bank.domains.accounts.password import check_account_password, set_account_password
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.accounts.schemas import (
     RESPONSES,
@@ -39,12 +40,17 @@ from avengers_bank.domains.terms.schemas import TermsConsentIn
 from avengers_bank.domains.users.schemas import UserResponse
 
 MAX_NUMBER_ATTEMPTS = 5
+# 응답 dict에 절대 싣지 않는 컬럼 (응답 스키마에 없어도 실수로 추가되는 일을 막으려고 여기서 뺀다)
+SECRET_COLUMNS = {"password_hash", "password_failed_count", "password_locked_at"}
 
 
 def _as_dict(kind: AccountKind, account) -> dict:
     """모델 컬럼을 응답용 dict로. 종류마다 다른 PK 이름은 account_id로 통일한다."""
-    data = {c.name: getattr(account, c.name) for c in account.__table__.columns}
+    data = {c.name: getattr(account, c.name) for c in account.__table__.columns if c.name not in SECRET_COLUMNS}
     data["account_id"] = data.pop(kind.id_column)
+    # 화면 안내용 상태만 bool로 내보낸다 (해시·실패 횟수는 내보내지 않는다)
+    data["password_set"] = account.password_hash is not None
+    data["password_locked"] = account.password_locked_at is not None
     return data
 
 
@@ -62,7 +68,7 @@ def _kst_date(moment: datetime):
 class AccountService:
     async def open_checking(self, db: AsyncSession, data: CheckingAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["checking"], user, data.product_id, data.terms,
+            db, KINDS["checking"], user, data.product_id, data.terms, data.account_password,
             nickname=data.nickname,
             per_transfer_limit=data.per_transfer_limit,
             daily_transfer_limit=data.daily_transfer_limit,
@@ -85,21 +91,26 @@ class AccountService:
             if inner:
                 await inner(db, account)
 
+        # 가입 금액이 나가는 입출금 계좌의 비밀번호를 먼저 확인한다 (실패 횟수는 따로 커밋, password.py)
+        await check_account_password(
+            db, KINDS["checking"], data.from_checking_account_id, data.from_account_password, user
+        )
         return await self._open(
-            db, KINDS["deposit"], user, data.product_id, data.terms, after_open=checked_after_open,
+            db, KINDS["deposit"], user, data.product_id, data.terms, data.account_password,
+            after_open=checked_after_open,
             nickname=data.nickname, maturity_date=data.maturity_date,
         )
 
     async def open_savings(self, db: AsyncSession, data: SavingsAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["savings"], user, data.product_id, data.terms,
+            db, KINDS["savings"], user, data.product_id, data.terms, data.account_password,
             nickname=data.nickname, maturity_date=data.maturity_date,
             monthly_payment=data.monthly_payment, monthly_deposit_date=data.monthly_deposit_date,
         )
 
     async def _open(
         self, db: AsyncSession, kind: AccountKind, user: UserResponse, product_id: int, terms: TermsConsentIn,
-        after_open=None, **fields,
+        password: str, after_open=None, **fields,
     ):
         # 같은 테이블 안에서 번호가 겹치면 unique 제약(IntegrityError)이 막는다. 새 번호로 다시 시도한다.
         for _ in range(MAX_NUMBER_ATTEMPTS):
@@ -112,6 +123,7 @@ class AccountService:
                         user_id=user.user_id, product_id=product_id,
                         account_num=self._new_account_num(kind), **fields,
                     )
+                    await set_account_password(db, account, password)
                     await account_repository.save(db, account)
                     await terms_service.record_consent(
                         db, user, kind.name, getattr(account, kind.id_column), current, agreed
@@ -185,6 +197,8 @@ class AccountService:
         kind = KINDS[type]
         if kind.name == "checking":
             raise BadRequestException(code="CLOSE_NOT_SUPPORTED", message="예금·적금만 해지할 수 있습니다.")
+        # 해지하는 예금·적금 계좌의 비밀번호. 이 짧은 트랜잭션은 그 계좌만 잠그고 커밋한다 (password.py)
+        await check_account_password(db, kind, account_id, data.account_password, user)
         async with db.begin():
             await self.get_owned(db, kind, account_id, user)
             await self.get_owned(db, KINDS["checking"], data.to_checking_account_id, user)

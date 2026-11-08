@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import select
 
-from _common import check, cleanup, connect, execute, finish, make_checking, make_user, one, product_id, run, user_schema
+from _common import ACCOUNT_PASSWORD, account_password_hash, check, cleanup, connect, execute, finish, make_checking, make_user, one, product_id, run, user_schema
 from avengers_bank.core.database import SessionLocal, engine
 from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.accounts.models import CheckingAccount
@@ -60,14 +60,17 @@ async def close(user, delay=0.0, kind="deposit"):
     await asyncio.sleep(delay)
     async with SessionLocal() as db:
         await account_service.close_account(
-            db, kind, ids[kind], AccountCloseRequest(to_checking_account_id=ids["checking"]), user
+            db, kind, ids[kind], AccountCloseRequest(to_checking_account_id=ids["checking"], account_password=ACCOUNT_PASSWORD), user
         )
 
 
 async def pay_savings(user):
     async with SessionLocal() as db:
         await transfer_service.pay_savings(
-            db, SavingsPaymentCreate(from_checking_account_id=ids["checking"], savings_account_id=ids["savings"], amount=1000), user
+            db, SavingsPaymentCreate(
+                from_checking_account_id=ids["checking"], savings_account_id=ids["savings"], amount=1000,
+                account_password=ACCOUNT_PASSWORD,
+            ), user
         )
 
 
@@ -127,14 +130,14 @@ def main():
     try:
         ids["checking"] = make_checking(user_id, "110-777-300001", CHECKING_START, per=10**9, daily=10**9)
         ids["deposit"] = one(
-            "insert into deposit_accounts(user_id, product_id, account_num, balance, maturity_date, status)"
-            " values (:u, :p, '120-777-300001', :b, :m, 'ACTIVE') returning deposit_account_id",
-            u=user_id, p=product_id("account_products", "DEPOSIT"), b=DEPOSIT_START, m=date.today() + timedelta(days=365),
+            "insert into deposit_accounts(user_id, product_id, account_num, balance, maturity_date, status, password_hash)"
+            " values (:u, :p, '120-777-300001', :b, :m, 'ACTIVE', :h) returning deposit_account_id",
+            h=account_password_hash(), u=user_id, p=product_id("account_products", "DEPOSIT"), b=DEPOSIT_START, m=date.today() + timedelta(days=365),
         )
         ids["savings"] = one(
-            "insert into savings_accounts(user_id, product_id, account_num, balance, monthly_payment, monthly_deposit_date, maturity_date, status)"
-            " values (:u, :p, '220-777-300001', :b, 1000, 25, :m, 'ACTIVE') returning savings_account_id",
-            u=user_id, p=product_id("account_products", "SAVINGS"), b=DEPOSIT_START, m=date.today() + timedelta(days=365),
+            "insert into savings_accounts(user_id, product_id, account_num, balance, monthly_payment, monthly_deposit_date, maturity_date, status, password_hash)"
+            " values (:u, :p, '220-777-300001', :b, 1000, 25, :m, 'ACTIVE', :h) returning savings_account_id",
+            h=account_password_hash(), u=user_id, p=product_id("account_products", "SAVINGS"), b=DEPOSIT_START, m=date.today() + timedelta(days=365),
         )
         passed = run(amain(user_schema(user_id, LOGIN)))
     finally:

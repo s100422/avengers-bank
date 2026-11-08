@@ -88,6 +88,14 @@ class AccountRepository:
     async def find_checking_by_account_num(self, db: AsyncSession, account_num: str) -> CheckingAccount | None:
         return await db.scalar(select(CheckingAccount).where(CheckingAccount.account_num == account_num))
 
+    async def lock_checking_by_account_num(self, db: AsyncSession, account_num: str) -> CheckingAccount | None:
+        """계정 복구가 계좌 비밀번호를 검증하기 전에 그 행을 잠근다 (lock_account와 같은 이유: 실패 횟수 직렬화)."""
+        stmt = (
+            select(CheckingAccount).where(CheckingAccount.account_num == account_num)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+        return await db.scalar(stmt)
+
     async def sum_today_transfer_amount(self, db: AsyncSession, checking_account_id: int, since) -> int:
         """since(오늘 00:00 KST를 UTC로 바꾼 값) 이후 이 계좌에서 나간 이체 합계 (1일 이체 한도 검사용).
 

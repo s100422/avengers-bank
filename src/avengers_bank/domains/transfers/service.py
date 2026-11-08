@@ -11,12 +11,14 @@ from avengers_bank.domains.accounts.kinds import (
     AccountKind,
 )
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
+from avengers_bank.domains.accounts.password import check_account_password
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.accounts.service import account_service
 from avengers_bank.domains.transfers.schemas import (
     SavingsPaymentCreate,
     TransferCreate,
     TransferResponse,
+    TransferTarget,
 )
 from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.schemas import UserResponse
@@ -33,11 +35,14 @@ class TransferService:
 
     async def transfer(self, db: AsyncSession, data: TransferCreate, user: UserResponse) -> TransferResponse:
         """입출금 → 입출금 이체. 잔액, 1회 한도, 1일 한도를 검사한다."""
+        # 보내는 계좌의 비밀번호를 먼저 따로 확인·커밋한다 (틀린 횟수가 롤백되지 않게, password.py)
+        await check_account_password(db, KINDS["checking"], data.from_checking_account_id, data.account_password, user)
         async with db.begin():
             return await self.transfer_in_tx(db, data, user)
 
-    async def transfer_in_tx(self, db: AsyncSession, data: TransferCreate, user: UserResponse) -> TransferResponse:
-        """transfer와 같지만 호출한 쪽이 연 트랜잭션 안에서 실행한다 (AI 이체 초안 확인, C-070)."""
+    async def transfer_in_tx(self, db: AsyncSession, data: TransferTarget, user: UserResponse) -> TransferResponse:
+        """transfer와 같지만 호출한 쪽이 연 트랜잭션 안에서 실행한다 (AI 이체 초안 확인, C-070).
+        계좌 비밀번호는 검사하지 않는다: 호출한 쪽이 트랜잭션을 열기 전에 check_account_password로 확인해야 한다."""
         sender, receiver = await self._parties(db, data, user)
 
         # 두 계좌를 ID 순서대로 한 번에 잠근다 (A→B와 B→A가 동시에 와도 데드락이 없다)
@@ -62,7 +67,7 @@ class TransferService:
         )
 
     async def preview(
-        self, db: AsyncSession, data: TransferCreate, user: UserResponse
+        self, db: AsyncSession, data: TransferTarget, user: UserResponse
     ) -> tuple[CheckingAccount, CheckingAccount, str]:
         """이체와 같은 검사만 하고 돈은 옮기지 않는다 (AI 이체 초안, C-070). (보내는 계좌, 받는 계좌, 받는 분 실명).
 
@@ -75,7 +80,7 @@ class TransferService:
         return sender, receiver, receiver_name
 
     async def _parties(
-        self, db: AsyncSession, data: TransferCreate, user: UserResponse
+        self, db: AsyncSession, data: TransferTarget, user: UserResponse
     ) -> tuple[CheckingAccount, CheckingAccount]:
         # 불변 정보(소유자, 받는 계좌, 같은 계좌 여부)는 잠그기 전에 확인한다
         sender = await account_service.get_owned(db, KINDS["checking"], data.from_checking_account_id, user)
@@ -104,6 +109,7 @@ class TransferService:
 
     async def pay_savings(self, db: AsyncSession, data: SavingsPaymentCreate, user: UserResponse) -> TransferResponse:
         """입출금 → 내 적금 납입."""
+        await check_account_password(db, KINDS["checking"], data.from_checking_account_id, data.account_password, user)
         return await self._pay(
             db, user, data.from_checking_account_id, KINDS["savings"], data.savings_account_id, data.amount, TO_SAVINGS
         )
@@ -118,7 +124,8 @@ class TransferService:
     async def pay_deposit_in_tx(
         self, db: AsyncSession, user: UserResponse, from_id: int, deposit_id: int, amount: int
     ) -> TransferResponse:
-        """예금 가입 금액 입금. 호출한 쪽이 연 트랜잭션 안에서 실행한다 (가입 후 추가 입금은 없다)."""
+        """예금 가입 금액 입금. 호출한 쪽이 연 트랜잭션 안에서 실행한다 (가입 후 추가 입금은 없다).
+        출금 계좌 비밀번호는 호출한 쪽(account_service.open_deposit)이 트랜잭션 전에 확인한다."""
         return await self._pay_in_tx(db, user, from_id, KINDS["deposit"], deposit_id, amount, TO_DEPOSIT)
 
     async def _pay_in_tx(
