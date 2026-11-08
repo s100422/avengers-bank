@@ -86,12 +86,17 @@ class AccountRepository:
         return await db.scalar(stmt)
 
     async def find_checking_by_account_num(self, db: AsyncSession, account_num: str) -> CheckingAccount | None:
-        return await db.scalar(select(CheckingAccount).where(CheckingAccount.account_num == account_num))
+        """계좌번호로 찾는다(남이 보내는 이체의 받는 계좌). 탈퇴로 닫힌 계좌는 없는 계좌로 본다.
+        잠그기 전 조회라 참고용이다: 이체는 잠근 뒤 require_open으로 다시 확인한다(그사이 탈퇴할 수 있다)."""
+        return await db.scalar(
+            select(CheckingAccount).where(CheckingAccount.account_num == account_num, CheckingAccount.closed_at.is_(None))
+        )
 
     async def lock_checking_by_account_num(self, db: AsyncSession, account_num: str) -> CheckingAccount | None:
-        """계정 복구가 계좌 비밀번호를 검증하기 전에 그 행을 잠근다 (lock_account와 같은 이유: 실패 횟수 직렬화)."""
+        """계정 복구가 계좌 비밀번호를 검증하기 전에 그 행을 잠근다 (lock_account와 같은 이유: 실패 횟수 직렬화).
+        탈퇴로 닫힌 계좌는 없는 계좌로 본다: 탈퇴 회원의 아이디·비밀번호 찾기가 없는 계좌와 같은 응답이 된다."""
         stmt = (
-            select(CheckingAccount).where(CheckingAccount.account_num == account_num)
+            select(CheckingAccount).where(CheckingAccount.account_num == account_num, CheckingAccount.closed_at.is_(None))
             .with_for_update().execution_options(populate_existing=True)
         )
         return await db.scalar(stmt)

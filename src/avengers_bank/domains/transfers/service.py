@@ -13,7 +13,7 @@ from avengers_bank.domains.accounts.kinds import (
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
 from avengers_bank.domains.accounts.password import check_account_password
 from avengers_bank.domains.accounts.repository import account_repository
-from avengers_bank.domains.accounts.service import account_service
+from avengers_bank.domains.accounts.service import account_service, require_open
 from avengers_bank.domains.transfers.schemas import (
     SavingsPaymentCreate,
     TransferCreate,
@@ -49,6 +49,9 @@ class TransferService:
         ids = [sender.checking_account_id, receiver.checking_account_id]
         locked = {a.checking_account_id: a for a in await account_repository.lock_checking_accounts(db, ids)}
         sender, receiver = locked[ids[0]], locked[ids[1]]
+        # 잠근 뒤 확인: 받는 사람이 방금 탈퇴했으면 없는 계좌와 같은 404 (탈퇴의 '잔액 0 확인'과 이 입금이 한 줄로 선다)
+        require_open(receiver, "받는 계좌를 찾을 수 없습니다.")
+        require_open(sender)
 
         # 잠근 뒤에 검사한다. 1일 합계도 보내는 계좌를 잠근 뒤에 계산해야 동시 이체가 한도를 못 넘는다
         await self._check_limits(db, sender, data.amount)
@@ -140,6 +143,7 @@ class TransferService:
             raise BadRequestException(code="ACCOUNT_MATURED", message="만기가 지난 계좌에는 입금할 수 없습니다.")
 
         (sender,) = await account_repository.lock_checking_accounts(db, [from_id])  # 입출금 먼저
+        require_open(sender)
         target = await account_repository.lock_account(db, to_kind, to_id)  # 그다음 예금·적금
         if target.status == "CLOSED":  # 잠근 뒤에 확인해야 해지와 동시에 와도 해지된 계좌에 돈이 남지 않는다
             raise BadRequestException(code="ACCOUNT_CLOSED", message="해지된 계좌에는 입금할 수 없습니다.")

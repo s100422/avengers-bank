@@ -88,3 +88,24 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=256, repr=False)
+
+
+class WithdrawalBlocker(BaseModel):
+    """탈퇴를 막는 사유 하나. 화면은 account_type·account_id·card_id로 해당 계좌·카드 화면 링크를 만든다."""
+
+    code: Literal["ACTIVE_DEPOSIT", "ACTIVE_SAVINGS", "CHECKING_BALANCE", "CARD_UNPAID"]
+    message: str
+    account_type: Literal["checking", "deposit", "savings"] | None = None
+    account_id: int | None = None
+    card_id: int | None = None  # CARD_UNPAID: 신용카드
+
+
+class WithdrawalStatus(BaseModel):
+    can_withdraw: bool
+    blockers: list[WithdrawalBlocker]
+
+
+class WithdrawalRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128, repr=False)  # 강도 규칙 없음
+    # POST /verification/phone/send-for-me {purpose: "WITHDRAWAL"}(등록 번호) → /verify로 받은 증표
+    phone_verification_token: str = Field(min_length=1, max_length=2048, repr=False)

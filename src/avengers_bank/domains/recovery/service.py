@@ -119,7 +119,8 @@ async def start(
             try:
                 await verify_account_password(db, account, account_password)
                 user = await user_repository.find_by_id(db, account.user_id)
-                if purpose == FIND_LOGIN_ID or user.login_id == login_id:
+                # 탈퇴 회원의 입출금 계좌는 닫혀 위 조회에서 이미 걸러지지만(lock_checking_by_account_num) 한 번 더 막는다
+                if user.deleted_at is None and (purpose == FIND_LOGIN_ID or user.login_id == login_id):
                     target = (user.user_id, user.phone)
             except ApiException:
                 pass  # 틀림(·5번째면 잠금): 증가를 커밋하고 같은 응답을 준다

@@ -24,10 +24,13 @@ class User(Base):
     failed_login_count: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0", nullable=False)
     # 잠긴 시각. 잠기면 맞는 비밀번호도 거절한다. 해제는 본인 확인(비밀번호 찾기, 2단계)·관리자 명령(admin.py)으로만
     login_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 회원 탈퇴 시각 (users/withdrawal.py). 행은 지우지 않는다(소프트 삭제): 계좌·거래내역·약관 동의 기록이 이 행을
+    # 가리키고, login_id를 남겨 같은 아이디 재가입을 막는다. 탈퇴하면 이름·전화번호 등은 가린다
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-# refresh_tokens.revoked_reason에 들어갈 수 있는 값 (CHECK 제약과 마이그레이션 4f2a9c7e1b30이 같은 목록을 쓴다)
-REVOKED_REASONS = ("ROTATED", "LOGOUT", "LOGOUT_ALL", "PASSWORD_CHANGED", "REUSE_DETECTED", "LOGIN_ELSEWHERE")
+# refresh_tokens.revoked_reason에 들어갈 수 있는 값 (CHECK 제약과 마이그레이션 8d9e0f1a2b3c가 같은 목록을 쓴다)
+REVOKED_REASONS = ("ROTATED", "LOGOUT", "LOGOUT_ALL", "PASSWORD_CHANGED", "REUSE_DETECTED", "LOGIN_ELSEWHERE", "WITHDRAWN")
 
 
 class RefreshToken(Base):

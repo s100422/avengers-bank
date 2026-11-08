@@ -23,7 +23,7 @@ from avengers_bank.domains.accounts.schemas import (
     Amount,
     CheckingAccountResponse,
 )
-from avengers_bank.domains.accounts.service import account_service, to_response
+from avengers_bank.domains.accounts.service import account_service, require_open, to_response
 from avengers_bank.domains.users.schemas import UserResponse
 
 router = APIRouter(
@@ -43,6 +43,7 @@ async def charge_checking(
         await account_service.get_owned(db, kind, account_id, user)  # 본인 계좌인지 (불변이라 잠금 전에 확인)
         # 규칙 9: 잔액을 바꾸기 전에 잠그고, 잠근 시점의 잔액을 쓴다
         (account,) = await account_repository.lock_checking_accounts(db, [account_id])
+        require_open(account)
         account.balance += amount
         await account_repository.save_history(
             db,

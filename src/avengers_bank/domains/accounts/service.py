@@ -58,6 +58,13 @@ def to_response(kind: AccountKind, account):
     return RESPONSES[kind.name].model_validate(_as_dict(kind, account))
 
 
+def require_open(account, message: str = "계좌를 찾을 수 없습니다.") -> None:
+    """탈퇴로 닫힌 입출금 계좌(closed_at)는 없는 계좌처럼 404. 잔액을 바꾸는 곳에서 **행을 잠근 뒤** 부른다:
+    탈퇴는 같은 행을 잠그고 '잔액 0 확인 → closed_at'을 하므로, 잠근 뒤 확인하면 '탈퇴했는데 돈이 들어옴'이 없다."""
+    if account.closed_at is not None:
+        raise NotFoundException(code="ACCOUNT_NOT_FOUND", message=message)
+
+
 def _kst_date(moment: datetime):
     """저장된 UTC 시각의 KST 날짜. SQLite는 시간대 없이 돌려줘서 UTC로 본다."""
     if moment.tzinfo is None:
@@ -204,6 +211,7 @@ class AccountService:
             await self.get_owned(db, KINDS["checking"], data.to_checking_account_id, user)
 
             (checking,) = await account_repository.lock_checking_accounts(db, [data.to_checking_account_id])
+            require_open(checking)
             account = await account_repository.lock_account(db, kind, account_id)
             if account.status == "CLOSED":  # 잠근 뒤에 확인해야 동시에 두 번 눌러도 한 번만 해지된다
                 raise BadRequestException(code="ACCOUNT_CLOSED", message="이미 해지된 계좌입니다.")

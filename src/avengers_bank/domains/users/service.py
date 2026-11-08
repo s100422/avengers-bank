@@ -122,6 +122,8 @@ class UserService:
         #    되돌려지지 않는다. 증가가 롤백될 수 있으면 틀릴 때마다 카운트가 사라져 잠금이 무력해진다.
         async with db.begin():
             user = await user_repository.find_by_login_id(db, data.login_id)
+            if user is not None and user.deleted_at is not None:
+                user = None  # 탈퇴 회원은 없는 아이디와 똑같이(가짜 해시 검증 → 401). 실패도 세지 않는다(잠금 403이 존재를 드러냄)
             count = None
             if user is not None and user.login_locked_at is None:
                 count = await user_repository.count_login_attempt(db, user.user_id, MAX_LOGIN_FAILURES)
@@ -225,7 +227,8 @@ class UserService:
         user = await user_repository.find_by_id(db, user_id)
         # 세션이 끊겼으면(로그아웃·모든 기기 로그아웃·비밀번호 변경·재사용 감지) 5분이 남았어도 바로 거절한다 (C-087).
         # 요청마다 인덱스 조회가 하나 늘지만, 어차피 위에서 사용자를 DB에서 읽고 있어 비용 차이는 작다
-        if user is None or not await user_repository.is_session_active(db, user_id, session_id):
+        # deleted_at: 탈퇴하면 세션도 모두 끊기지만(WITHDRAWN), 세션 확인이 빠지는 실수에 대비해 한 번 더 막는다
+        if user is None or user.deleted_at is not None or not await user_repository.is_session_active(db, user_id, session_id):
             raise UnauthorizedException(
                 message="유효하지 않거나 만료된 토큰입니다.", code="INVALID_TOKEN"
             )
@@ -266,7 +269,7 @@ class UserService:
         async with db.begin():
             found = await user_repository.find_by_login_id(db, login_id)
             user = found and await user_repository.lock_user(db, found.user_id)  # 세션 폐기 전 잠금 (lock_user 설명)
-            if not user:
+            if not user or user.deleted_at is not None:  # 탈퇴 회원은 없는 아이디로 본다
                 return False
             user.hashed_password = new_hash
             user.failed_login_count = 0

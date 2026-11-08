@@ -16,7 +16,10 @@ from avengers_bank.domains.users.schemas import (
     UserLogin,
     UserResponse,
     UserUpdate,
+    WithdrawalRequest,
+    WithdrawalStatus,
 )
+from avengers_bank.domains.users import withdrawal
 from avengers_bank.domains.users.service import user_service
 
 router = APIRouter(prefix="/users", tags=["users"], responses=error_responses(422))
@@ -121,3 +124,28 @@ async def update_me(
 ):
     user = await user_service.update_me(db, current_user, data)
     return SuccessResponse[UserResponse](data=user, message="내 정보가 수정되었습니다.")
+
+
+@router.get(
+    "/me/withdrawal", response_model=SuccessResponse[WithdrawalStatus], responses=error_responses(401)
+)
+async def get_withdrawal(
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # 탈퇴할 수 있는지, 없으면 무엇을 먼저 해야 하는지 (예금·적금 해지, 잔액 옮기기, 카드 대금 납부)
+    blockers = await withdrawal.get_blockers(db, current_user)
+    return SuccessResponse[WithdrawalStatus](data=WithdrawalStatus(can_withdraw=not blockers, blockers=blockers))
+
+
+@router.post(
+    "/me/withdrawal", response_model=SuccessResponse[None], responses=error_responses(400, 401, 403, 429)
+)
+async def withdraw(
+    data: WithdrawalRequest,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # 비밀번호 틀림은 로그인 실패와 같은 카운터(5회면 잠금). 막는 사유가 있으면 400 WITHDRAWAL_BLOCKED
+    await withdrawal.withdraw(db, current_user, data.current_password, data.phone_verification_token)
+    return SuccessResponse[None](data=None, message="회원 탈퇴가 완료되었습니다. 그동안 이용해 주셔서 감사합니다.")

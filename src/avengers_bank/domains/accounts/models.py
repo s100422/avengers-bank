@@ -52,6 +52,9 @@ class CheckingAccount(AccountPasswordMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # 회원 탈퇴로 닫힌 시각 (users/withdrawal.py). 닫힌 계좌는 이체·납입·결제에서 없는 계좌처럼 거절한다
+    # (accounts/service.py require_open). 행·거래내역은 보존한다
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DepositAccount(AccountPasswordMixin, Base):

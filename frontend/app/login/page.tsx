@@ -15,8 +15,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     // 주소의 쿼리는 브라우저에서만 읽는다 (useSearchParams는 Suspense가 필요해 이 화면에선 쓰지 않는다)
+    const why = new URLSearchParams(location.search).get("reason");
+    // 탈퇴한 화면은 일부러 토큰을 지우지 않고 넘어온다(서버 세션은 이미 끊김, me/page.tsx 참고). 여기서 지운다
+    if (why === "withdrawn") session.clear();
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReason(new URLSearchParams(location.search).get("reason"));
+    setReason(why);
   }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -52,6 +55,11 @@ export default function LoginPage() {
       {reason === "replaced" && (
         <p role="status" className="mt-4 rounded-xl bg-coral-soft px-3 py-2.5 text-sm">
           {REPLACED_MESSAGE} 본인이 로그인한 것이 아니라면 다시 로그인한 뒤 비밀번호를 바꿔 주세요.
+        </p>
+      )}
+      {reason === "withdrawn" && (
+        <p role="status" className="mt-4 rounded-xl bg-coral-soft px-3 py-2.5 text-sm">
+          회원 탈퇴가 완료되었습니다. 그동안 이용해 주셔서 감사합니다.
         </p>
       )}
       {reason === "reset" && (

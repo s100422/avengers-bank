@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button, ErrorText, Field, Shell } from "@/components/ui";
@@ -58,7 +59,114 @@ function Me() {
       >
         모든 기기에서 로그아웃
       </button>
+      {user && <Withdrawal user={user} />}
     </>
+  );
+}
+
+type Blocker = {
+  code: "ACTIVE_DEPOSIT" | "ACTIVE_SAVINGS" | "CHECKING_BALANCE" | "CARD_UNPAID";
+  message: string;
+  account_type: "checking" | "deposit" | "savings" | null;
+  account_id: number | null;
+  card_id: number | null;
+};
+
+// 막는 사유마다 '그 일을 하러 갈' 화면. 예금·적금 해지는 계좌 상세, 잔액은 이체, 카드 대금은 카드 상세(청구서 납부)
+function blockerLink(b: Blocker): [string, string] {
+  if (b.code === "CHECKING_BALANCE") return [`/transfer?from=${b.account_id}`, "이체하러 가기"];
+  if (b.code === "CARD_UNPAID") return [`/cards/credit/${b.card_id}`, "납부하러 가기"];
+  return [`/accounts/${b.account_type}/${b.account_id}`, "해지하러 가기"];
+}
+
+/** 회원 탈퇴: 일부러 눈에 덜 띄게 접어 둔다. 펼치면 탈퇴할 수 있는지 서버에 묻는다 */
+function Withdrawal({ user }: { user: User }) {
+  const [status, setStatus] = useState<{ can_withdraw: boolean; blockers: Blocker[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null); // 등록 번호로 받은 WITHDRAWAL 증표
+  const [round, setRound] = useState(0); // 증표가 만료되면 올려서 인증을 처음부터
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    setError(null);
+    try {
+      setStatus(await api("/users/me/withdrawal"));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    if (!token) return setError("휴대폰 인증을 먼저 해 주세요.");
+    if (!confirm("정말 탈퇴할까요? 탈퇴하면 되돌릴 수 없고, 같은 아이디로 다시 가입할 수 없습니다.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/users/me/withdrawal", { current_password: f.get("current_password"), phone_verification_token: token });
+      // 서버 세션은 이미 모두 끊겼다. 저장된 토큰은 로그인 화면이 지운다(reason=withdrawn): 여기서 지우면
+      // 세션 타이머가 '다른 탭 로그아웃'으로 보고 이유 없는 /login으로 먼저 보낼 수 있다
+      location.replace("/login?reason=withdrawn");
+      return;
+    } catch (err) {
+      setError((err as Error).message);
+      if (err instanceof ApiError && err.code === "INVALID_VERIFICATION_TOKEN") {
+        setToken(null);
+        setRound((n) => n + 1);
+      }
+      if (err instanceof ApiError && err.code === "WITHDRAWAL_BLOCKED") load(); // 그사이 입금 등으로 막혔다
+    }
+    setBusy(false);
+  }
+
+  return (
+    <details className="mt-16 text-sm text-slate" onToggle={(e) => e.currentTarget.open && !status && load()}>
+      <summary className="cursor-pointer underline-offset-4 hover:text-ink hover:underline">회원 탈퇴</summary>
+      <div className="mt-3 space-y-3">
+        {status && !status.can_withdraw && (
+          <>
+            <p>아래를 먼저 정리해야 탈퇴할 수 있습니다.</p>
+            <ul className="space-y-2">
+              {status.blockers.map((b, i) => {
+                const [href, label] = blockerLink(b);
+                return (
+                  <li key={i} className="rounded-xl border border-line p-3">
+                    <p className="text-ink">{b.message}</p>
+                    <Link href={href} className="mt-1 inline-block text-coral underline underline-offset-4">
+                      {label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+        {status?.can_withdraw && (
+          <form onSubmit={onSubmit} className="space-y-3">
+            <ul className="list-disc space-y-1 pl-5">
+              <li>이름·닉네임·휴대폰 번호와 AI 비서 대화 기록은 지워집니다.</li>
+              <li>입출금 계좌는 닫히고 카드는 모두 해지됩니다. 닫힌 계좌로는 돈을 받을 수 없습니다.</li>
+              <li>거래 내역과 약관 동의 기록은 관련 법에 따라 정해진 기간 동안 보관됩니다.</li>
+              <li>같은 아이디({user.login_id})로는 다시 가입할 수 없습니다.</li>
+            </ul>
+            <Field label="현재 비밀번호" name="current_password" type="password" autoComplete="current-password" required />
+            <p>등록된 휴대폰({user.phone})으로 본인 확인을 해 주세요.</p>
+            <PhoneVerify
+              key={round}
+              path="/verification/phone/send-for-me"
+              body={{ purpose: "WITHDRAWAL" }}
+              devPhone={user.phone}
+              onVerified={setToken}
+            />
+            <Button busy={busy} disabled={!token}>
+              탈퇴하기
+            </Button>
+          </form>
+        )}
+        <ErrorText message={error} />
+      </div>
+    </details>
   );
 }
 

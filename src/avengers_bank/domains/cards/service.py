@@ -16,7 +16,7 @@ from avengers_bank.domains.accounts.kinds import KINDS as ACCOUNT_KINDS
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
 from avengers_bank.domains.accounts.password import check_account_password
 from avengers_bank.domains.accounts.repository import account_repository
-from avengers_bank.domains.accounts.service import account_service
+from avengers_bank.domains.accounts.service import account_service, require_open
 from avengers_bank.domains.cards.kinds import CARD_BILL_PAYMENT, CARD_PAYMENT, KINDS, CardKind
 from avengers_bank.domains.cards.models import CreditCardBill
 from avengers_bank.domains.cards.repository import card_repository
@@ -175,6 +175,7 @@ class CardService:
             if kind.name == "debit":
                 # 체크카드: 연결 계좌에서 바로 출금한다. 입출금 계좌 → 카드 순서로 잠근다.
                 (account,) = await account_repository.lock_checking_accounts(db, [card.checking_account_id])
+                require_open(account)
                 card = await card_repository.lock_card(db, kind, card_id)
                 self._require_active(card)
                 if account.balance < amount:
@@ -275,6 +276,7 @@ class CardService:
 
             # 규칙 9: 입출금 계좌 → 카드 → 청구서 순서로 잠근 뒤에 검사한다
             (account,) = await account_repository.lock_checking_accounts(db, [card.checking_account_id])
+            require_open(account)
             card = await card_repository.lock_card(db, kind, card_id)
             bill = await card_repository.lock_bill(db, bill_id)
 

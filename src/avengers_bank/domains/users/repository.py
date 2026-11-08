@@ -60,7 +60,7 @@ class UserRepository:
         """잠금 해제 + 실패 횟수 0. 그 아이디가 없으면 False."""
         result = await db.execute(
             update(User)
-            .where(User.login_id == login_id)
+            .where(User.login_id == login_id, User.deleted_at.is_(None))  # 탈퇴 회원은 없는 아이디로 본다
             .values(failed_login_count=0, login_locked_at=None)
             .execution_options(synchronize_session=False)
         )
