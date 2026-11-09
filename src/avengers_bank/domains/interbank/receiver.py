@@ -46,7 +46,7 @@ class SignResponses:
 
     async def __call__(self, scope, receive, send):
         settings = get_settings()
-        if scope["type"] != "http" or not scope["path"].startswith(PREFIX) or not settings.interbank_enabled:
+        if scope["type"] != "http" or not scope["path"].startswith(PREFIX) or not settings.receiver_enabled:
             return await self.app(scope, receive, send)
         request_signature, start = dict(scope["headers"]).get(b"x-signature", b"").decode(), {}
 
@@ -70,7 +70,7 @@ class SignResponses:
 async def hub_json(request: Request) -> dict:
     """허브 서명 검증 (SPEC 2.2): 원본 바이트·허브 공개키·PATH는 base_url 뒤 부분. 입금 처리보다 먼저 한다."""
     s = get_settings()
-    if not s.interbank_enabled:
+    if not s.receiver_enabled:
         raise HubRequestError(error(503, "INTERBANK_DISABLED", "타행 이체를 사용할 수 없습니다."))
     body, h = await request.body(), request.headers
     path = request.url.path.partition(PREFIX)[2]  # /interbank/receive → /receive

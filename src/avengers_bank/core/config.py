@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     bank_private_key: SecretStr | None = None
 
     @property
+    def receiver_enabled(self) -> bool:
+        # 받는 쪽(/interbank)은 허브 서명 검증과 응답 서명에 두 키만 쓴다. 등록(ping) 전에도 켜져 있어야 한다
+        return bool(self.hub_public_key and self.bank_private_key)
+
+    @property
     def interbank_enabled(self) -> bool:
         return all([self.hub_public_key, self.bank_code, self.bank_api_key, self.bank_private_key])
 
