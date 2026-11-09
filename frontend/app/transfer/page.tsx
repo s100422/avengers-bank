@@ -10,6 +10,7 @@ import {
   InterbankResult,
   RecentRecipient,
   Recipient,
+  User,
   api,
   won,
 } from "@/lib/api";
@@ -79,7 +80,10 @@ function Transfer() {
   const [own, setOwn] = useState<OwnResult | null>(null);
   const [inter, setInter] = useState<InterbankResult | null>(null);
 
+  const [myName, setMyName] = useState<string | null>(null); // 내 실명: 내 계좌로 보낼 때 받는 분 이름은 통장 별명이 아니라 이것이다
+
   useEffect(() => {
+    api<User>("/users/me").then((u) => setMyName(u.name)).catch(() => {});
     api<RecentRecipient[]>("/transfers/recent").then(setRecent).catch(() => {});
     api<FavoriteRecipient[]>("/transfers/favorites").then(setFavs).catch(() => {});
     api<Bank[]>("/interbank-transfers/banks").then(setBanks).catch(() => {}); // 503이면 우리 은행만
@@ -487,12 +491,15 @@ function Transfer() {
                 <li key={a.account_id} className={row}>
                   <button
                     type="button"
-                    onClick={() => pick({ bank_code: "", bank_name: OWN_BANK, account: a.account_num, name: a.nickname ?? "내 계좌" })}
+                    onClick={() => pick({ bank_code: "", bank_name: OWN_BANK, account: a.account_num, name: myName ?? "내 계좌" })}
                     className={`${pickBtn} flex items-center justify-between gap-3`}
                   >
                     <span className="min-w-0">
-                      <span className="block truncate font-medium">{a.nickname ?? "입출금"}</span>
-                      <span className="block text-sm text-slate tabular-nums">{a.account_num}</span>
+                      <span className="block truncate font-medium">{myName ?? "내 계좌"}</span>
+                      <span className="block text-sm text-slate tabular-nums">
+                        {a.nickname ? `${a.nickname} · ` : ""}
+                        {a.account_num}
+                      </span>
                     </span>
                     <span className="shrink-0 text-sm tabular-nums">{won(a.balance)}</span>
                   </button>
