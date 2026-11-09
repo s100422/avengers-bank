@@ -397,7 +397,7 @@ function Transfer() {
             모바일은 아래에서 올라오는 시트, PC(md 이상)는 화면 가운데 창 */}
         {sheet &&
           createPortal(
-          <div className="fixed inset-0 z-50 flex items-end bg-ink/40 md:items-center md:justify-center md:p-4" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-50 flex items-end bg-ink/40 md:items-center md:justify-center md:p-4 md:pl-60" role="dialog" aria-modal="true">
             <div className="mx-auto w-full max-w-md rounded-t-2xl bg-paper p-5 pb-8 md:rounded-2xl">
               <div className="flex justify-end">
                 <button type="button" aria-label="닫기" onClick={() => setSheet(null)} className="-mr-2 flex size-11 items-center justify-center text-slate">
