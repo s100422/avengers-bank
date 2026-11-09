@@ -22,6 +22,7 @@ from avengers_bank.domains.accounts.schemas import (
     DepositAccountCreate,
     DepositAccountResponse,
     HistoryFilter,
+    InterestPreviewResponse,
     SavingsAccountCreate,
     SavingsAccountResponse,
 )
@@ -118,6 +119,17 @@ async def get_histories(
     )
     histories = await account_service.get_histories(db, type, account_id, user, limit, offset, f)
     return SuccessResponse[list[AccountHistoryResponse]](data=histories)
+
+
+@router.get(
+    "/{type}/{account_id}/interest-preview",
+    response_model=SuccessResponse[InterestPreviewResponse],
+    responses=error_responses(400, 404),
+)
+async def interest_preview(type: AccountType, account_id: int, db: DbSession, user: CurrentUser):
+    """예금·적금 이자 미리 보기: 오늘 해지하면 / 만기까지 두면 (적금은 매월 납입을 계속한다고 가정). 돈은 움직이지 않는다."""
+    result = await account_service.interest_preview(db, type, account_id, user)
+    return SuccessResponse[InterestPreviewResponse](data=result)
 
 
 @router.post(

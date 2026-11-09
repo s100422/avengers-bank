@@ -185,6 +185,26 @@ class AccountCloseResponse(BaseModel):
     to_balance_after: int
 
 
+class InterestPreviewResponse(BaseModel):
+    """예금·적금 이자 미리 보기 (C-104). 만기까지 두는 경우와 오늘 해지하는 경우. 돈은 움직이지 않는다."""
+
+    account_type: str
+    interest_rate: str  # 상품 연 금리(%)
+    maturity_date: date
+    # 오늘 해지하면 (만기 전이면 금리의 절반, C-043)
+    close_today_principal: int
+    close_today_interest: int
+    close_today_total: int
+    close_today_rate: str  # 적용되는 연 금리(%)
+    close_today_early: bool
+    # 만기까지 두면 (적금은 매월 납입을 계속한다고 가정)
+    maturity_principal: int
+    maturity_interest: int
+    maturity_total: int
+    assumed_payments: int  # 적금: 가정한 앞으로 납입 횟수. 예금은 0
+    monthly_payment: int | None  # 적금만
+
+
 class AccountHistoryResponse(BaseModel):
     date: datetime
     amount: int  # 항상 양수, 입금/출금은 type으로 구분

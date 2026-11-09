@@ -203,6 +203,23 @@ export type Product = { product_id: number; name: string; description: string; i
 
 export const won = (n: number) => n.toLocaleString("ko-KR") + "원";
 
+// 예·적금 이자 미리 보기 (GET /accounts/{type}/{id}/interest-preview). 적금 만기 값은 매월 납입을 계속한다고 가정한 예상이다
+export type InterestPreview = {
+  account_type: "deposit" | "savings";
+  interest_rate: string;
+  maturity_date: string;
+  close_today_principal: number;
+  close_today_interest: number;
+  close_today_total: number;
+  close_today_rate: string;
+  close_today_early: boolean;
+  maturity_principal: number;
+  maturity_interest: number;
+  maturity_total: number;
+  assumed_payments: number;
+  monthly_payment: number | null;
+};
+
 export const KIND: Record<AccountSummary["account_type"], string> = {
   checking: "입출금",
   deposit: "예금",

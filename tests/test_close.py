@@ -6,7 +6,7 @@ from sqlalchemy import update
 
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.timezone import today_kst
-from avengers_bank.domains.accounts.interest import calc_interest
+from avengers_bank.domains.accounts.interest import calc_interest, scheduled_payment_days
 from avengers_bank.domains.accounts.kinds import KINDS
 from tests.helpers import open_deposit
 
@@ -167,3 +167,60 @@ async def test_summary_list_shows_status(client, world):
     await close(client, tony, "savings")
     rows = {r["account_type"]: r["status"] for r in (await client.get("/accounts", headers=tony)).json()["data"]}
     assert rows == {"checking": None, "deposit": "ACTIVE", "savings": "CLOSED"}
+
+
+# ── 이자 미리 보기 (C-104) ───────────────────────────────────────────
+
+
+def test_scheduled_payment_days_clamps_to_month_end_and_excludes_today():
+    assert scheduled_payment_days(date(2026, 11, 9), date(2027, 2, 9), 31) == [date(2026, 11, 30), date(2026, 12, 31), date(2027, 1, 31)]
+    assert scheduled_payment_days(date(2026, 11, 9), date(2026, 12, 9), 9) == [date(2026, 12, 9)]  # 오늘(11/9)은 빼고, 만기일 당일은 넣는다
+    assert scheduled_payment_days(date(2026, 11, 9), date(2026, 11, 9), 9) == []
+
+
+async def preview(client, headers, kind, account_id=1):
+    return await client.get(f"/accounts/{kind}/{account_id}/interest-preview", headers=headers)
+
+
+async def test_interest_preview_deposit_and_it_matches_the_real_close(client, world):
+    tony = world["tony"]
+    await backdate("deposit", history_days_ago=200)  # 만기는 365일 뒤
+    data = (await preview(client, tony, "deposit")).json()["data"]
+    # 오늘 해지: 30만 × 1% × 0.5 × 200/365 = 821.9 → 821. 만기: 30만 × 1% × 565/365 = 4,643.8 → 4,643
+    assert (data["close_today_interest"], data["close_today_early"], data["close_today_rate"], data["interest_rate"]) == (821, True, "0.5", "1")
+    assert (data["maturity_principal"], data["maturity_interest"], data["maturity_total"]) == (300_000, 4_643, 304_643)
+    assert (data["assumed_payments"], data["monthly_payment"]) == (0, None)
+    assert data["maturity_date"] == FUTURE
+    real = (await close(client, tony, "deposit")).json()["data"]  # 미리 본 값이 실제 해지 결과와 같다
+    assert (real["interest"], real["total_amount"]) == (data["close_today_interest"], data["close_today_total"])
+
+
+async def test_interest_preview_savings_assumes_monthly_payments_continue(client, world):
+    tony = world["tony"]
+    await backdate("savings", history_days_ago=100)
+    data = (await preview(client, tony, "savings")).json()["data"]
+    today, maturity = today_kst(), today_kst() + timedelta(days=365)
+    days = scheduled_payment_days(today, maturity, 25)
+    projected = [(today - timedelta(days=100), 200_000)] + [(d, 100_000) for d in days]
+    assert data["assumed_payments"] == len(days) and data["monthly_payment"] == 100_000
+    assert data["maturity_principal"] == 200_000 + 100_000 * len(days)
+    assert data["maturity_interest"] == calc_interest(projected, Decimal(RATE), maturity, maturity)
+    assert data["close_today_principal"] == 200_000  # 오늘 해지는 지금까지 넣은 돈만
+    real = (await close(client, tony, "savings")).json()["data"]
+    assert (real["interest"], real["total_amount"]) == (data["close_today_interest"], data["close_today_total"])
+
+
+async def test_interest_preview_after_maturity_uses_full_rate(client, world):
+    tony = world["tony"]
+    await backdate("deposit", history_days_ago=365, maturity=today_kst())
+    data = (await preview(client, tony, "deposit")).json()["data"]
+    assert (data["close_today_interest"], data["close_today_early"], data["close_today_rate"]) == (3_000, False, "1")
+    assert (data["maturity_interest"], data["maturity_total"]) == (3_000, 303_000)  # 만기 뒤에는 이자가 늘지 않는다
+
+
+async def test_interest_preview_rejects_checking_closed_and_other_users(client, world):
+    tony, bruce = world["tony"], world["bruce"]
+    assert error_of(await preview(client, tony, "checking")) == (400, "INTEREST_NOT_SUPPORTED")
+    assert error_of(await preview(client, bruce, "deposit")) == (404, "ACCOUNT_NOT_FOUND")  # 남의 계좌
+    await close(client, tony, "deposit")
+    assert error_of(await preview(client, tony, "deposit")) == (400, "ACCOUNT_CLOSED")

@@ -347,6 +347,7 @@
 | ✅ | GET | `/accounts/{type}/{account_id}` | 🔒 | 계좌 상세 |
 | ✅ | GET | `/accounts/{type}/{account_id}/histories` | 🔒 | 거래내역 |
 | ✅ | PATCH | `/accounts/{type}/{account_id}` | 🔒 | 별칭, 이체 한도(입출금만) 변경 |
+| ✅ | GET | `/accounts/{type}/{account_id}/interest-preview` | 🔒 | 예금·적금 이자 미리 보기 (오늘 해지하면 / 만기까지 두면) |
 | ✅ | POST | `/accounts/{type}/{account_id}/close` | 🔒 | 예금·적금 해지 (원금+이자를 내 입출금 계좌로) |
 | ✅ | POST | `/accounts/{type}/{account_id}/password` | 🔒 | 계좌 비밀번호 설정·재설정 (휴대폰 인증 증표, 5회 잠금 해제 겸함) |
 
@@ -426,6 +427,20 @@
 - 증표는 `POST /verification/phone/send-for-me`(purpose `ACCOUNT_PASSWORD_RESET`, 등록 번호로 발송) → `verify`로 받은 것. 이 사용자·등록 번호로 받은 것만 통과하고 같은 트랜잭션에서 1회 사용됩니다.
 - 실패: `404 ACCOUNT_NOT_FOUND`(남의 계좌, 증표 사용보다 먼저 검사), `400 INVALID_VERIFICATION_TOKEN`, `422`(비밀번호 형식)
 </details>
+
+**이자 미리 보기** `GET /accounts/{deposit|savings}/{account_id}/interest-preview` → `200` (읽기만 하고 돈은 움직이지 않습니다)
+
+```json
+{ "data": { "account_type": "savings", "interest_rate": "4.5", "maturity_date": "2027-11-09",
+  "close_today_principal": 200000, "close_today_interest": 1000, "close_today_total": 201000,
+  "close_today_rate": "2.25", "close_today_early": true,
+  "maturity_principal": 3800000, "maturity_interest": 87583, "maturity_total": 3887583,
+  "assumed_payments": 12, "monthly_payment": 300000 } }
+```
+
+- **오늘 해지하면**(`close_today_*`)은 해지 API와 **같은 계산**(`calc_interest`)이라 같은 날 실제로 해지한 결과와 같습니다. 만기 전이면 금리의 절반(`close_today_early: true`)입니다.
+- **만기까지 두면**(`maturity_*`): 예금은 지금 잔액 그대로입니다. **적금은 매월 납입(`monthly_payment`, `monthly_deposit_date`)을 만기까지 계속한다고 가정**한 예상이고, 그 횟수가 `assumed_payments`입니다(해당 달에 그 날이 없으면 말일, 오늘은 제외, 만기일 당일은 포함). 실제 납입 기록과 다르면 결과도 달라집니다.
+- 입출금 계좌는 `400 INTEREST_NOT_SUPPORTED`, 해지된 계좌는 `400 ACCOUNT_CLOSED`, 남의 계좌는 `404 ACCOUNT_NOT_FOUND`.
 
 **해지** `POST /accounts/{deposit|savings}/{account_id}/close`: `{ "to_checking_account_id": 1, "account_password": "4821" }` (내 입출금 계좌, **해지하는 예금·적금 계좌**의 비밀번호) → `200`
 ```json

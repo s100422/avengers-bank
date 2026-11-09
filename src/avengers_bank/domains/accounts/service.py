@@ -10,7 +10,7 @@ from avengers_bank.core.exceptions import (
     NotFoundException,
 )
 from avengers_bank.core.timezone import KST, today_kst
-from avengers_bank.domains.accounts.interest import calc_interest
+from avengers_bank.domains.accounts.interest import EARLY_CLOSE_RATE_FACTOR, calc_interest, scheduled_payment_days
 from avengers_bank.domains.accounts.kinds import (
     CLOSE_IN,
     CLOSE_OUT,
@@ -32,6 +32,7 @@ from avengers_bank.domains.accounts.schemas import (
     CheckingAccountCreate,
     DepositAccountCreate,
     HistoryFilter,
+    InterestPreviewResponse,
     SavingsAccountCreate,
 )
 from avengers_bank.domains.products.service import product_service
@@ -248,6 +249,42 @@ class AccountService:
             account_type=kind.name, account_id=account_id, principal=principal, interest=interest,
             total_amount=total, early_close=today < account.maturity_date, closed_at=account.closed_at,
             to_account_num=checking.account_num, to_balance_after=checking.balance,
+        )
+
+    async def interest_preview(
+        self, db: AsyncSession, type: str, account_id: int, user: UserResponse
+    ) -> InterestPreviewResponse:
+        """예금·적금의 이자 미리 보기: 오늘 해지하면 / 만기까지 두면 (C-104). 읽기만 한다.
+        계산은 해지(close_account)와 같은 calc_interest를 쓰므로 오늘 해지 값은 실제 해지 결과와 같다."""
+        kind = KINDS[type]
+        if kind.name == "checking":
+            raise BadRequestException(code="INTEREST_NOT_SUPPORTED", message="예금·적금만 이자를 미리 볼 수 있습니다.")
+        account = await self.get_owned(db, kind, account_id, user)
+        if account.status == "CLOSED":
+            raise BadRequestException(code="ACCOUNT_CLOSED", message="이미 해지된 계좌입니다.")
+        today = today_kst()
+        product = await product_service.get_account_product(db, account.product_id)
+        deposits = [
+            (_kst_date(h.date), h.amount)
+            for h in await account_repository.find_histories_by_type(db, kind, account_id, TRANSFER_IN)
+        ]
+        rate, maturity, principal = product.interest_rate, account.maturity_date, account.balance
+        today_interest = calc_interest(deposits, rate, today, maturity)
+
+        monthly = getattr(account, "monthly_payment", None)  # 적금만
+        future_days = scheduled_payment_days(today, maturity, account.monthly_deposit_date) if monthly else []
+        projected = deposits + [(day, monthly) for day in future_days]
+        maturity_principal = principal + (monthly or 0) * len(future_days)
+        maturity_interest = calc_interest(projected, rate, maturity, maturity)
+        return InterestPreviewResponse(
+            account_type=kind.name, interest_rate=f"{rate.normalize():f}", maturity_date=maturity,
+            close_today_principal=principal, close_today_interest=today_interest,
+            close_today_total=principal + today_interest,
+            close_today_rate=f"{(rate * EARLY_CLOSE_RATE_FACTOR if today < maturity else rate).normalize():f}",
+            close_today_early=today < maturity,
+            maturity_principal=maturity_principal, maturity_interest=maturity_interest,
+            maturity_total=maturity_principal + maturity_interest,
+            assumed_payments=len(future_days), monthly_payment=monthly,
         )
 
     async def get_owned(self, db: AsyncSession, kind: AccountKind, account_id: int, user: UserResponse):

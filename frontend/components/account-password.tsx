@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { Field } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 
@@ -19,21 +20,54 @@ export function accountPasswordProblem(pw: string, confirm: string): string | nu
  * 숫자 4자리 계좌 비밀번호 입력. 일부러 비제어 입력으로 둔다 → 상태·초안(sessionStorage)에 값이 남지 않는다.
  * 값은 제출할 때 FormData로 읽는다.
  */
-export function AccountPasswordField({ label = "계좌 비밀번호", ...props }: { label?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+export function AccountPasswordField({
+  label = "계좌 비밀번호",
+  resetHref,
+  onReset,
+  onFocus,
+  ...props
+}: {
+  label?: string;
+  resetHref?: string; // 재설정을 하는 계좌 상세 경로 (다른 화면에서 링크로 보낸다)
+  onReset?: () => void; // 같은 화면에서 재설정 칸을 펼칠 때
+} & React.InputHTMLAttributes<HTMLInputElement>) {
+  // 입력칸을 한 번 눌러 보면 안내를 계속 보여 준다 (링크를 누르려고 입력칸을 벗어나도 사라지지 않게)
+  const [touched, setTouched] = useState(false);
+  const linkClass = "underline underline-offset-4 hover:text-ink";
   return (
-    <Field
-      label={label}
-      name="account_password"
-      type="password"
-      inputMode="numeric"
-      pattern="\d{4}"
-      minLength={4}
-      maxLength={4}
-      autoComplete="off"
-      title="숫자 4자리"
-      required
-      {...props}
-    />
+    <div>
+      <Field
+        label={label}
+        name="account_password"
+        type="password"
+        inputMode="numeric"
+        pattern="\d{4}"
+        minLength={4}
+        maxLength={4}
+        autoComplete="off"
+        title="숫자 4자리"
+        required
+        onFocus={(e) => {
+          setTouched(true);
+          onFocus?.(e);
+        }}
+        {...props}
+      />
+      {touched && (resetHref || onReset) && (
+        <p className="mt-1.5 text-sm text-slate">
+          비밀번호를 잊으셨나요?{" "}
+          {onReset ? (
+            <button type="button" onClick={onReset} className={linkClass}>
+              계좌 비밀번호 재설정하기
+            </button>
+          ) : (
+            <Link href={`${resetHref}#account-password`} className={linkClass}>
+              계좌 비밀번호 재설정하기
+            </Link>
+          )}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -62,6 +62,7 @@ function Transfer() {
 
   // 출금 계좌로 고른 계좌는 받는 쪽 후보에서 뺀다
   const myOthers = accounts?.filter((a) => a.account_id !== from) ?? [];
+  const shownFrom = from ?? accounts?.[0]?.account_id; // 아직 고르지 않았으면 화면에 첫 계좌가 선택돼 있다
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -145,8 +146,8 @@ function Transfer() {
           />
         </div>
         <MoneyField label="금액 (원)" name="amount" min={1} required />
-        <AccountPasswordField label="출금 계좌 비밀번호" />
-        <MoneyErrorText error={error} accountHref={from ? `/accounts/checking/${from}` : undefined} />
+        <AccountPasswordField label="출금 계좌 비밀번호" resetHref={shownFrom ? `/accounts/checking/${shownFrom}` : undefined} />
+        <MoneyErrorText error={error} accountHref={shownFrom ? `/accounts/checking/${shownFrom}` : undefined} />
         <Button busy={busy} disabled={!accounts}>
           보내기
         </Button>
