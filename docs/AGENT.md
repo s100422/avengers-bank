@@ -101,6 +101,7 @@
 | `get_transaction_history` | 계좌 종류, `account_id`, 시작·종료일(KST), 거래 유형, 상대방 이름, 개수(기본 20, 최대 50) | 거래일, 계좌, 유형, 금액, 거래 후 잔액, 마스킹된 상대 계좌, 상대방 이름, 더 있는지(`has_more`) |
 | `get_card_payment_status` | 없음 | 카드별 종류·마스킹 번호·미결제액·미납 청구서·다음 결제일, 결제계좌별 이름·마스킹 번호·잔액·**부족 금액** |
 | `prepare_transfer` | 출금 `from_account`(이름·별칭·번호 끝 4자리), 받는 계좌(본인 계좌면 `to_account` 이름, 다른 사람이면 `to_account_num` 전체 번호. 둘 중 하나), 금액. 서버가 이름으로 계좌를 찾고, 없거나 여럿이면 후보를 돌려줘 되묻는다(C-100) | 이체 초안(`draft_id`, 출금 계좌 이름·마스킹 번호, 받는 분 실명, 마스킹된 받는 계좌, 금액, 예상 잔액, 만료 시각) |
+| `prepare_open_account` | `kind`(deposit/savings), 상품 이름, 금액, 만기(`maturity_months` 몇 개월 뒤 또는 `maturity_date`), 적금 납입일, 예금 출금 계좌 이름, 별명. 서버가 상품·계좌를 이름으로 찾고 만기 날짜를 계산하며, 없거나 여럿이면 후보를 돌려줘 되묻는다(C-103) | 가입 준비 카드(`OPEN_ACCOUNT`: 상품, 표시용 요약, 가입 화면 입력칸 값). **가입하지 않는다** |
 
 - **`user_id` 인자는 없습니다.** 모든 Tool은 서버가 JWT로 확인한 로그인 사용자로만 동작하고, 정의되지 않은 인자(`user_id` 등)를 보내면 `INVALID_ARGUMENTS`로 거절합니다.
 - 합계·부족 금액·남은 일수는 모두 백엔드 코드가 계산합니다. 모델에게는 계산하지 말고 Tool 값을 쓰라고 지시합니다.
@@ -148,6 +149,16 @@
 
 같은 초안을 여러 번(동시에) 눌러도 조건부 UPDATE를 먼저 차지한 요청만 이체합니다. PostgreSQL에서 `scripts/pg_agent_confirm_concurrency.py`로 확인했습니다(10번 동시 확인 → 1건 성공, 대조군은 10건 이체).
 
+## 예·적금 가입 흐름 (C-103)
+
+챗봇은 가입을 완료하지 않는다. 가입에는 약관 동의와 계좌 비밀번호가 필요하고, 둘 다 사용자가 가입 화면에서 직접 한다(대화로 받지 않는다).
+
+1. 사용자가 "모바일 특판예금 100만원, 2년 뒤 만기, 생활비 통장에서 낼게"라고 말합니다.
+2. 모델이 `prepare_open_account`를 부릅니다. 서버가 상품·출금 계좌를 이름으로 찾고, "2년 뒤"를 날짜로 계산하고, 최소 가입 금액과 만기일(내일 이후)을 검사합니다. 상품 이름이 없으면 후보(금리·최소 금액)를 돌려줍니다.
+3. 화면에 **가입 준비 카드**가 나옵니다(상품, 금액, 만기일, 출금 계좌). DB에는 아무것도 쓰지 않습니다.
+4. "가입 화면에서 이어서 하기"를 누르면 값이 채워진 가입 화면(`/open/{kind}/{상품 id}`)이 열립니다. 카드는 `sessionStorage`의 가입 화면 임시 저장 항목(`open-draft:{kind}`, `lib/open-draft.ts`)에 값을 넣고 이동합니다.
+5. 사용자가 약관을 확인·동의하고 새 계좌 비밀번호를 입력해 가입을 마칩니다.
+
 ## 저장하는 것
 
 | 테이블 | 내용 |
@@ -186,7 +197,8 @@ src/avengers_bank/domains/agent/
     ├── summary.py     # get_financial_summary
     ├── transactions.py# get_transaction_history
     ├── cards.py       # get_card_payment_status
-    └── transfers.py   # prepare_transfer
+    ├── transfers.py   # prepare_transfer (계좌를 이름으로 찾는 find_own_checking 포함)
+    └── open_account.py# prepare_open_account (가입 화면 미리 채우기)
 ```
 
 ## 테스트

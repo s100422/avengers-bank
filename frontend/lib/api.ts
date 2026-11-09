@@ -222,6 +222,19 @@ export type TransferAction = {
   expires_at: string;
 };
 
+// 예·적금 가입 화면을 미리 채우는 카드. 가입은 하지 않는다 (약관 동의·계좌 비밀번호는 가입 화면에서 직접)
+export type OpenAccountAction = {
+  type: "OPEN_ACCOUNT";
+  kind: "deposit" | "savings";
+  product_id: number;
+  product_name: string;
+  interest_rate: string;
+  summary: { label: string; value: string }[];
+  fields: Record<string, string>; // 가입 화면 입력칸 이름 → 값
+};
+
+export type AssistantAction = TransferAction | OpenAccountAction;
+
 // 비서 답변이 근거로 쓴 약관 조항. 링크는 url을 믿지 않고 id로 직접 만든다 (termsHref)
 export type Citation = {
   source_id: string;
@@ -233,13 +246,13 @@ export type Citation = {
   url: string;
 };
 
-export type AgentReply = { conversation_id: number; answer: string; action: TransferAction | null; citations?: Citation[] };
+export type AgentReply = { conversation_id: number; answer: string; action: AssistantAction | null; citations?: Citation[] };
 
 export type AgentMessage = {
   message_id: number;
   role: "user" | "assistant";
   content: string;
-  action: TransferAction | null;
+  action: AssistantAction | null;
   citations: Citation[];
   created_at: string;
 };

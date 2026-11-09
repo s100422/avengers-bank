@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ASSISTANT_ASK, Citation, TransferAction, agent, session, termsHref } from "@/lib/api";
+import { ASSISTANT_ASK, AssistantAction, Citation, agent, session, termsHref } from "@/lib/api";
+import { OpenAccountCard } from "./OpenAccountCard";
 import { RichText } from "./RichText";
 import { TransferCard } from "./TransferCard";
 
-type Msg = { id: number; role: "user" | "ai"; text: string; action?: TransferAction; citations?: Citation[] };
+type Msg = { id: number; role: "user" | "ai"; text: string; action?: AssistantAction; citations?: Citation[] };
 
 const SUGGESTIONS = ["내 자산 요약해 줘", "최근 거래내역 알려줘", "다음 카드값을 낼 수 있어?", "내 예·적금 만기 알려줘"];
 
@@ -109,7 +110,13 @@ function Assistant() {
           now.length
             ? now
             : // shortcut: 지난 이체 확인 카드는 다시 그리지 않는다(이미 처리한 초안을 또 누르지 않게). 필요하면 초안 상태 API로 판단한다
-              ms.map((m) => ({ id: nextId++, role: m.role === "user" ? "user" : "ai", text: m.content, citations: m.citations })),
+              ms.map((m) => ({
+                id: nextId++,
+                role: m.role === "user" ? "user" : "ai",
+                text: m.content,
+                citations: m.citations,
+                action: m.action?.type === "OPEN_ACCOUNT" ? m.action : undefined, // 가입 카드는 링크일 뿐이라 다시 그려도 안전하다
+              })),
         );
       })
       .catch(() => {
@@ -298,6 +305,10 @@ function Assistant() {
                   )}
                   {m.action?.type === "TRANSFER_CONFIRMATION" && (
                     <TransferCard action={m.action} onDone={(text) => add({ role: "ai", text })} />
+                  )}
+                  {m.action?.type === "OPEN_ACCOUNT" && (
+                    // 좁은 화면에서는 비서가 화면을 덮으므로, 가입 화면으로 가기 전에 닫는다
+                    <OpenAccountCard action={m.action} onGo={() => window.innerWidth < 1024 && setOpen(false)} />
                   )}
                 </div>
               ),

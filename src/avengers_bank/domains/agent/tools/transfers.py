@@ -38,13 +38,13 @@ class PrepareTransferArgs(ToolArgs):
         return self
 
 
-def _key(text: str) -> str:
+def name_key(text: str) -> str:
     """'월급 계좌'와 '월급 통장'이 같게 읽히도록 공백과 '계좌·통장'을 뺀다."""
     return re.sub(r"계좌|통장", "", re.sub(r"\s+", "", text))
 
 
-async def _find_own_checking(db: AsyncSession, user: UserResponse, ref: str, role: str) -> tuple[int, str]:
-    """사용자가 말한 이름·번호 끝자리로 내 입출금 계좌 하나를 찾는다 → (account_id, 전체 번호).
+async def find_own_checking(db: AsyncSession, user: UserResponse, ref: str, role: str) -> tuple[int, str, str]:
+    """사용자가 말한 이름·번호 끝자리로 내 입출금 계좌 하나를 찾는다 → (account_id, 전체 번호, 이름).
     없거나 여럿이면 후보(이름·마스킹된 번호, id 없음)를 오류로 돌려 모델이 사용자에게 되묻게 한다."""
     try:
         names: dict[int, str] = {}
@@ -54,15 +54,15 @@ async def _find_own_checking(db: AsyncSession, user: UserResponse, ref: str, rol
         ]
     finally:
         await db.rollback()  # 위 조회가 연 트랜잭션을 닫아야 preview의 db.begin()이 동작한다
-    key, digits = _key(ref), re.sub(r"\D", "", ref)
+    key, digits = name_key(ref), re.sub(r"\D", "", ref)
     tiers = [  # 앞 단계에서 하나라도 찾으면 뒤 단계는 보지 않는다
-        [a for a in own if key and _key(a[2]) == key],
-        [a for a in own if key and (key in _key(a[2]) or _key(a[2]) in key)],
+        [a for a in own if key and name_key(a[2]) == key],
+        [a for a in own if key and (key in name_key(a[2]) or name_key(a[2]) in key)],
         [a for a in own if len(digits) >= 4 and a[1].replace("-", "").endswith(digits)],
     ]
     found = next((t for t in tiers if t), [])
     if len(found) == 1:
-        return found[0][0], found[0][1]
+        return found[0]
     candidates = ", ".join(f"{a[2]}({mask_num(a[1])})" for a in own) or "없음"
     if not found:
         raise NotFoundException(
@@ -78,9 +78,9 @@ async def _find_own_checking(db: AsyncSession, user: UserResponse, ref: str, rol
 async def prepare_transfer(db: AsyncSession, user: UserResponse, args: PrepareTransferArgs) -> TransferAction:
     """이체 초안만 만든다. 돈은 움직이지 않는다 — 사용자가 화면에서 확인해야 /agent/transfers/{id}/confirm이 실행한다."""
     # 이름으로 계좌를 찾는 일은 서버가 한다 — 모델이 계좌 id를 짐작하거나 알고 있을 필요가 없다
-    from_id, _ = await _find_own_checking(db, user, args.from_account, "FROM")
+    from_id, _, _ = await find_own_checking(db, user, args.from_account, "FROM")
     to_num = args.to_account_num.strip() if args.to_account_num is not None else (
-        await _find_own_checking(db, user, args.to_account, "TO")
+        await find_own_checking(db, user, args.to_account, "TO")
     )[1]
     data = TransferTarget(  # 초안에는 계좌 비밀번호가 필요 없다. 확인(confirm) 때만 받는다
         from_checking_account_id=from_id, to_account_num=to_num, amount=args.amount

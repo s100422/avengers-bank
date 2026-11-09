@@ -30,7 +30,7 @@ from avengers_bank.domains.agent.model_client import (
     ToolSpec,
     Turn,
 )
-from avengers_bank.domains.agent.schemas import TransferAction
+from avengers_bank.domains.agent.schemas import OpenAccountAction, TransferAction
 from avengers_bank.domains.agent.tools import TOOLS, run_tool
 from avengers_bank.domains.users.schemas import UserResponse
 
@@ -60,7 +60,7 @@ class AgentState(TypedDict, total=False):
     reply: ModelReply  # 방금 받은 모델 응답
     model_calls: int
     tool_log: list[dict]  # [{"name", "ok"}] — 결과 값은 남기지 않는다
-    action: TransferAction | None  # prepare_transfer가 만든 이체 확인 카드
+    action: TransferAction | OpenAccountAction | None  # prepare_transfer·prepare_open_account가 만든 카드
     answer: str
 
 
@@ -89,7 +89,7 @@ async def run_tools(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
     for call in reply.tool_calls:
         outcome = await run_tool(call.name, call.arguments, runtime.context.user)
         tool_log.append({"name": call.name if call.name in TOOLS else "unknown", "ok": outcome.ok})
-        if isinstance(outcome.result, TransferAction):
+        if isinstance(outcome.result, (TransferAction, OpenAccountAction)):
             action = outcome.result
         results.append(ToolResult(call.id, outcome.content, not outcome.ok))
     return {

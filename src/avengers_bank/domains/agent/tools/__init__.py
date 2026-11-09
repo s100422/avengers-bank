@@ -16,6 +16,7 @@ from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.agent.tools.accounts import NoArgs, get_my_accounts
 from avengers_bank.domains.agent.tools.cards import get_card_payment_status
+from avengers_bank.domains.agent.tools.open_account import PrepareOpenAccountArgs, prepare_open_account
 from avengers_bank.domains.agent.tools.summary import get_financial_summary
 from avengers_bank.domains.agent.tools.terms import SearchTermsArgs, SectionArgs, get_terms_section, search_product_terms
 from avengers_bank.domains.agent.tools.transactions import HistoryArgs, get_transaction_history
@@ -52,6 +53,10 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. 출금·받는 계좌는 사용자가 말한 이름(별칭·상품명)이나 번호 끝 4자리로 적고, 서버가 찾는다(id 불필요). "
          "받는 계좌가 본인 계좌면 to_account, 다른 사람 계좌면 to_account_num(전체 번호) 중 하나만 쓴다.",
          PrepareTransferArgs, prepare_transfer),
+    Tool("prepare_open_account", "예금·적금 가입 화면을 미리 채우는 카드를 만든다(가입하지 않는다). 사용자가 말한 상품 이름·금액·만기·납입일·출금 계좌를 "
+         "서버가 검증하고, 사용자가 카드의 버튼으로 가입 화면에서 이어 가면 약관 동의와 계좌 비밀번호는 화면에서 직접 한다. "
+         "만기는 '몇 개월 뒤'(maturity_months)로 주면 서버가 날짜를 계산한다. 상품이 정해지지 않았거나 여럿이면 후보를 돌려준다.",
+         PrepareOpenAccountArgs, prepare_open_account),
     Tool("search_product_terms", "AvengersBank 데모 약관에서 상품 조건·중도해지·이자·한도·카드 결제 등 조항을 검색한다. "
          "scope=current는 상품의 현재 가입 약관(product_kind+product_id, product_id를 모르면 비워서 후보를 받는다), "
          "scope=my_contract는 사용자가 가입할 때 동의한 약관(subject_id=get_my_accounts의 account_id 또는 카드 도구의 card_id). "

@@ -23,7 +23,7 @@ from avengers_bank.domains.agent.models import AgentMessage, TransferDraft
 from avengers_bank.domains.agent.graph import LIMIT_TEXT, MAX_MODEL_CALLS
 from avengers_bank.domains.agent.tools import run_tool
 from avengers_bank.domains.cards.models import CreditCardHistory
-from avengers_bank.domains.products.models import CardProduct
+from avengers_bank.domains.products.models import AccountProduct, CardProduct
 from avengers_bank.domains.users.schemas import UserResponse
 from avengers_bank.main import app
 from tests.helpers import open_deposit
@@ -307,7 +307,8 @@ async def test_prepare_transfer_validation_errors(client, world, fake):
         assert json.loads(outcome.content)["error"]["code"] == code
     await client.patch("/accounts/checking/1", json={"per_transfer_limit": 10_000}, headers=world["tony"])
     outcome = await run_tool("prepare_transfer", {"from_account": "생활비", "to_account_num": other, "amount": 10_001}, user)
-    assert json.loads(outcome.content)["error"]["code"] == "PER_TRANSFER_LIMIT_EXCEEDED"
+    error = json.loads(outcome.content)["error"]
+    assert error["code"] == "PER_TRANSFER_LIMIT_EXCEEDED" and "10,000원" in error["message"]  # 모델이 한도를 지어내지 않게 금액을 준다
     async with SessionLocal() as db:
         assert list(await db.scalars(select(TransferDraft))) == []
 
@@ -447,6 +448,73 @@ async def test_history_passed_to_model_is_limited(client, world, fake):
     await chat(client, world["tony"], "마지막 질문", cid)
     turns = f.calls[0]
     assert len(turns) == 11 and isinstance(turns[0], UserTurn) and turns[0].text == "질문3"
+
+
+# ── 예·적금 가입 화면 미리 채우기 (C-103) ─────────────────────────────
+
+
+async def add_products():
+    async with SessionLocal() as db, db.begin():
+        db.add_all([
+            AccountProduct(type="DEPOSIT", name="모바일 특판예금", description="d", interest_rate=3.5, min_amount=1_000_000),
+            AccountProduct(type="DEPOSIT", name="청년 정기예금", description="d", interest_rate=3, min_amount=500_000),
+            AccountProduct(type="SAVINGS", name="청년 도약 적금", description="d", interest_rate=4),
+        ])
+
+
+async def test_open_account_card_for_deposit_fills_form_without_opening(client, world, fake):
+    from avengers_bank.domains.agent.tools.open_account import add_months
+
+    await add_products()
+    tony = world["tony"]
+    before = (await client.get("/accounts", headers=tony)).json()["data"]
+    fake(tool("prepare_open_account", kind="deposit", product="특판예금", amount=1_500_000, maturity_months=24,
+              from_account="생활비", nickname="여행자금"),
+         ModelReply("아래 카드에서 가입 화면으로 이어 가세요."))
+    body = (await chat(client, tony, "특판예금 150만원 2년 뒤 만기로 가입하고 싶어")).json()["data"]
+    action = body["action"]
+    assert action["type"] == "OPEN_ACCOUNT" and (action["kind"], action["product_name"]) == ("deposit", "모바일 특판예금")
+    assert action["fields"] == {
+        "initial_amount": "1500000", "maturity_date": add_months(today_kst(), 24).isoformat(),  # 날짜는 서버가 계산한다
+        "checking_account_id": "1", "nickname": "여행자금",
+    }
+    assert [(r["label"], r["value"]) for r in action["summary"]][:2] == [("상품", "모바일 특판예금"), ("가입 금액", "1,500,000원")]
+    assert (await client.get("/accounts", headers=tony)).json()["data"] == before  # 가입하지 않았다
+    # 대화를 다시 불러와도 카드가 그대로 읽힌다 (type으로 구분)
+    messages = (await client.get(f"/agent/conversations/{body['conversation_id']}/messages", headers=tony)).json()["data"]
+    assert messages[1]["action"]["type"] == "OPEN_ACCOUNT" and messages[1]["action"]["product_id"] == action["product_id"]
+
+
+async def test_open_account_card_for_savings(client, world, fake):
+    await add_products()
+    fake(tool("prepare_open_account", kind="savings", product="도약", amount=200_000, monthly_deposit_date=15, maturity_months=12),
+         ModelReply("카드를 확인해 주세요."))
+    action = (await chat(client, world["tony"], "도약 적금 매월 20만원 15일")).json()["data"]["action"]
+    assert (action["kind"], action["product_name"]) == ("savings", "청년 도약 적금")
+    assert set(action["fields"]) == {"monthly_payment", "monthly_deposit_date", "maturity_date"}
+    assert action["fields"]["monthly_payment"] == "200000" and action["fields"]["monthly_deposit_date"] == "15"
+
+
+async def test_open_account_errors_return_candidates_and_never_guess(client, world):
+    await add_products()
+    user = world["users"]["tony"]
+    soon = (today_kst() + timedelta(days=0)).isoformat()
+    cases = [  # (인자, 오류 코드, 메시지에 있어야 할 것)
+        ({"kind": "deposit"}, "PRODUCT_NOT_SPECIFIED", "청년 정기예금"),  # 이름이 없고 상품이 여럿
+        ({"kind": "deposit", "product": "해외주식"}, "PRODUCT_NOT_FOUND", "모바일 특판예금"),
+        ({"kind": "deposit", "product": "예금"}, "PRODUCT_AMBIGUOUS", "최소 1,000,000원"),  # 이름이 모두에 들어감 → 후보와 최소 금액
+        ({"kind": "deposit", "product": "특판", "amount": 900_000}, "AMOUNT_BELOW_MINIMUM", "1,000,000원"),
+        ({"kind": "deposit", "product": "특판", "maturity_date": soon}, "MATURITY_NOT_FUTURE", "내일"),
+        ({"kind": "deposit", "product": "특판", "from_account": "여행"}, "FROM_ACCOUNT_NOT_FOUND", "생활비 통장"),
+    ]
+    for args, code, expected in cases:
+        error = json.loads((await run_tool("prepare_open_account", args, user)).content)["error"]
+        assert error["code"] == code and expected in error["message"], (args, error)
+    for args in ({"kind": "deposit", "product": "특판", "maturity_months": 12, "maturity_date": FUTURE},  # 만기 둘 다
+                 {"kind": "savings", "product": "도약", "monthly_deposit_date": 32},
+                 {"kind": "checking", "product": "x"},  # 입출금은 이 도구로 안 다룬다
+                 {"kind": "deposit", "product": "특판", "password": "1234"}):  # 비밀번호 같은 인자는 거절
+        assert json.loads((await run_tool("prepare_open_account", args, user)).content)["error"]["code"] == "INVALID_ARGUMENTS", args
 
 
 # ── Gemini 어댑터 (네트워크 없이 변환만 확인) ─────────────────────────

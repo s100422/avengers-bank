@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ACCOUNT_PASSWORD_RULE, AccountPasswordField, MoneyErrorText, accountPasswordProblem } from "@/components/account-password";
 import { Button, Field, MoneyField, Shell } from "@/components/ui";
 import { AccountSummary, ApiError, TermsSet, api, termsHref, won } from "@/lib/api";
+import { openDraftKey } from "@/lib/open-draft";
 
 // 상품 가입(계좌 개설·카드 발급) 화면 하나로 다섯 종류를 처리한다. /open/{kind}/{상품 id(선택)}
 const KINDS = {
@@ -65,7 +66,7 @@ function Open() {
   });
   const needsChecking = conf?.card || kind === "deposit"; // 카드는 결제·출금 계좌, 예금은 가입 금액을 뺄 계좌
   const fromAcc = checking?.find((a) => String(a.account_id) === (fields.checking_account_id ?? String(checking[0]?.account_id)));
-  const draftKey = `open-draft:${kind}`;
+  const draftKey = openDraftKey(kind);
   const draftRef = useRef<Draft | null>(null); // 맡겨 둔 값. 다시 열린 화면이 약관을 불러올 때 동의 상태를 한 번 꺼내 쓴다
   const agreedFor = useRef<string | null>(null); // 지금 동의 상태가 어느 상품·약관 묶음의 것인지
 

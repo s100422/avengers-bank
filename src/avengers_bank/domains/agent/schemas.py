@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,27 @@ class TransferAction(BaseModel):
     expires_at: datetime
 
 
+class SummaryRow(BaseModel):
+    label: str
+    value: str
+
+
+class OpenAccountAction(BaseModel):
+    """예·적금 가입 화면을 미리 채워 여는 카드 (C-103). 가입은 하지 않는다. 약관 동의와 계좌 비밀번호는 가입 화면에서 직접 한다."""
+
+    type: Literal["OPEN_ACCOUNT"] = "OPEN_ACCOUNT"
+    kind: Literal["deposit", "savings"]
+    product_id: int
+    product_name: str
+    interest_rate: str  # 연 %, 예: "3.5"
+    summary: list[SummaryRow]  # 카드에 보여 줄 값 (표시용 글)
+    fields: dict[str, str]  # 가입 화면 입력칸 이름 → 값 (initial_amount, maturity_date, checking_account_id ...)
+
+
+# type 값으로 구분한다. 예전에 저장된 대화 기록(type=TRANSFER_CONFIRMATION)도 그대로 읽힌다
+AssistantAction = Annotated[TransferAction | OpenAccountAction, Field(discriminator="type")]
+
+
 class Citation(BaseModel):
     """서버가 이번 요청의 검색 결과로 확인한 약관 출처 (C-075)."""
 
@@ -41,7 +62,7 @@ class Citation(BaseModel):
 class ChatResponse(BaseModel):
     conversation_id: int
     answer: str
-    action: TransferAction | None = None
+    action: AssistantAction | None = None
     citations: list[Citation] = []
 
 
@@ -49,7 +70,7 @@ class MessageItem(BaseModel):
     message_id: int
     role: Literal["user", "assistant"]
     content: str
-    action: TransferAction | None = None
+    action: AssistantAction | None = None
     citations: list[Citation] = []
     created_at: datetime
 
