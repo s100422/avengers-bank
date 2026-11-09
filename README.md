@@ -11,6 +11,7 @@
 | [docs/AUTH.md](docs/AUTH.md) | 로그인·세션 구조(액세스/갱신 토큰, 로그인 한도, 화면 타이머) — 학습용 설명 |
 | [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | 폴더 구조, 계층(router → service → repository) 설명, 역할 분담 |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | AWS 배포 흐름(EC2 + RDS + Caddy), 다시 접속·코드 업데이트 방법, 겪은 문제 |
+| [docs/INTERBANK.md](docs/INTERBANK.md) | ClearingHub 연동 가이드: 타행 이체 보내기·받기, 환경변수, 허브 등록, 확인 작업 |
 | [docs/AGENT.md](docs/AGENT.md) | AI 금융 비서: 실행 방법, 환경변수, Tool 목록, 이체 확인 흐름, 보안 |
 | [docs/ACCOUNT_RECOVERY_RESEARCH.md](docs/ACCOUNT_RECOVERY_RESEARCH.md) | 계정 복구 조사: 국내 은행·규정·NIST·OWASP |
 | [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) | 회고록(작성 중): 기술 선택과 이유(예: nginx 대신 Caddy), 배운 점 |
@@ -77,6 +78,12 @@ uv run python -m avengers_bank.admin unlock <login_id>           # 로그인 잠
 uv run python -m avengers_bank.admin reset-password <login_id>   # 새 비밀번호 입력 → 잠금 해제, 모든 세션 폐기
 ```
 
+### 타행 이체 (ClearingHub)
+
+다른 은행과의 이체는 ClearingHub(허브)를 거칩니다. 이 은행은 SpiderBank(코드 903)로 등록돼 있고, 보내기(출금 → 허브 → 완료/환불)와 받기(`/interbank/*`, Ed25519 서명 검증)를 모두 구현했습니다. 허브 규격은 저장소 루트의 `SPEC.md`, 구현·운영 방법은 [docs/INTERBANK.md](docs/INTERBANK.md)에 있습니다.
+
+`.env`에 `HUB_URL`, `HUB_PUBLIC_KEY`, `BANK_CODE`, `BANK_NAME`, `BANK_API_KEY`, `BANK_PRIVATE_KEY`가 모두 있어야 켜지고, 하나라도 비면 타행 이체만 꺼집니다(`503 INTERBANK_DISABLED`, 나머지 기능은 그대로). 키 값은 문서나 커밋에 적지 않습니다(`.env.example` 참고). 결과를 모르는 이체(PENDING)는 백그라운드 작업이 30초마다 허브에 확인합니다. 새 마이그레이션(`interbank_transfers`, `favorite_accounts`)이 있으니 `uv run alembic upgrade head`를 실행하세요.
+
 ### 모델을 바꿨을 때
 
 `models.py`를 수정한 사람만 마이그레이션을 만들고, 만든 파일을 함께 커밋합니다.
@@ -118,8 +125,9 @@ uv run python scripts/pg_transfer_concurrency.py
 | verification · recovery | ✅ 휴대폰 인증번호(개발용 문자함), 아이디·비밀번호 찾기(계좌번호 + 계좌 비밀번호 + 휴대폰 인증) |
 | products | ✅ 계좌·카드 상품 목록/상세 조회, 상품 종류 검증 메서드 |
 | accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정, 계좌 비밀번호(숫자 4자리, 5회 잠금), 예·적금 해지, 예·적금 이자 미리 보기(오늘 해지하면 / 만기까지 두면) |
-| transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입 (예금은 가입 시 입출금 계좌에서 가입 금액 이체) |
+| transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입 (예금은 가입 시 입출금 계좌에서 가입 금액 이체), 최근·자주 쓰는 계좌, 우리 은행 수취 조회 |
+| interbank | ✅ ClearingHub 타행 이체 보내기·받기(서명·멱등 입금·PENDING 확인 작업). 정산·대사는 미구현 ([docs/INTERBANK.md](docs/INTERBANK.md)) |
 | cards | ✅ 신용·체크카드 발급, 조회, 결제(사용), 신용카드 청구서 생성·납부 |
 | terms | ✅ 상품 약관 동의(가입 때 필수)와 약관 검색(RAG, 출처 링크) ([docs/TERMS_RAG.md](docs/TERMS_RAG.md)) |
 | agent | ✅ AI 금융 비서(Gemini, LangGraph로 모델↔도구 반복): 자산 요약·거래내역·카드값·약관 조회, 이체 초안 → 화면 확인 후 실행, 예·적금 가입 준비 카드 → 가입 화면에서 이어서 ([docs/AGENT.md](docs/AGENT.md)) |
-| frontend | ✅ Next.js(`frontend/`): 홈·계좌 상세·이체·상품·가입·카드·내 정보·찾기 화면과 AI 비서 패널 |
+| frontend | ✅ Next.js(`frontend/`): 홈·계좌 상세·이체(4단계, 최근·자주 쓰는 계좌)·상품·가입·카드·내 정보·찾기 화면과 AI 비서 패널. 화면을 떠났다 돌아오면 처음부터 다시 시작(`lib/fresh.ts`) |

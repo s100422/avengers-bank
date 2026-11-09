@@ -457,6 +457,11 @@
 |---|---|---|---|---|
 | ✅ | POST | `/transfers` | 🔒 | 입출금 → 입출금 이체 (잔액, 1회·1일 한도 검사) |
 | ✅ | POST | `/transfers/savings` | 🔒 | 입출금 → 적금 납입 |
+| ✅ | POST | `/transfers/inquiry` | 🔒 | 우리 은행 받는 분 조회 (이름은 서버가 가려서 줌, C-107) |
+| ✅ | GET | `/transfers/recent` | 🔒 | 최근 이체한 상대 (우리 은행 + 타행, 최근순 20건) |
+| ✅ | GET | `/transfers/favorites` | 🔒 | 자주 쓰는 계좌 목록 |
+| ✅ | POST | `/transfers/favorites` | 🔒 | 자주 쓰는 계좌 추가 (이미 있으면 그대로 돌려줌) |
+| ✅ | DELETE | `/transfers/favorites/{favorite_id}` | 🔒 | 자주 쓰는 계좌 빼기 |
 
 예금은 가입 후 추가 입금이 불가능합니다(가입 금액이 곧 원금). 가입 금액은 `POST /accounts/deposit`에서 냅니다.
 
@@ -484,6 +489,28 @@
 
 거래내역에는 보낸 쪽과 받은 쪽에 한 줄씩 남습니다(`type`): 이체 `TRANSFER_OUT` / `TRANSFER_IN`, 적금 납입 입출금 쪽 `TO_SAVINGS`, 받은 적금 쪽 `TRANSFER_IN`. (예금 가입 금액의 `TO_DEPOSIT`은 `POST /accounts/deposit` 참고)
 실패 예시: `400 INSUFFICIENT_BALANCE`, `400 SAME_ACCOUNT_TRANSFER`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `400 ACCOUNT_MATURED`, `404 ACCOUNT_NOT_FOUND`
+
+**받는 분 조회·최근·자주 쓰는 계좌 (C-107)** (`domains/transfers/contacts.py`, 이체 화면의 1~3단계용. 모두 로그인한 본인 기준)
+
+`POST /transfers/inquiry`: `{ "to_account_num": "110-729-269723" }` → `200`
+```json
+{ "data": { "to_account_num": "110-729-269723", "holder_name": "박*스" } }
+```
+- 우리 은행 입출금 계좌만 조회합니다. 이름은 **서버가 가려서**(`홍길동` → `홍*동`, 두 글자는 `홍*`) 줍니다. 없는 계좌·해지(탈퇴)한 계좌·예금·적금 번호는 `404 ACCOUNT_NOT_FOUND`.
+
+`GET /transfers/recent` → `200`, `RecentContact` 배열 (최근순 최대 20건)
+```json
+{ "data": [ { "bank_code": "", "bank_name": "AvengersBank", "account": "110-729-269723", "name": "박길동", "favorite_id": null },
+            { "bank_code": "902", "bank_name": "OO은행", "account": "123-456", "name": "김철수", "favorite_id": 3 } ] }
+```
+- 내가 이체한 상대(우리 은행 `TRANSFER_OUT` + 타행 이체)를 (은행, 계좌번호)별로 한 건씩, 가장 최근 것으로 모읍니다. **내 계좌끼리 보낸 것과 실패한 타행 이체는 뺍니다.** 우리 은행은 `bank_code`가 `""`입니다. 자주 쓰는 계좌이면 `favorite_id`가 채워집니다(별이 채워진 상태).
+
+`GET /transfers/favorites` → `200`, `FavoriteResponse` 배열(`favorite_id`, `bank_code`, `bank_name`, `account`, `name`, 최근에 추가한 순).
+
+`POST /transfers/favorites`: `{ "bank_code": "", "bank_name": "AvengersBank", "account": "110-729-269723", "name": "박길동" }` → `201`, 저장된 항목(`favorite_id` 포함)
+- `bank_code`는 `""`(우리 은행, 기본값) 또는 3자리 숫자, `bank_name` 1~50자, `account` 1~50자, `name`은 생략 가능(100자 이하). 같은 (은행, 계좌번호)가 이미 있거나 동시에 눌러도 **한 건만** 남고 기존 항목을 그대로 돌려줍니다(멱등). 개수 상한은 없습니다.
+
+`DELETE /transfers/favorites/{favorite_id}` → `200 { "data": null, "message": "자주 쓰는 계좌에서 뺐습니다." }`. 없는 항목이나 **남의 항목은 `404 FAVORITE_NOT_FOUND`**.
 </details>
 
 ## cards: 카드 (`domains/cards`)
@@ -603,6 +630,76 @@ AI·임베딩을 쓰지 않아서 AI 장애 중에도 동작합니다. `{kind}` 
 - `POST /agent/transfers/{draft_id}/confirm` 본문: `{ "account_password": "4821" }`(보내는 입출금 계좌의 비밀번호, 필수). 확인 카드에서 사용자가 직접 입력하며 **대화(LLM)로는 절대 받지 않습니다.** 오류 코드는 accounts의 **계좌 비밀번호**.
 
 실패 예시: `503 AGENT_UNAVAILABLE`, `504 AGENT_TIMEOUT`, `404 CONVERSATION_NOT_FOUND` / `DRAFT_NOT_FOUND`, `409 DRAFT_EXPIRED` / `DRAFT_NOT_PENDING`, `400 ACCOUNT_PASSWORD_INCORRECT`, `403 ACCOUNT_PASSWORD_LOCKED`
+
+---
+
+## interbank: 타행 이체 (`domains/interbank`, C-105)
+
+다른 은행으로 돈을 보내거나 받는 기능입니다. 중계 서버(ClearingHub, 이하 허브)를 거치며, 설정(`HUB_URL`, `HUB_PUBLIC_KEY`, `BANK_CODE`, `BANK_NAME`, `BANK_API_KEY`, `BANK_PRIVATE_KEY`) 중 하나라도 비어 있으면 기능이 꺼져 모든 API가 `503 INTERBANK_DISABLED`를 돌려줍니다. 두 종류의 API가 있습니다.
+
+### 사용자용 API (로그인한 사용자, 위 **공통 응답 형식**)
+
+| 상태 | 메서드 | 경로 | 인증 | 설명 |
+|---|---|---|---|---|
+| ✅ | GET | `/interbank-transfers/banks` | 🔒 | 이체할 수 있는 은행 목록 (허브에서 받아 우리 은행은 뺌) |
+| ✅ | POST | `/interbank-transfers/inquiry` | 🔒 | 타행 계좌 예금주 조회 (허브 경유) |
+| ✅ | POST | `/interbank-transfers` | 🔒 | 입출금 → 타행 계좌 이체 |
+| ✅ | GET | `/interbank-transfers/{transfer_id}` | 🔒 | 내가 보낸 타행 이체의 처리 상태 |
+
+<details>
+<summary>요청·응답 예시</summary>
+
+`GET /interbank-transfers/banks` → `200 { "data": [ { "bank_code": "902", "name": "OO은행" } ] }`
+
+`POST /interbank-transfers/inquiry`: `{ "to_bank": "902", "to_account": "123-456" }` (`to_bank` 3자리 숫자, `to_account` 1~50자) → `200`
+```json
+{ "data": { "to_bank": "902", "to_account": "123-456", "holder_name": "김철수" } }
+```
+- 타행은 서버가 이름을 가리지 않고 허브가 준 예금주 이름을 그대로 줍니다(우리 은행 `POST /transfers/inquiry`와 다름).
+
+`POST /interbank-transfers`: `InterbankSend` 스키마는 `domains/interbank/schemas.py`에 있습니다. (`memo`는 생략 가능, 100자 이하)
+```json
+{ "from_checking_account_id": 1, "to_bank": "902", "to_account": "123-456", "amount": 10000, "account_password": "4821", "memo": "" }
+```
+→ `201`
+```json
+{ "data": { "transfer_id": "0b0f...", "status": "COMPLETED", "to_bank": "902", "to_bank_name": "OO은행", "to_account": "123-456", "amount": 10000, "holder_name": "김철수", "balance_after": 490000, "fail_code": null, "fail_message": null }, "message": "이체가 완료되었습니다." }
+```
+- `status`: `COMPLETED`(완료) / `PENDING`(허브 결과를 아직 모름: `message`는 "이체 결과를 확인하고 있습니다.", 서버가 30초마다 허브에 다시 물어봐 마무리함) / `FAILED`(조회에서만. 요청에서는 오류 응답).
+- 흐름: 계좌 비밀번호 확인 → **한 트랜잭션**으로 출금(잔액·1회·1일 한도 검사) + `interbank_transfers`(`PENDING`) 저장 → 허브에 전송 → 결과 반영. **출금을 되돌리는(환불) 것은 허브가 `FAILED`로 확정했을 때뿐**이라, 타임아웃·5xx·서명이 틀린 응답은 오류가 아니라 `201` + `PENDING`입니다(이중 지급 방지).
+- 허브가 `FAILED`로 답하면 환불한 뒤 허브가 준 오류 코드로 응답합니다(받는 계좌가 없으면 `404 ACCOUNT_NOT_FOUND`, 그 밖은 `400 <허브 코드>`, 코드가 없으면 `RECEIVER_ERROR`).
+- 거래내역에는 보낼 때 `INTERBANK_OUT`, 환불되면 `INTERBANK_REFUND`가 남습니다(상대 이름은 사람 이름만, 완료 전에는 비어 있음, C-108). 1일 이체 한도(`DAILY_LIMIT_EXCEEDED`)에는 `INTERBANK_OUT`도 합산합니다.
+
+`GET /interbank-transfers/{transfer_id}` → `200`, 위와 같은 모양(`FAILED`면 `fail_code`·`fail_message`가 채워짐). 처리 중이면 5초 간격으로 다시 부르면 됩니다. 없는 ID·남의 이체·받은 이체는 `404 TRANSFER_NOT_FOUND`.
+
+실패 예시: `400 SAME_BANK`(우리 은행 코드로 보냄: 일반 이체 이용), `503 INTERBANK_DISABLED`(기능 꺼짐), `503 HUB_UNAVAILABLE`(허브에 연결 못 함), `502 HUB_ERROR`(허브 응답의 서명이 틀림), 조회 실패 시 허브의 오류 코드·상태(예: `404 ACCOUNT_NOT_FOUND`), `400 ACCOUNT_PASSWORD_INCORRECT`, `403 ACCOUNT_PASSWORD_LOCKED`, `400 INSUFFICIENT_BALANCE`, `400 PER_TRANSFER_LIMIT_EXCEEDED`, `400 DAILY_LIMIT_EXCEEDED`, `404 ACCOUNT_NOT_FOUND`(내 계좌 아님), `422`
+</details>
+
+### 허브가 부르는 API (받는 쪽, `domains/interbank/receiver.py`)
+
+허브가 우리 은행에 입금을 요청·확인하는 API입니다. **브라우저(프론트)가 부르는 API가 아니고** Swagger(`/docs`)에도 나오지 않습니다. 로그인 토큰이 아니라 **허브의 Ed25519 서명**으로 인증하며, **응답 형식도 위 공통 형식과 다릅니다.**
+
+| 메서드 | 경로 | 인증 | 설명 |
+|---|---|---|---|
+| POST | `/interbank/inquiry` | 허브 서명 | 받는 계좌 예금주 조회 |
+| POST | `/interbank/receive` | 허브 서명 | 입금 처리 (같은 `transfer_id`는 한 번만) |
+| GET | `/interbank/receive/{transfer_id}` | 허브 서명 | 그 거래로 입금했는지 확인 |
+
+- **요청 서명:** 허브가 `X-Bank-Code: 000`, `X-Timestamp`, `X-Signature`(`X-Signature-Alg`는 `ed25519`)를 보냅니다. 서버는 요청 **원본 바이트**·시각·메서드·경로(`/interbank` 뒤 부분)를 허브 공개키로 검증하며, **입금 처리보다 먼저** 합니다. 맞지 않으면 `401 SIGNATURE_INVALID`.
+- **응답 서명:** 2xx·4xx 응답(서명 실패 401 포함)에는 서버가 `X-Response-Timestamp`, `X-Response-Signature`를 붙입니다(`SignResponses` 미들웨어, 요청의 `X-Signature`와 응답 본문 바이트를 서명). 5xx는 서명하지 않습니다(허브가 5xx는 재시도).
+- **오류 형식:** `{ "error": "ACCOUNT_NOT_FOUND", "message": "받는 계좌를 찾을 수 없습니다", "transfer_id": "..." }` (`error`가 문자열 코드이고 `details` 없음. `transfer_id`는 있을 때만).
+
+`POST /interbank/inquiry`: `{ "account_num": "110-729-269723" }` → `200 { "holder_name": "박길동" }` (이름을 가리지 않음, 해지된 계좌는 없는 계좌)
+
+`POST /interbank/receive`: `{ "transfer_id": "<소문자 UUID>", "from_bank": "902", "from_bank_name": "OO은행", "from_account": "123-456", "to_account": "110-729-269723", "amount": 10000, "sender_name": "김철수", "memo": "" }` → `200`
+```json
+{ "transfer_id": "...", "status": "COMPLETED", "holder_name": "박길동" }
+```
+- 한 트랜잭션으로 입금 + `interbank_transfers` 저장 + 거래내역 `INTERBANK_IN`(상대 이름은 `sender_name`만). **같은 `transfer_id`가 다시 오면 입금하지 않고 같은 `200`**을 돌려줍니다. 동시에 온 같은 ID도 4xx가 아니라 저장된 결과로 `200`, 읽지 못하면 `503 INTERNAL_ERROR`(허브가 4xx를 "입금 안 됨"으로 보고 보낸 쪽이 환불하면 이중 지급이 되기 때문).
+
+`GET /interbank/receive/{transfer_id}` → `200 { "transfer_id": "...", "status": "COMPLETED", "holder_name": "박길동", "received_at": "2026-11-09T03:00:00Z" }`
+
+실패: `401 SIGNATURE_INVALID`, `404 ACCOUNT_NOT_FOUND`(받는 계좌 없음, **기록하지 않음**), `404 TRANSFER_NOT_FOUND`(입금한 적 없는 거래), `422 VALIDATION_ERROR`(본문이 JSON 객체가 아니거나 필드 형식 오류: `transfer_id`는 소문자 UUID, `from_bank` 3자리, `amount` 양의 정수 등), `503 INTERBANK_DISABLED`
 
 ---
 

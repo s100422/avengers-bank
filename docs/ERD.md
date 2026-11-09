@@ -133,9 +133,9 @@ erDiagram
         datetime date
         bigint amount "항상 양수"
         bigint balance_after "거래 후 잔액"
-        string type
-        string counterpart_account "NULL, 상대 계좌번호"
-        string counterpart_name "NULL, 가맹점명(체크카드 결제)"
+        string type "TRANSFER_OUT/…/CLOSE_IN, INTERBANK_OUT/INTERBANK_IN/INTERBANK_REFUND(C-105)"
+        string counterpart_account "NULL, 상대 계좌번호(50자, 타행 계좌번호까지 담음)"
+        string counterpart_name "NULL, 상대 이름(실명)·가맹점명(체크카드 결제). 타행은 사람 이름만(C-108)"
     }
 
     deposit_account_histories {
@@ -207,6 +207,34 @@ erDiagram
         string place_of_use
         bigint used_amount
         datetime time
+    }
+
+    interbank_transfers {
+        string transfer_id PK "소문자 UUID v4(36자), 같은 ID는 한 번만 들어감(멱등성)"
+        string direction "OUT(보냄)/IN(받음)"
+        int checking_account_id FK "index, 우리 쪽 입출금 계좌"
+        string peer_bank "상대 은행 코드(3자리)"
+        string peer_bank_name "NULL"
+        string peer_account "상대 계좌번호(50자)"
+        string peer_name "NULL, OUT: 받는 분, IN: 보낸 분"
+        bigint amount "양수"
+        string memo "기본 빈 문자열, 100자"
+        string status "index, PENDING/COMPLETED/FAILED"
+        string fail_code "NULL, 40자"
+        string fail_message "NULL, 200자"
+        datetime created_at
+        datetime finished_at "NULL"
+        datetime last_sent_at "NULL, 허브로 마지막 POST한 시각"
+    }
+
+    favorite_accounts {
+        int favorite_id PK
+        int user_id FK "index"
+        string bank_code "3자리, 우리 은행은 빈 문자열(NULL 아님), UK(user_id, bank_code, account)"
+        string bank_name
+        string account "50자"
+        string name "NULL, 즐겨찾기 때의 이름"
+        datetime created_at
     }
 
     agent_conversations {
@@ -348,6 +376,8 @@ erDiagram
 
     agent_conversations ||--o{ agent_messages : "메시지"
     checking_accounts ||--o{ agent_transfer_drafts : "출금 계좌"
+    checking_accounts ||--o{ interbank_transfers : "타행 이체(보냄·받음)"
+    users ||--o{ favorite_accounts : "자주 쓰는 계좌"
 
     terms_versions ||--o{ product_terms_items : "구성"
     product_terms_revisions ||--o{ product_terms_items : "약관 집합"
@@ -370,7 +400,9 @@ erDiagram
 | `verification_codes` | 휴대폰 인증번호 1번 발송 = 1행. 코드는 HMAC만 저장, `purpose` CHECK 제약(`SIGNUP_PHONE`·`CHANGE_PHONE`·`PASSWORD_RESET`·`FIND_LOGIN_ID`·`ACCOUNT_PASSWORD_RESET`·`WITHDRAWAL`·`NEW_DEVICE`), 인덱스 `(phone, purpose, created_at)`. 번호당 발송 제한(15분 3번)도 이 행을 센다 | verification |
 | `account_products` / `card_products` | 계좌 상품 / 카드 상품. `type` CHECK, `product_code` UNIQUE(NULL 가능, 약관 연결용), `account_products.min_amount`: NULL이면 제한 없음·값이 있으면 `> 0` CHECK, `card_products.credit_limit`: 신용은 필수 `> 0`·체크는 NULL(CHECK) | products |
 | `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌. `balance >= 0` CHECK, 입출금은 `per_transfer_limit <= daily_transfer_limit` CHECK, 예금·적금은 `status`와 `closed_at`이 맞아야 함(CHECK), 적금 `monthly_deposit_date` 1~31 CHECK. 입출금의 `closed_at`은 회원 탈퇴로 닫힌 시각(예금·적금의 해지와 다름). 3종 모두 `password_hash`(NULL = 미설정, 돈이 나가지 않음)·`password_failed_count`·`password_locked_at`(5회 실패 잠금) | accounts |
-| `*_account_histories` | 계좌별 거래내역. `amount > 0`·`balance_after >= 0`·`type` 목록 CHECK(입출금: `TRANSFER_OUT`/`TRANSFER_IN`/`TO_SAVINGS`/`TO_DEPOSIT`/`CARD_PAYMENT`/`CARD_BILL_PAYMENT`/`DEV_CHARGE`/`CLOSE_IN`, 예금·적금: `TRANSFER_IN`/`INTEREST`/`CLOSE_OUT`), 인덱스 `(계좌 ID, date)` | accounts |
+| `*_account_histories` | 계좌별 거래내역. `amount > 0`·`balance_after >= 0`·`type` 목록 CHECK(입출금: `TRANSFER_OUT`/`TRANSFER_IN`/`TO_SAVINGS`/`TO_DEPOSIT`/`CARD_PAYMENT`/`CARD_BILL_PAYMENT`/`DEV_CHARGE`/`CLOSE_IN`/`INTERBANK_OUT`/`INTERBANK_IN`/`INTERBANK_REFUND`, 예금·적금: `TRANSFER_IN`/`INTEREST`/`CLOSE_OUT`), 인덱스 `(계좌 ID, date)` | accounts |
+| `interbank_transfers` | 타행 이체 기록(C-105). 보낸 것(`OUT`)과 받은 것(`IN`)을 한 표에 둠. `transfer_id`(UUID)가 PK라 같은 ID는 한 번만 들어가고, 이것이 받는 쪽 멱등성(중복 입금 방지)의 근거. `OUT`의 `PENDING` 행은 돈이 이미 나갔고 허브 결과를 기다리는 상태. CHECK: `amount > 0`, `direction`(`OUT`/`IN`), `status`(`PENDING`/`COMPLETED`/`FAILED`), 인덱스 `status`·`checking_account_id`. `checking_account_id`는 FK, 상대 은행·계좌·이름은 FK 없는 문자열 | interbank |
+| `favorite_accounts` | 이체 화면의 자주 쓰는 계좌(C-107). UNIQUE `(user_id, bank_code, account)`. 우리 은행은 `bank_code = ''`(PostgreSQL 유니크가 NULL끼리 다르게 봐서 NULL 대신 빈 문자열). 이름·은행 이름은 추가할 때 값을 그대로 저장(표시용). 인덱스 `user_id` | transfers |
 | `credit_cards` / `debit_cards` | 신용카드 / 체크카드 | cards |
 | `*_card_histories` | 카드별 사용내역 | cards |
 | `credit_card_bills` | 신용카드 청구서. UNIQUE `(credit_card_id, period_start)`, `total_amount > 0`, `period_end >= period_start`, `status`와 `paid_at`이 맞아야 함(CHECK) | cards |
@@ -390,7 +422,7 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
 3. **상품 종류 검증:** 계좌를 개설하거나 카드를 발급할 때 상품의 `type`이 계좌·카드 종류와 맞는지 확인합니다. 신용카드를 발급할 때는 상품의 `credit_limit`을 카드의 `credit_limit`으로 복사합니다.
 4. **`outstanding_amount`(신용)·`accumulated_amount`(체크) 동기화:** 카드 History를 저장할 때 이 값도 같이 증가시킵니다. 신용카드의 `outstanding_amount`는 **미결제액**이라서 청구서를 납부하면 청구 금액만큼 줄이고, 결제 때 `미결제액 + 결제 금액 <= credit_limit`을 검사합니다. (체크카드는 누적 사용액 그대로)
 5. **금액은 정수(원):** 금액 컬럼은 모두 `BIGINT`입니다. 실수형(`float`)은 쓰지 않습니다.
-6. **거래내역 금액은 양수, 방향은 `type`:** 계좌 거래내역의 `amount`는 항상 양수(CHECK 제약)이고 입금·출금은 `type`으로 구분합니다. `balance_after`에는 그 거래를 반영한 뒤의 계좌 잔액을 같은 트랜잭션에서 기록합니다. `counterpart_account`는 입금이면 보낸 계좌, 출금이면 받는 계좌의 번호입니다.
+6. **거래내역 금액은 양수, 방향은 `type`:** 계좌 거래내역의 `amount`는 항상 양수(CHECK 제약)이고 입금·출금은 `type`으로 구분합니다. `balance_after`에는 그 거래를 반영한 뒤의 계좌 잔액을 같은 트랜잭션에서 기록합니다. `counterpart_account`는 입금이면 보낸 계좌, 출금이면 받는 계좌의 번호입니다(타행 계좌번호까지 담으려고 50자). `counterpart_name`은 사람 이름(실명)이나 가맹점 이름만 쓰고, 타행 이체(`INTERBANK_*`)도 은행 이름을 붙이지 않은 사람 이름만 저장합니다(C-108).
 7. **하루 기준은 KST:** 1일 이체 한도의 "오늘"은 한국 시간(Asia/Seoul) 00:00부터입니다. 코드에서 오늘 00:00 KST를 UTC 시각으로 바꿔 `date >= 그 시각`으로 조회합니다.
 8. **신용카드 청구는 API 호출로:** 스케줄러가 없으므로 본인이 청구서 생성·납부 API를 호출합니다. 이용 기간은 전월 1일~말일(KST), 납부 예정일은 다음 달 결제일(그 달에 없는 날이면 말일)입니다. 부분 납부·연체 이자·리볼빙은 범위 밖입니다.
 9. **돈이 움직이기 전에 행 잠금:** 잔액·한도·청구서 상태를 바꾸는 처리는 해당 행을 `SELECT ... FOR UPDATE`(`with_for_update()`)로 **먼저 잠그고, 잠근 뒤에** 검사합니다. 잠그기 전에 읽은 값으로 검사하면 동시 요청이 둘 다 통과합니다.
@@ -399,9 +431,10 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
    - 계좌 비밀번호 검증(`accounts/password.py` `check_account_password`)은 본 작업 전에 **그 계좌 행 하나만 잠그는 짧은 트랜잭션을 먼저 커밋**합니다(실패 횟수 증가가 롤백되지 않게). 행 하나만 잠그고 끝나므로 위 잠금 순서와 엮여 데드락이 생기지 않습니다.
    - 잠금 쿼리에는 `.execution_options(populate_existing=True)`를 붙여 세션에 남아 있는 예전 값을 최신 값으로 덮어씁니다.
    - 테스트 DB(SQLite)는 `FOR UPDATE`를 무시하므로 동시성 테스트는 PostgreSQL에서 해야 합니다.
+10. **타행 이체는 `transfer_id`로 한 번만, 환불은 확정 실패일 때만(C-105):** 받는 쪽은 입금과 `interbank_transfers` 저장을 한 트랜잭션에서 하고, 같은 `transfer_id`가 다시 오면(동시에 온 경우의 PK 충돌 포함) 입금하지 않고 저장된 결과를 돌려줍니다(4xx로 답하지 않음). 보내는 쪽은 출금과 `PENDING` 행 저장을 한 트랜잭션으로 하고, 허브 응답이 `FAILED`로 확정됐을 때만 환불(`INTERBANK_REFUND`)합니다. 타임아웃·5xx·서명이 틀린 응답은 `PENDING`으로 두고 확인 작업이 허브에 다시 물어봅니다(이중 지급 방지).
 
 ## 팀에서 정해야 할 것
 
-- 각 `type` 컬럼에 들어갈 값 목록. 계좌 거래내역은 현재 코드가 `TRANSFER_OUT`, `TRANSFER_IN`, `TO_SAVINGS`, `TO_DEPOSIT`, `DEV_CHARGE`를 쓴다(`accounts/kinds.py`). `TO_DEPOSIT`은 예금 가입 금액을 낼 때만 생긴다(가입 후 추가 입금은 없음). 카드 관련은 `CARD_PAYMENT`(체크카드 결제), `CARD_BILL_PAYMENT`(청구서 납부)를 쓴다(`cards/kinds.py`)
+- 각 `type` 컬럼에 들어갈 값 목록. 계좌 거래내역은 현재 코드가 `TRANSFER_OUT`, `TRANSFER_IN`, `TO_SAVINGS`, `TO_DEPOSIT`, `DEV_CHARGE`, `CLOSE_IN`, 타행 이체 `INTERBANK_OUT`·`INTERBANK_IN`·`INTERBANK_REFUND`를 쓴다(`accounts/kinds.py`). `TO_DEPOSIT`은 예금 가입 금액을 낼 때만 생긴다(가입 후 추가 입금은 없음). 카드 관련은 `CARD_PAYMENT`(체크카드 결제), `CARD_BILL_PAYMENT`(청구서 납부)를 쓴다(`cards/kinds.py`)
 - 카드번호 형식: 지금은 신용 `4000-`, 체크 `5000-` + 무작위 12자리(`cards/kinds.py`), 실제 카드번호 체계(Luhn 검사 등)는 아님
 - 이체 한도 기본값

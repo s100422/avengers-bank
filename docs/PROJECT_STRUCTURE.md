@@ -2,7 +2,7 @@
 
 FastAPI + SQLAlchemy(async) + Alembic 백엔드와 Next.js 프론트엔드(`frontend/`). 백엔드는 업무별로 **도메인 폴더**를 나누고, 각 도메인 안은 기본적으로 같은 5개 파일로 구성합니다.
 
-> 처음에는 users·products·accounts·transfers·cards 5개 도메인이었고, 이후 인증·약관·AI 비서가 늘었습니다. 이 문서는 2026-11-09(C-104 시점) 현재 코드에 맞췄습니다.
+> 처음에는 users·products·accounts·transfers·cards 5개 도메인이었고, 이후 인증·약관·AI 비서가 늘었습니다. 이 문서는 2026-11-09(C-109 시점) 현재 코드에 맞췄습니다.
 
 ## 전체 트리
 
@@ -19,17 +19,23 @@ avengers-bank/
 ├── alembic.ini
 ├── alembic/                # DB 마이그레이션
 │   ├── env.py              # 모든 models.py를 import해서 테이블 정보를 모음
-│   └── versions/           # 마이그레이션 파일이 쌓이는 곳 (head는 `uv run alembic heads`)
-├── docs/                   # 문서 (README.md의 문서 표 참고)
+│   └── versions/           # 마이그레이션 파일이 쌓이는 곳 (head는 `uv run alembic heads`).
+│   │                       # 최근: add_interbank_transfers, add_favorite_accounts, interbank_history_names(데이터만)
+├── docs/                   # 문서 (README.md의 문서 표 참고). 허브 연동은 INTERBANK.md
+├── SPEC.md                 # ClearingHub 연동 명세 (허브 측 문서, 커밋 전)
 ├── scripts/                # 검증·생성 스크립트: PostgreSQL 동시성 검증, 약관 평가, ERD drawio 생성 (scripts/README.md)
 ├── tests/                  # pytest (SQLite로 실행, DB 서버 불필요). 기능별 test_*.py + 공용 helpers
+│                           # (test_interbank.py: 타행 이체·허브 모의, test_transfer_contacts.py: 최근·자주 쓰는 계좌)
 ├── frontend/               # Next.js 화면 (npm run dev → http://localhost:5173)
 │   ├── app/                # 라우트: 홈, accounts/[type]/[id], transfer, products, open/[kind], cards,
 │   │                       #        me, login, signup, find-id, reset-password, terms/[versionId]
-│   ├── components/         # ui.tsx, verify.tsx, account-password.tsx, history-filter.tsx,
+│   │                       #        (transfer는 4단계 이체: 받는 사람 → 직접 입력 → 금액 → 확인·완료, C-107)
+│   ├── components/         # ui.tsx(Shell: 모든 화면이 같은 가운데 폭), verify.tsx, account-password.tsx, history-filter.tsx,
 │   │   │                   # home/(홈 카드), terms/(약관 표시·동의 기록)
 │   │   └── assistant/      # AI 비서 패널: Assistant, TransferCard, OpenAccountCard, RichText …
-│   └── lib/                # api.ts(API 호출·타입), home-prefs.ts, open-draft.ts(가입 화면 임시 저장 항목)
+│   └── lib/                # api.ts(API 호출·타입), home-prefs.ts,
+│                           # open-draft.ts(가입 화면 임시 저장 항목, 로그아웃 때 clearOpenDrafts로 지움),
+│                           # fresh.ts(useFreshOnLeave: 화면을 떠났다 돌아오면 처음부터 다시 시작, C-109)
 └── src/avengers_bank/
     ├── main.py             # 앱 생성, CORS, 예외 핸들러, 라우터 등록
     ├── seed.py             # 개발용 상품 데이터 (uv run python -m avengers_bank.seed)
@@ -52,7 +58,15 @@ avengers-bank/
         ├── recovery/       # 아이디·비밀번호 찾기, 계좌 비밀번호 재설정 시작                  ✅
         ├── products/       # 계좌·카드 상품 조회                                          ✅
         ├── accounts/       # 입출금·예금·적금, 거래내역, 계좌 비밀번호, 해지, 이자(interest.py) ✅
-        ├── transfers/      # 이체, 적금 납입 (테이블 없음)                                  ✅
+        ├── transfers/      # 이체, 적금 납입, 최근·자주 쓰는 계좌(contacts.py, favorite_accounts)  ✅
+        ├── interbank/      # ClearingHub 타행 이체 보내기·받기 (C-105)                      ✅
+        │   ├── signing.py      # Ed25519 서명·검증 (허브 규격)
+        │   ├── hub_client.py   # 허브 호출 (httpx)
+        │   ├── service.py      # 보내기: 출금 → 허브 → 완료/환불, 모르는 상태는 PENDING
+        │   ├── receiver.py     # 받기 /interbank/*: 서명 검증·멱등 입금, 응답 서명 미들웨어
+        │   ├── worker.py       # PENDING 이체를 30초마다 허브에 확인하는 백그라운드 작업
+        │   ├── router.py       # 사용자용 /interbank-transfers/*
+        │   ├── schemas.py, models.py   # interbank_transfers
         ├── cards/          # 신용·체크카드, 사용내역, 결제, 청구서                           ✅
         ├── terms/          # 상품 약관 발행·동의 기록, 약관 검색(RAG: 청크·임베딩·검색)       ✅
         └── agent/          # AI 금융 비서
@@ -92,6 +106,7 @@ users ◀── accounts ◀── transfers
 products ◀── accounts, cards   (개설·발급 시 상품 종류 검증)
 verification ◀── users, recovery, accounts   (휴대폰 인증 증표: 가입·찾기·비밀번호 재설정)
 terms ◀── accounts, cards, agent/tools       (가입 때 약관 동의 확인·기록, 약관 검색)
+accounts ◀── interbank   (타행 출금·입금·환불. 에이전트(AI 비서)에는 연결하지 않음)
 ```
 
 - 다른 도메인의 데이터가 필요하면 **service에서 상대 도메인의 repository**를 호출합니다. 다른 도메인의 router는 호출하지 않습니다.
@@ -117,6 +132,8 @@ ERD 이후에 생긴 테이블(설계 외):
 | terms_versions, product_terms_revisions·items, terms_consents, terms_index_generations·entries, terms_chunks | `TermsVersion` 외 6개 | `domains/terms/models.py` |
 | agent_conversations, agent_messages, agent_transfer_drafts | `AgentConversation`, `AgentMessage`, `TransferDraft` | `domains/agent/models.py` |
 | credit_card_bills | `CreditCardBill` | `domains/cards/models.py` |
+| interbank_transfers | `InterbankTransfer` | `domains/interbank/models.py` |
+| favorite_accounts | `FavoriteAccount` | `domains/transfers/models.py` |
 
 > ERD의 `Chenking` 오타는 코드에서 `checking`으로 씁니다. 테이블 이름은 snake_case 복수형입니다(예: `checking_accounts`).
 

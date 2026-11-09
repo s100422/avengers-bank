@@ -85,13 +85,58 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api alem
 
 `.env.prod`만 바꿨으면 `--build` 없이 `up -d`만 하면 된다.
 
+## 2026-11-09 배포 (타행 이체·AI 비서)
+
+두 번째 배포다. 서버는 `main` 브랜치를 받는다(`git pull origin main`). 서버가 오래된 커밋(`49dfefa`)에 머물러 있어서 마이그레이션 10개가 한꺼번에 적용됐고, 모두 표·컬럼을 추가하는 변경이었다. **배포 전에 RDS 스냅샷**을 찍었다(스냅샷 이름은 영문자로 시작하고 영문·숫자·하이픈만 가능: 예 `before-interbank-20261109`).
+
+접속과 배포 명령은 위 "코드를 고쳐 다시 올릴 때"와 같다. 빌드는 메모리 1GB 서버에서 몇 분 걸리므로 백그라운드로 돌리는 편이 안전하다.
+
+```bash
+cd ~/avengers-bank && git pull origin main
+docker compose -f docker-compose.prod.yml --env-file .env.prod build
+docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api alembic upgrade head
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api
+```
+
+### `.env.prod`에 추가한 값
+
+| 변수 | 용도 | 비고 |
+|---|---|---|
+| `HUB_PUBLIC_KEY`, `BANK_PRIVATE_KEY` | 타행 이체 받는 쪽(허브 서명 검증·응답 서명) | 개인키는 채팅·저장소에 올리지 않고 서버 파일에 직접 넣는다 |
+| `BANK_CODE`, `BANK_API_KEY` | 타행 이체 보내는 쪽 | 허브 등록 응답에서 받는다 ([INTERBANK.md](INTERBANK.md)) |
+| `GEMINI_API_KEY` | AI 금융 비서·약관 검색 | 없으면 AI 비서가 "아직 설정되지 않았습니다" |
+
+값 수정은 `.env.prod`만 바꿨으면 `--build` 없이 `up -d api`로 충분하다. 파일 권한은 600으로 둔다.
+
+### 새 기능을 올릴 때 같이 할 일 (운영 DB 데이터)
+
+코드를 올려도 **운영 DB 데이터**는 따로 맞춰야 하는 것들이다. 도커 이미지에는 `docs/`가 없어서 약관 원문 폴더를 볼륨으로 붙여 실행한다.
+
+```bash
+D="docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm"
+$D api python -m avengers_bank.seed                      # 없는 상품만 추가한다 (이미 있으면 건너뜀)
+$D -v $PWD/docs:/app/docs:ro api python -m avengers_bank.domains.terms.publish --effective-from 2026-11-09
+$D -v $PWD/docs:/app/docs:ro api python -m avengers_bank.domains.terms.indexing   # GEMINI_API_KEY 필요
+```
+
+- 순서가 중요하다: 시드 → 약관 발행 → 색인. 약관 발행은 상품 이름으로 연결해서, 시드가 옛 상품만 있으면 실패한다.
+- 마이그레이션 `a7c4e6f8b0d2`가 `CREATE EXTENSION vector`를 실행한다(RDS 마스터 사용자로 통과했다).
+- 운영은 `ENABLE_DEV_ENDPOINTS=false`라 개발용 충전 API가 닫혀 있다. 시험용 잔액은 DB에서 직접 넣어야 한다(거래내역에 `DEV_CHARGE` 한 줄을 남긴다). 시험이 끝나면 지운다.
+
+### 현재 주소와 등록 정보
+
+- API: `https://<탄력적 IP의 점을 하이픈으로>.sslip.io` (프론트는 서버에 배포하지 않았다. 로컬 프론트를 `API_ORIGIN=<위 주소> npm run dev -- -p 5173`로 붙여 쓴다. CORS 기본 허용이 `localhost:5173`이라 포트를 맞춘다)
+- 허브에는 은행 코드 `903`(SpiderBank)으로 등록돼 있고 `base_url`은 위 주소 뒤에 `/interbank`다.
+- `.env.prod`의 `CORS_ORIGIN`은 코드가 읽는 이름(`CORS_ORIGINS`)과 달라 지금은 무시된다. 프론트를 배포할 때 바로잡는다.
+
 ## 겪은 문제
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
 | RDS가 Aurora로 만들어짐 | "빠른 구성으로 생성"을 누름 | 지우고 "전체 구성 → PostgreSQL"로 다시 |
 | `required variable DOMAIN is missing` | `--env-file .env.prod`를 빼먹음 | 모든 compose 명령에 붙이기 |
-| SSH `Connection timed out` | 내 IP가 바뀜(장소 이동) | 보안 그룹 22번 규칙을 "내 IP"로 다시 저장 |
+| SSH `Connection timed out` | 내 IP가 바뀜(장소 이동, 와이파이 변경 등). 이 문서를 쓰는 동안에도 두 번 겪었다 | 보안 그룹 22번 규칙을 "내 IP"로 다시 저장 |
+| 계좌 개설이 `TERMS_NOT_CONFIGURED` | 운영 DB에 약관이 발행되지 않음(상품 시드가 옛 이름이라 약관 발행도 실패) | 아래 "새 기능을 올릴 때 같이 할 일"의 시드 → 약관 발행 |
 | 마이그레이션 시간 초과 | RDS 생성 때 "EC2에 연결"을 안 함, 또는 리전이 다름 | RDS 보안 그룹 확인 |
 | `database "avengers_bank" does not exist` | RDS 초기 DB 이름을 비워 둠 | RDS에서 DB 생성 또는 다시 만들기 |
 
