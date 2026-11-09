@@ -21,7 +21,14 @@ uv run python -m avengers_bank.seed      # 상품 데이터가 필요합니다
 | `pg_charge_concurrency.py` | 동시 충전 30건: 잠금이 있으면 합계가 맞고, 없으면 갱신이 사라진다 (C-021) |
 | `pg_transfer_concurrency.py` | 동시 이체: 잔액 경쟁, 1일 한도 경쟁, A→B / B→A 데드락 없음 (C-022) |
 | `pg_card_concurrency.py` | 동시 카드 결제: 신용 한도, 체크카드 잔액, 청구서 납부·생성의 "두 번 누름", 섞어서 동시에 (C-023) |
-| `pg_close_concurrency.py` | 동시 해지: 같은 예금을 20번 동시에 해지해도 한 번만 나가고, 해지와 입금이 섞여도 해지된 계좌에 돈이 남지 않는다 (C-043) |
+| `pg_close_concurrency.py` | 동시 해지: 같은 예금을 20번 동시에 해지해도 한 번만 나가고, 적금은 해지와 납입이 섞여도 해지된 계좌에 돈이 남지 않는다 (C-043, 예금은 C-079에서 추가 입금이 막혀 납입 경합이 없다) |
+| `pg_deposit_open_concurrency.py` | 동시 예금 가입: 같은 입출금 계좌에서 가입 금액을 내는 가입을 20번 동시에 보내도 잔액만큼만 가입되고, 실패한 가입은 예금·약관 동의 기록을 남기지 않는다 (C-076) |
+| `pg_refresh_concurrency.py` | 동시 토큰 갱신: 같은 갱신 토큰으로 10번 동시에 갱신해도 1번만 성공하고, 나머지는 재사용으로 걸려 세션 전체가 끊긴다 (C-083) |
+| `pg_single_session_concurrency.py` | 단일 세션: 같은 사용자로 5곳 동시 로그인해도, 갱신과 다른 곳 로그인이 겹쳐도 살아 있는 세션은 1개. users 잠금을 뺀 대조군은 2개 이상 살아남는다 |
+| `pg_login_lock_concurrency.py` | 로그인 잠금: 같은 아이디로 30곳에서 동시에 틀려도 비밀번호 검증은 정확히 5번, 그 뒤 잠김(맞는 비밀번호도 403). 같은 번호 인증번호 동시 8번 요청 → 3번만 발송. 선증가를 '읽고→쓰기'로 바꾼 대조군은 5번 넘게 검증된다 (C-090) |
+| `pg_device_channel_concurrency.py` | 로그인 채널 분리(기기 등록 B1): 새 기기 채널을 30곳에서 동시에 틀려도 검증은 정확히 5번·그 채널만 잠기고 주인의 등록 기기 로그인은 된다. 반대로 등록 기기 채널을 잠가도 새 기기 채널은 영향이 없다(챌린지). 선증가를 '읽고→쓰기'로 바꾼 대조군은 5번 넘게 검증된다 (마이그레이션 `9e0f1a2b3c4d` 적용 후 실행) |
+| `pg_account_password_concurrency.py` | 계좌 비밀번호 5회 잠금: 같은 계좌로 틀린 비밀번호 이체 20건 동시 → 검증 정확히 5번, 잠김, 맞는 비밀번호도 403. 계정 복구 시작(`/recovery/start`) 20곳 동시도 같은 카운터로 5에서 잠김(응답은 모두 같은 200). 행 잠금을 뺀 대조군은 5번 넘게 검증된다 |
+| `pg_withdrawal_concurrency.py` | 회원 탈퇴 ↔ 남이 그 계좌로 입금(동시) 20라운드: 어느 쪽이 먼저든 '탈퇴했는데 돈이 남은' 상태가 없다(탈퇴 성공+이체 404, 또는 탈퇴 막힘+이체 성공). 입출금 계좌 잠금을 뺀 대조군은 돈이 남는다 |
 | `pg_agent_confirm_concurrency.py` | AI 이체 초안 동시 확인: 같은 초안을 10번 동시에 확인해도 이체는 한 번 (C-070) |
 | `pg_unique_violation_message.py` | 계좌·카드번호 중복 때 `IntegrityError` 메시지에 `account_num`/`card_num`이 있는지(번호 재시도의 전제), 외래키 오류가 번호 충돌로 오인되지 않는지 (C-020, C-023) |
 
@@ -30,6 +37,13 @@ uv run python scripts/pg_charge_concurrency.py
 uv run python scripts/pg_transfer_concurrency.py
 uv run python scripts/pg_card_concurrency.py
 uv run python scripts/pg_close_concurrency.py
+uv run python scripts/pg_deposit_open_concurrency.py
+uv run python scripts/pg_refresh_concurrency.py
+uv run python scripts/pg_single_session_concurrency.py
+uv run python scripts/pg_withdrawal_concurrency.py
+uv run python scripts/pg_login_lock_concurrency.py
+uv run python scripts/pg_device_channel_concurrency.py
+uv run python scripts/pg_account_password_concurrency.py
 uv run python scripts/pg_agent_confirm_concurrency.py
 uv run python scripts/pg_unique_violation_message.py
 ```
@@ -42,7 +56,7 @@ uv run python scripts/pg_unique_violation_message.py
   이 검증이 실제 문제를 알아볼 수 있다는 뜻입니다. 대조군은 읽기와 쓰기 사이에 짧은 대기를 넣어 경쟁 구간을 넓힙니다.
   실제 요청에서 같은 비율로 일어난다는 뜻은 아닙니다.
 - 대조군의 정확한 숫자(예: 사라진 금액)는 실행할 때마다 조금씩 다릅니다. 스크립트는 숫자가 아니라 "문제가 재현됐는가"를 봅니다.
-- 서비스 함수를 직접 호출합니다(HTTP를 거치지 않음). 라우터 계층은 확인하지 않습니다.
+- 대부분 서비스 함수를 직접 호출합니다(HTTP를 거치지 않음, 라우터 계층은 확인하지 않음). `pg_login_lock_concurrency.py`·`pg_account_password_concurrency.py`는 실제 API를 ASGI로 직접 부릅니다(마이그레이션 `6b7c8d9e0f1a`까지 적용 후 실행).
 
 ## 주의
 

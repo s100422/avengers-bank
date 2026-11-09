@@ -1,7 +1,7 @@
 # 설계 변경 기록
 
 팀 초기 설계(docs/ERD.md, API_ENDPOINTS.md, PROJECT_STRUCTURE.md 및 원본 코드)를 바탕으로 **개인으로 작업하면서** 바꾼 것, 구현한 것, 앞으로 할 것을 모아 둔 문서다.
-팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-06, 변경 항목 C-001 ~ C-069)
+팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-09, 변경 항목 C-001 ~ C-096)
 
 | 알고 싶은 것 | 볼 곳 |
 |---|---|
@@ -79,22 +79,22 @@
 
 | 도메인 | 엔드포인트 | 상태 | 근거 |
 |---|---|---|---|
-| users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음 | C-024 |
+| users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음. 토큰 갱신·로그아웃(`POST /users/token/refresh`, `POST /users/logout`)은 C-083, 입력 규칙 C-084. **토큰 쿠키 전환 + 기기 등록(`/users/login/device*`, `/users/me/devices`)은 C-096** | C-024, C-083, C-084, C-096 |
 | products | 4 / 4 | ✅ 구현 | C-019 |
-| accounts | 7 / 7 | ✅ 구현 | C-020 |
-| transfers | 3 / 3 | ✅ 구현 | C-022 |
+| accounts | 7 / 7 | ✅ 구현 (예금은 개설 때 가입 금액을 필수로 입금 C-076·C-079, 상품별 최소 가입 금액 C-080) | C-020, C-076, C-079, C-080 |
+| transfers | 2 / 2 | ✅ 구현 (`POST /transfers/deposit`는 C-079에서 삭제: 예금은 가입 후 추가 입금 불가) | C-022, C-079 |
 | cards | 10 / 10 | ✅ 구현 | C-023 |
 | dev (설계 외) | 1 | ✅ 구현 | C-021 |
-| terms (설계 외) | 3 + 가입 5종 동의 + Agent Tool 2개 | ✅ 구현 (문서는 초안, 발행 전) | C-075 |
-| 인프라 | 최초 마이그레이션, docker compose, 시드 | ✅ | C-014, C-015, C-019 |
+| terms (설계 외) | 3 + 가입 5종 동의 + Agent Tool 2개 | ✅ 구현. 예금 약관 4개는 1.1.0으로 개정·발행 (나머지 17개는 1.0.0) | C-075, C-081 |
+| 인프라 | 최초 마이그레이션, docker compose, 시드(상품 `seed.py`, 데모 사용자·계좌 `seed_demo.py`) | ✅ | C-014, C-015, C-019, C-078 |
 
 ### 검증 현황
 
 | 방법 | 범위 | 결과 |
 |---|---|---|
-| pytest (SQLite) | 전체 | 226개 통과 (PostgreSQL 통합 테스트 포함 실행, C-075) |
+| pytest (SQLite) | 전체 | 453개 통과, 3개 skip (C-096까지. skip은 PostgreSQL이 필요한 테스트로, 같은 경로는 `scripts/`의 PG 스크립트로 확인) |
 | 실제 PostgreSQL: 마이그레이션 | upgrade → downgrade → upgrade, `alembic check` | 통과 (C-014) |
-| 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025) |
+| 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023), 해지(C-043, C-079에서 적금 납입 경합으로 수정), 예금 가입 금액 입금(C-079), 토큰 동시 갱신(C-083), 동시 로그인·단일 세션(C-088) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025), 로그인 잠금·인증번호 발송(C-090·C-091), 계좌 비밀번호(C-092). 회원 탈퇴 ↔ 입금(C-095). **스크립트 12개 모두 통과(2026-11-09)** |
 | 서버를 띄운 HTTP 확인 | 계좌, 충전, 이체, 카드, 청구서 | 통과 |
 
 - SQLite는 `FOR UPDATE` 잠금을 무시한다. **pytest가 통과해도 동시성은 검증된 것이 아니다**(C-017 결정: pytest는 SQLite 유지).
@@ -2856,7 +2856,7 @@ C-052의 Caddy 설정은 도메인이 있다는 전제였고, DB 위치는 정�
 
 #### 영향 범위
 - 백엔드 코드·DB·테스트 변경 없음.
-- `localStorage` 토큰은 XSS에 약하다. 실서비스라면 httpOnly 쿠키로 바꿔야 한다(코드에 `shortcut:` 주석).
+- `localStorage` 토큰은 XSS에 약하다. 실서비스라면 httpOnly 쿠키로 바꿔야 한다(코드에 `shortcut:` 주석). → **C-096에서 해결**(갱신 토큰 쿠키, 액세스 토큰 메모리).
 - 계좌 만들기는 입출금만 된다. 예금·적금, 카드, 거래 내역, 내 정보 수정 화면은 아직 없다.
 
 #### 검증
@@ -3622,6 +3622,1070 @@ async with db.begin():
 
 ---
 
+### C-076. 예금 가입 때 가입 금액을 입출금 계좌에서 바로 입금
+
+- **날짜:** 2026-11-08
+- **분류:** API · 구조
+- **상태:** 적용 후 C-079에서 필드를 필수로 바꿈 (SQLite pytest와 서버를 띄운 HTTP·브라우저 확인. PostgreSQL 동시성은 C-079에서 `scripts/pg_deposit_open_concurrency.py`로 확인)
+- **바뀐 파일:**
+  - `accounts/schemas.py` `DepositAccountCreate`: 선택 필드 `initial_amount`, `from_checking_account_id`, 하나만 오면 422하는 `_amount_with_account`
+  - `accounts/service.py` `open_deposit`·`_open`: 선택 인자 `after_open(db, account)`, 약관 동의 기록 뒤 같은 트랜잭션에서 호출
+  - `transfers/service.py`: `_pay`의 본체를 `_pay_in_tx`(트랜잭션을 열지 않음)로 분리, `_pay`는 `begin`으로 감싼 얇은 래퍼, `pay_deposit_in_tx` 추가
+  - `accounts/router.py` `open_deposit`: `initial_amount`가 있으면 `after_open`에 `pay_deposit_in_tx`를 연결
+  - `tests/test_transfers.py`: 8건 추가
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx`: 예금 가입 화면에 가입 금액·출금 계좌 입력
+  - `docs/API_ENDPOINTS.md`: `POST /accounts/deposit` 요청·규칙·오류
+
+#### 변경 전
+```
+POST /accounts/deposit  { "product_id": 2, "maturity_date": "2027-12-10" }
+→ 잔액 0원 예금이 만들어지고, 돈은 나중에 POST /transfers/deposit 으로 따로 넣는다
+```
+
+#### 변경 후
+```
+POST /accounts/deposit  { "product_id": 2, "maturity_date": "2027-12-10",
+                          "initial_amount": 3000000, "from_checking_account_id": 1 }
+→ 개설·약관 동의 기록·입출금 → 예금 이체가 한 트랜잭션. balance == initial_amount
+```
+- `initial_amount`와 `from_checking_account_id`는 **함께 보내거나 둘 다 생략**한다(하나만 오면 422). 둘 다 생략하면 이전과 똑같이 0원 예금이다.
+- 거래내역은 기존 입금과 같다: 입출금 쪽 `TO_DEPOSIT`(상대 = 예금 계좌번호), 예금 쪽 `TRANSFER_IN`(상대 = 입출금 계좌번호). 1회·1일 이체 한도는 적용하지 않는다(`/transfers/deposit`과 같은 정책).
+- 실패하면 예금 계좌도 약관 동의 기록도 남지 않는다: 잔액 부족 `400 INSUFFICIENT_BALANCE`, 없는·남의 입출금 계좌 `404 ACCOUNT_NOT_FOUND`.
+- 화면은 항상 두 값을 보낸다. 출금 계좌 목록에 잔액을 보여 주고, 금액이 잔액보다 크면 입력 중에 한 줄 경고를 낸다(제출은 막지 않고 서버가 최종 판단). 입출금 계좌가 없으면 먼저 만들라는 안내를 낸다.
+
+#### 이유
+- 실제 정기예금은 가입할 때 금액을 정해 한 번에 맡긴다. 기존 방식은 가입이 끝났는데 돈이 0원이라 이자도 0원인 예금이 만들어지고, 사용자가 "가입했는데 왜 금액을 안 묻지?"라고 느낀다.
+- 개설과 이체를 두 번의 호출로 나누면 개설만 되고 입금이 실패한 예금이 남는다 → 한 트랜잭션으로 묶었다.
+- `accounts.service`가 `transfers.service`를 import하면 순환 import가 된다 → 서비스에는 콜백 자리(`after_open`)만 두고 router에서 연결했다. 계좌번호 충돌 재시도 루프에서 롤백 뒤 다시 불려도 안전하다.
+
+#### 영향 범위
+- **API는 하위 호환이다.** 두 필드가 선택이라 금액 없이 호출하는 기존 코드·테스트(AI 비서 테스트 포함)는 그대로 동작한다.
+- `_pay`의 동작과 오류 코드는 그대로다(적금 납입·예금 입금 테스트가 계속 통과).
+- 잠금 순서(입출금 → 예금·적금, ERD 규칙 9)는 유지된다. 새 예금 행은 다른 트랜잭션이 볼 수 없다.
+- 소유권·잔액 검사가 예금 행 INSERT **뒤**에 일어난다. 실패하면 롤백되어 결과는 같지만, 잘못된 계좌 id여도 개설 쿼리 몇 개는 먼저 실행된다.
+
+#### 검증
+- `tests/test_transfers.py` 8건: 정상 가입(잔액 감소·양쪽 거래내역), 잔액 부족 롤백(예금 없음·약관 동의 기록 없음), 남의 계좌·없는 계좌 404, 한쪽만 보냄 422, 금액 없음 → 기존 동작, 금액 0·음수 422.
+- 서버를 띄워 확인: 150만 원 가입 → 생활비 통장 13,000,000 → 11,500,000, 예금 1,500,000, 예금 쪽 `TRANSFER_IN` 1건. 99,999,999원은 400 `INSUFFICIENT_BALANCE`이고 계좌 수와 잔액이 그대로. 한쪽만 보내면 422.
+- **하지 않은 것:** 같은 입출금 계좌로 개설과 이체를 동시에 보내는 PostgreSQL 동시성 확인(`scripts/` 기준). 잠금 순서는 코드로만 확인했다.
+
+#### 팀 논의 포인트
+- **결정됨(2026-11-08, C-079·C-080·C-081에서 구현):** 두 필드는 필수로, 가입 후 추가 입금은 막고, 최소 가입 금액은 상품별로 둔다. 이 항목은 필드를 **선택**으로 두었던 첫 단계의 기록이다.
+
+---
+
+### C-077. 약관 전문 보기: 같은 탭으로 열고, 돌아와도 입력값 유지
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (프론트)
+- **상태:** 적용 (브라우저에서 확인)
+- **바뀐 파일:**
+  - `frontend/components/terms/ConsentRecord.tsx`: 계좌·카드 상세의 "전문 보기" 링크에서 `target="_blank"` 제거
+  - `frontend/app/terms/[versionId]/page.tsx`: 맨 아래 링크를 "← 이전 페이지"(브라우저 뒤로 가기, 이전 페이지가 없으면 `/products`)로. 가입 화면에서 왔으면 기존대로 "← 가입 화면으로"
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx`: 입력칸을 `fields` 상태로 들고 있고, 약관 전문으로 나갈 때 `sessionStorage`에 맡겼다가 돌아오면 복원
+
+#### 변경 전
+- 계좌 상세의 "전문 보기"는 새 탭으로 열려서 돌아갈 이전 페이지가 없고, 아래 링크는 `/products`로 고정이었다.
+- 가입 화면에서 "전문 보기" 뒤 돌아오면 상품·금액·만기일·별명·약관 동의가 모두 초기화됐다. 입력칸이 `defaultValue`만 쓰는 비제어 입력이라 화면이 새로 그려지면 기본값으로 돌아갔다.
+
+#### 변경 후
+- "전문 보기"는 같은 탭으로 열리고, 아래 링크가 이전 페이지로 돌려보낸다.
+- 입력칸(납입액·납입일·결제일·만기일·별명·가입 금액·출금 계좌)과 상품 선택은 React 상태(`fields`, `bind()`)로 들고 있다. 동의 체크는 **같은 상품·같은 약관 묶음(`set_hash`)이면 유지**하고, 약관이 새 버전이 됐으면 처음부터 다시 동의한다.
+- 화면이 아예 새로 열리는 경우(링크로 이동)를 위해 "전문 보기"를 누를 때 값을 `sessionStorage`(`open-draft:{kind}`)에 맡기고, 돌아오면 한 번 꺼내 쓰고 지운다.
+
+#### 이유
+- 재현 1: 적금 가입 화면에서 납입액·별명을 넣고 "전문 보기" → "← 가입 화면으로" → 전부 기본값.
+- 재현 2(처음 고쳤을 때 놓친 경로): 같은 화면에서 **브라우저 뒤로 가기**로 돌아오면 Next가 이전 화면을 다시 살려 쓰는데, 그때 비제어 입력값과 동의 체크가 초기화되고 `sessionStorage`도 읽히지 않았다. 입력값을 상태로 들고 동의 초기화 조건을 "묶음이 바뀔 때만"으로 바꿔 고쳤다.
+
+#### 영향 범위
+- 가입 화면 5종(입출금·예금·적금·신용카드·체크카드)이 같은 코드라 모두 적용된다. 백엔드 변경 없음.
+- 가입에 성공해도 화면은 `sessionStorage`를 따로 지우지 않지만, 초안은 돌아올 때 한 번 꺼내면서 지워지므로 찌꺼기가 남지 않는다(브라우저에서 확인).
+
+#### 검증
+- 브라우저: 적금·예금 가입 화면에서 입력 → "전문 보기" → ① "← 가입 화면으로" ② 브라우저 뒤로 가기, 두 경로 모두 상품·입력값·동의 4개가 그대로 복원됨. 저장소는 비어 있음.
+- `npx tsc --noEmit`, `npx eslint` 에러·경고 0.
+- **하지 않은 것:** 계좌 상세의 "가입 당시 약관 보기 → 전문 보기 → 이전 페이지"를 브라우저로 눌러 확인하지는 않았다(코드만 확인).
+
+#### 팀 논의 포인트
+- 약관 전문에서 돌아오면 계좌 상세의 "가입 당시 약관 보기" 펼침 상태는 접힌 채로 다시 열린다.
+
+---
+
+### C-078. 데모 사용자·계좌 시드 스크립트 `seed_demo.py`
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (개발 편의)
+- **상태:** 적용
+- **바뀐 파일:**
+  - `src/avengers_bank/seed_demo.py` (새): `uv run python -m avengers_bank.seed_demo [login_id] [password]`
+
+#### 변경 전
+- 상품만 `seed.py`로 넣을 수 있었고, 데모 계좌를 만들려면 가입·로그인·약관 동의·개설·충전을 손으로 반복해야 했다. 새 계정으로 로그인하면 계좌가 하나도 없어 "데이터가 없어졌다"고 느꼈다.
+
+#### 변경 후
+- 실행 중인 API로 사용자 가입(있으면 로그인)→입출금 2개(생활비 통장 **정확히 13,000,000원**, 월급 통장 2,000,000원)→정기예금(가입 금액 3,000,000원, C-076)→적금(월 30만 원)을 만들고 계좌 표를 출력한다. 생활비 통장 충전액은 예금 가입 금액만큼 더해서(16,000,000) 최종 잔액이 13,000,000원이 되게 했다.
+- 서버(`fastapi dev`), 상품 시드, **약관 발행**(`terms.publish`)이 먼저 필요하고 `ENABLE_DEV_ENDPOINTS=true`여야 한다. 실행할 때마다 계좌가 새로 추가된다(중복 방지 없음).
+
+#### 이유
+- DB 직접 삽입이 아니라 실제 API를 거치므로 약관 동의·번호 발급·충전이 서비스 코드 그대로 검증된다(스크립트 자체가 끝에서 끝까지 확인 역할).
+
+#### 영향 범위
+- 앱 코드는 건드리지 않는다. 약관 발행·색인(`terms.publish`, `terms.indexing`)은 이 스크립트가 하지 않으며, 로컬 DB에 약관 청크가 없으면 AI 비서의 약관 검색이 "지금은 이용할 수 없다"고 답한다(`TERMS_RAG.md`의 색인 단계).
+
+#### 검증
+- 새 계정으로 실행해 표를 확인했다: 생활비 통장 13,000,000원, 월급 통장 2,000,000원, 목돈 예금 3,000,000원, 여행 적금 0원.
+
+#### 팀 논의 포인트
+- 이미 있는 아이디의 비밀번호를 모르면 로그인에서 멈춘다(의도). 비밀번호를 인자로 받는다.
+
+---
+
+### C-079. 예금 가입 금액 필수화, 가입 후 추가 입금 금지 (`POST /transfers/deposit` 삭제)
+
+- **날짜:** 2026-11-08
+- **분류:** API · 구조
+- **상태:** 적용 (C-076의 결정 사항을 확정)
+- **바뀐 파일:**
+  - `accounts/schemas.py` `DepositAccountCreate`: `initial_amount`, `from_checking_account_id` 필수, `_amount_with_account` validator 삭제
+  - `accounts/router.py` `open_deposit`: 항상 `after_open`으로 입금
+  - `transfers/router.py`·`schemas.py`·`service.py`: `POST /transfers/deposit`, `DepositPaymentCreate`, `pay_deposit` 삭제 (`pay_deposit_in_tx`, `_pay_in_tx`, 적금 납입은 유지)
+  - `frontend/app/accounts/[type]/[id]/page.tsx`: 예금 상세의 "예금에 입금하기" 폼 삭제, `PayIn`은 적금 전용
+  - `tests/`: 개설 호출 전부 새 계약으로, 새 도우미 `tests/helpers.py`의 `open_deposit()` 하나
+  - `scripts/pg_close_concurrency.py`: 시나리오 2를 예금 입금 → 적금 납입으로, `scripts/pg_deposit_open_concurrency.py`(새), `scripts/_common.py` `cleanup`에 `terms_consents` 삭제 추가, `scripts/README.md`
+  - `docs/API_ENDPOINTS.md`, `docs/ERD.md`, `README.md`, `docs/PROJECT_STRUCTURE.md`
+
+#### 변경 전
+```
+POST /accounts/deposit  initial_amount, from_checking_account_id 선택 (둘 다 생략하면 0원 예금)
+POST /transfers/deposit 입출금 → 내 예금 입금 (만기 전 여러 번)
+```
+
+#### 변경 후
+```
+POST /accounts/deposit  initial_amount, from_checking_account_id 필수 (없으면 422)
+POST /transfers/deposit 삭제 (404). 예금 가입 후 추가 입금 불가, 가입 금액이 곧 원금
+```
+- 적금 납입(`POST /transfers/savings`)은 그대로다. transfers는 3개 → 2개 엔드포인트.
+- 예금 계좌 거래내역의 입금(`TRANSFER_IN`)은 가입 때 한 번만 생긴다. 입출금 쪽 `TO_DEPOSIT`도 가입 금액 입금 때만 생긴다.
+
+#### 이유
+- 사용자 결정(실제 정기예금처럼 가입 때 금액을 정하고 추가 입금은 막는다). 0원 예금이 만들어지지 않는다.
+
+#### 영향 범위
+- **하위 호환이 깨진다.** 금액 없이 예금을 여는 호출과 `/transfers/deposit` 호출은 더는 동작하지 않는다. AI 비서에는 예금 개설·입금 도구가 없어 코드 변경은 없고, 테스트의 호출만 고쳤다.
+- 해지된 예금·만기 후 예금에 입금하는 경로가 없어져 `ACCOUNT_CLOSED`·`ACCOUNT_MATURED` 검사는 적금 납입에서만 의미가 있다(`_pay_in_tx`에 그대로 둠).
+- **놓칠 뻔한 곳 두 가지:** ① 예금 상세 화면의 입금 폼은 경로를 `/transfers/${kind}`로 조립해서 `grep transfers/deposit`에 잡히지 않았다. 지우지 않았다면 화면에서 404가 났다. ② `scripts/pg_close_concurrency.py`가 삭제된 `DepositPaymentCreate`·`pay_deposit`를 import하고 있었다. 예금에는 입금 경로가 없으므로 시나리오 2(해지와 입금 섞기)를 **적금 해지와 납입**으로 바꿨다.
+
+#### 검증
+- `tests/`: 삭제 `test_pay_deposit`·`test_open_deposit_without_amount_is_empty`(의미가 없어짐), 예금 입금 거절 검증(해지·만기)은 적금만 남김, 추가: `/transfers/deposit` 404, 필수 필드 누락 422, 0원 예금이 불가능해져 `test_close_empty_account_records_no_history`는 적금으로. 해지 금액·이자 기대값은 그대로 나온다.
+- 서버를 띄워 확인: 필수 필드 누락 422, `/transfers/deposit` 404.
+- **PostgreSQL 동시성:** `scripts/pg_deposit_open_concurrency.py`: 잔액 1,000,000원에서 100,000원짜리 가입 20번 동시 → 정확히 10건 성공·10건 `INSUFFICIENT_BALANCE`, 입출금 0원·예금 합계 1,000,000원, 동의 기록 10건. 잠금을 뺀 대조군은 20건이 모두 가입돼 합계가 2,000,000원이 됨. `pg_close_concurrency.py`도 통과(적금 해지 2 + 납입 20).
+
+#### 팀 논의 포인트
+- 삭제된 `POST /transfers/deposit`를 쓰던 외부 호출이 있으면 깨진다(이 저장소에서는 프론트·테스트·스크립트를 모두 고침).
+
+---
+
+### C-080. 예금 상품별 최소 가입 금액 (`account_products.min_amount`)
+
+- **날짜:** 2026-11-08
+- **분류:** DB 스키마 · API
+- **상태:** 적용 (개발 DB에 마이그레이션·시드 적용. 운영 DB에는 적용하지 않음)
+- **바뀐 파일:**
+  - `products/models.py` `AccountProduct.min_amount` + CHECK `ck_account_products_min_amount_positive`, `products/schemas.py`
+  - `alembic/versions/2026_11_08_1000-b8d5f7a9c1e3_add_product_min_amount.py` (새)
+  - `accounts/service.py` `open_deposit`: 돈을 옮기기 전에 최소 금액 검사
+  - `seed.py`: 이미 있는 상품도 `min_amount`를 갱신
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx`, `app/products/page.tsx`, `lib/api.ts`
+  - `tests/test_deposit_min_amount.py`(새), `tests/test_products.py`
+
+#### 변경 전
+- 최소 가입 금액이 없다(1원 이상이면 가입).
+
+#### 변경 후
+- `account_products.min_amount BIGINT NULL` (NULL = 제한 없음). 값은 예금만: 어벤져스 정기예금 100,000원, 스타 정기예금 1,000,000원, 모바일 특판예금 500,000원.
+- `GET /products/accounts`, `/products/accounts/{id}` 응답에 `min_amount`.
+- `POST /accounts/deposit`에서 `initial_amount < min_amount`이면 `400 BELOW_MIN_AMOUNT`("이 상품의 최소 가입 금액은 1,000,000원입니다."). 개설 트랜잭션 안에서 이체 전에 검사하므로 예금·약관 동의 기록·이체 어느 것도 남지 않는다.
+- 화면: 가입 화면의 상품 카드와 입력칸 아래에 "최소 N원", 입력값이 최소보다 작으면 입력 중 경고, 입력칸 `min` 속성, 상품 목록의 예금 카드에 "최소 가입 N원". 상품을 바꾸면 안내가 바뀐다.
+
+#### 이유
+- 사용자 결정(상품별로 둔다). 상품 소개와 약관에 같은 숫자가 있어야 해서 값은 데이터(`min_amount`)가 정하고 약관(C-081)은 그 숫자를 적는다.
+
+#### 영향 범위
+- 마이그레이션은 컬럼만 추가하고 기존 행은 NULL로 둔다. **값은 `seed.py`가 채운다**(마이그레이션 뒤 `uv run python -m avengers_bank.seed` 필요). 운영 DB에는 둘 다 아직 적용하지 않았다.
+- 입출금·적금 상품은 NULL이라 동작이 그대로다. 테스트 픽스처 상품도 NULL이라 기존 테스트는 영향이 없다.
+- `min_amount`를 바꾸면 약관 문서의 숫자도 같이 고쳐야 한다(자동 동기화 없음).
+
+#### 검증
+- `tests/test_deposit_min_amount.py`: 정확히 최소 금액이면 성공, 미만이면 400이고 예금 계좌·동의 기록·입출금 잔액 불변, NULL 상품은 1원도 성공, 상품 API 응답에 `min_amount`.
+- 서버를 띄워 확인: 스타 정기예금에 999,999원은 400 `BELOW_MIN_AMOUNT`(계좌 수 그대로), 1,000,000원은 201. 브라우저에서 카드·경고·`min` 속성이 상품 선택에 따라 바뀌는 것 확인.
+- 개발 DB: `alembic upgrade head` 뒤 `seed`로 3개 상품 값 확인(100000 / 1000000 / 500000).
+
+#### 팀 논의 포인트
+- 최소 금액은 예금에만 있다. 적금의 월 납입액 최소, 최대 가입 한도는 없다.
+- 약관의 숫자와 `min_amount`를 자동으로 맞추는 장치는 없다(수동).
+
+---
+
+### C-081. 예금 약관 개정 (1.1.0): 가입 금액·최소 금액·추가 입금 불가
+
+- **날짜:** 2026-11-08
+- **분류:** 문서 · 약관
+- **상태:** 적용 (개발 DB에 발행·색인). 사용자가 `docs/terms/` 본문 수정을 명시적으로 허락함 (`docs/terms/README.md`의 "본문 임의 수정 금지" 규칙은 그대로 둠)
+- **바뀐 파일:**
+  - `docs/terms/corpus/common/ab.deposit.rules.md`, `corpus/products/deposit-basic.md`, `deposit-star.md`, `deposit-mobile.md`: 1.0.0 → 1.1.0
+  - `docs/terms/manifest.json`: 해당 4개 문서와 상품 연결 참조를 1.1.0으로
+  - `docs/terms/evaluation.json`, `docs/terms/IMPLEMENTATION_NOTES.md`
+
+#### 변경 전
+- `[funding] 입금과 납입`: "만기 전에는 현재 구현상 여러 차례 입금할 수 있습니다." 최소 가입 금액 언급 없음.
+
+#### 변경 후
+- `ab.deposit.rules@1.1.0` `[funding]`: 가입할 때 가입 금액을 정해 본인 입출금계좌에서 한 번에 입금, 잔액 부족 시 가입 안 됨(동의 기록도 안 남음), **가입 후 추가 입금 불가**, 최소 가입 금액은 상품별(상품 문서). `[opening]`에 가입 금액·출금 계좌가 필수라는 설명 추가. 섹션 id는 모두 유지.
+- 상품 문서 3개의 `[conditions]`: 최소 가입 금액(100,000 / 1,000,000 / 500,000원)과 "가입 후 추가 입금 불가, 가입 금액이 곧 원금". 에이전트가 요청 범위 밖으로 `[interest]`와 `[early-close-example]`의 "각 납입 건/납입금" 표현을 "가입 금액/입금일"로 고쳤다(계산식은 그대로).
+- 평가 질문: T06 질문·기대 답을 새 동작으로, T04~T08의 기대 문서 버전을 1.1.0으로, 새 질문 T28(정기예금 최소 금액)·T29(스타 정기예금 최소 금액)·T30(잔액 부족 때) 추가.
+- 발행(`publish --effective-from 2026-11-08`): 문서 4개 inserted(1.1.0), 예금 3종의 약관 묶음이 revision 2, 이전 1.0.0 4개는 retired. 색인: 문서 4개·청크 25개(Gemini 임베딩).
+
+#### 이유
+- 추가 입금을 막으면 약관의 "여러 차례 입금할 수 있다"가 사실과 달라지고, AI 비서가 이 조항을 근거로 틀리게 답한다. 최소 가입 금액은 약관에 아예 없었다.
+- 발행된 본문은 덮어쓸 수 없어서 새 버전(1.1.0)으로 올렸다.
+
+#### 영향 범위
+- 예금 3종의 가입 화면은 새 약관 묶음(revision 2)으로 동의를 받는다. 약관 화면을 열어 둔 사용자는 `TERMS_OUTDATED` 안내를 받고 새로 동의한다. **이미 가입한 예금의 동의 기록은 가입 당시 1.0.0 그대로**이고 "가입 당시 약관 보기"도 1.0.0을 보여 준다.
+- 이미 가입한 예금은 추가 입금이 안 되는 상태가 됐다(1.0.0 약관에는 "여러 차례 입금 가능"이라고 적혀 있음). 개발 데이터라 문제는 없지만, 실제 서비스라면 기존 가입자 고지가 필요한 변경이다.
+
+#### 검증
+- `publish --dry-run`(문서 4 inserted, 예금 3종 rev 2, 4 retired) → 본 발행, `indexing --dry-run`(문서 4, 청크 25) → 본 색인(실패 0).
+- AI 비서에 실제로 물어봄: "스타 정기예금 최소 가입 금액" → 1,000,000원, 출처 `스타 정기예금 상품설명 및 특약 1.1.0 #conditions`. "정기예금에 가입한 뒤 추가로 입금할 수 있어?" → 추가 입금 불가, 출처 `예금 이용약관 1.1.0 #funding`.
+- **확인하지 못한 것:** 상품명 없이 "예금 가입하고 나서 돈을 더 넣을 수 있어?"라고 물으면 검색 없이 "상품에 따라 불가할 수 있다"고 얼버무리고 출처가 없었다(상품을 되묻지도 않음). 모델 답변이 매번 같지 않다는 C-075의 알려진 한계다. `scripts/eval_terms.py` 평가는 실행하지 않았다(Gemini 호출 비용; `--fake` 옵션은 있음).
+
+#### 팀 논의 포인트
+- 예금은 가입 금액이 곧 원금이라는 문장이 약관·화면·API 문서에 모두 들어갔다. 만기 후 처리 같은 다른 조항은 그대로다.
+- 상품명 없는 질문에서 모델이 검색을 건너뛰는 문제는 프롬프트 강화가 필요할 수 있다.
+
+---
+
+### C-082. 로그인 실패 한도를 동시 요청으로 우회하던 버그 수정
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · 동시성
+- **상태:** 적용 (아이디+IP 메모리 한도는 C-090에서 DB 잠금으로 대체, '검증 전에 먼저 센다'는 원리는 그대로)
+- **바뀐 파일:**
+  - `core/login_limiter.py`: `check`·`record_failure` → `acquire`(확인 + 실패 1회 선기록) / `reset` / `cancel`
+  - `users/router.py` `login`, `change_password`: `acquire` 방식으로
+  - `tests/test_login_limiter_concurrency.py` (새, 6개)
+
+#### 변경 전
+```python
+login_limiter.check(data.login_id, ip)          # 한도 확인
+access_token = await user_service.login(db, data)  # argon2 검증, await 약 70ms
+# 실패하면 login_limiter.record_failure(...)
+```
+
+#### 변경 후
+```python
+attempt = login_limiter.acquire(data.login_id, ip)  # 확인 + "실패 1회" 기록을 await 없이 한 번에
+tokens = await user_service.login(db, data)         # 틀리면 미리 적은 기록이 그대로 실패 1회
+login_limiter.reset(data.login_id, ip, attempt)      # 맞으면 기록 삭제
+```
+
+#### 이유
+- 재현: 틀린 비밀번호 로그인 30개를 동시에 보내면 30개 모두 검증 전(기록 0개)에 `check`를 통과해 **30번 검증, 429는 0번**. 한도 5가 무력했다.
+- asyncio는 스레드 하나에서 `await` 지점에서만 다른 요청으로 넘어간다. `acquire()` 안에는 `await`가 없으므로 확인과 기록 사이에 끼어들 틈이 없어 락 없이 원자적이다(워커 1개 전제, 기존 shortcut 주석 유지).
+
+#### 영향 범위
+- 성공하면 아이디+IP 기록은 모두 지우고, IP 기록은 이번 시도 한 건만 뺀다(다른 아이디로 틀린 기록은 남김).
+- 비밀번호 변경에서 현재 비밀번호를 틀린 게 아닌 오류(새 비밀번호 규칙 위반 등)로 끝나면 `cancel`로 되돌린다.
+- 예상 밖 예외(DB 오류 등)도 실패 1회로 남는다(보수적).
+
+#### 검증
+- 동시 30개 → 401 5개·429 25개, 아이디를 바꾼 동시 30개 → 401 20개(IP 한도)·429 10개, 비밀번호 변경 동시 10개 → 400 5개·429 5개.
+
+#### 팀 논의 포인트
+- 아이디 단위 전체 한도(IP를 바꿔 가며 한 아이디를 시도하는 경우)는 넣지 않았다. 사용자가 "다른 곳에서 로그인하면 기존 세션 종료"(단일 세션) 정책과 함께 논의하기로 함.
+
+---
+
+### C-083. 짧은 액세스 토큰 + 갱신 토큰(회전·재사용 감지)으로 세션 구조 변경
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · DB 스키마 · API
+- **상태:** 적용 (개발 DB에 마이그레이션 적용. 운영 DB에는 적용하지 않음). 학습용 설명은 `docs/AUTH.md`
+- **바뀐 파일:**
+  - `core/config.py`: `jwt_expire_minutes=30` → `access_token_expire_minutes=5`, `session_expire_minutes=30` 추가. `.env.example`
+  - `core/security.py`: `new_refresh_token`(`secrets.token_urlsafe(32)`), `hash_refresh_token`(SHA-256)
+  - `users/models.py` `RefreshToken`, `alembic/versions/2026_11_08_1100-ccd01fe5b793_add_refresh_tokens.py` (새)
+  - `users/repository.py`, `users/service.py`(`login`·`refresh`·`logout`·`change_password`), `users/router.py`, `users/schemas.py`(`TokenResponse`, `RefreshRequest`, `LogoutRequest`)
+  - `tests/test_auth_tokens.py` (새, 11개), `scripts/pg_refresh_concurrency.py` (새), `scripts/_common.py`(정리에 `refresh_tokens`), `scripts/README.md`
+
+#### 변경 전
+- `POST /users/login` → 30분짜리 JWT 하나. 서버에 저장하지 않아 **비밀번호를 바꾸거나 로그아웃해도 서버가 끊을 수 없었다**(재현: 비밀번호 변경 후 이전 토큰으로 `GET /users/me` → 200).
+
+#### 변경 후
+```
+POST /users/login          → { access_token(5분 JWT), token_type, refresh_token, expires_in: 300, session_expires_at(+30분) }
+POST /users/token/refresh  { refresh_token } → 같은 모양. 쓴 갱신 토큰은 폐기(회전)
+POST /users/logout         { refresh_token } → 그 세션(family) 폐기, 멱등 200
+PATCH /users/me/password   → 그 사용자의 모든 세션 폐기 + 이 기기용 새 세션(응답 data = 토큰 묶음)
+```
+- 갱신 토큰은 의미 없는 256비트 임의 문자열, DB에는 SHA-256만 저장. `family_id` = 로그인 한 번 = 세션 하나.
+- **재사용 감지:** 이미 교체된 갱신 토큰이 다시 오면 탈취로 보고 그 family 전체를 폐기 → 401 `REFRESH_TOKEN_REUSED`. 모르는·만료·폐기된 토큰은 401 `INVALID_REFRESH_TOKEN`.
+- 갱신은 그 행을 `SELECT ... FOR UPDATE`(+`populate_existing`)로 잠근 뒤 검사한다(ERD 규칙 9와 같은 원칙).
+- 재사용 감지 때 폐기를 커밋해야 하므로 트랜잭션 안에서 예외를 던지지 않고 블록 밖에서 401.
+- 비밀번호 변경: 새 비밀번호가 아이디와 같으면(대소문자 무시) 400 `PASSWORD_SAME_AS_LOGIN_ID`.
+- **모든 기기에서 로그아웃** `POST /users/logout-all` 🔒: 그 사용자의 모든 세션(이 기기 포함) 폐기, 새 세션은 주지 않음. 사용자 결정(로그아웃 버튼은 이 기기만, 모든 기기 로그아웃은 내 정보 화면의 별도 버튼). `/users/logout`과 달리 액세스 토큰으로 본인 확인(남의 세션을 끊는 데 쓰이지 않게). 테스트 `test_logout_all_revokes_every_session_and_needs_login`, 브라우저에서 이 기기·다른 기기 갱신 토큰이 모두 401이 되는 것 확인.
+
+#### 이유
+- 사용자 결정(B안): 정석 구조를 배우려고 "토큰 하나 + `token_version` 비교"(A안) 대신 액세스/갱신 토큰 구조를 골랐다.
+- 액세스 토큰은 무상태로 두어 요청마다 DB 조회가 없고, 세션을 잇는 갱신 토큰만 DB에 두어 서버가 끊을 수 있다.
+- SHA-256(argon2가 아님): 원문이 256비트 임의값이라 대입이 불가능하고, 결정적 해시여야 unique 인덱스로 바로 찾는다.
+
+#### 영향 범위
+- **하위 호환:** 로그인 응답은 필드 추가뿐이라 `access_token`을 쓰는 기존 코드는 그대로 동작한다. `PATCH /users/me/password` 응답 data는 `null` → 토큰 묶음으로 바뀌었다.
+- **순수 B안의 한계:** 로그아웃·비밀번호 변경 뒤에도 이미 발급된 액세스 토큰은 **최대 5분** 유효(예전 30분). → **C-087에서 요청마다 세션을 확인하도록 바꿔 해결.**
+- 슬라이딩 세션이라 계속 쓰면 세션이 끝없이 이어진다(절대 만료 없음). 폐기·만료 행은 쌓인다(정리 작업 추후).
+- 환경변수 `JWT_EXPIRE_MINUTES`는 이제 무시된다(이 저장소에는 쓰는 곳 없음).
+
+#### 검증
+- `tests/test_auth_tokens.py`: 응답 필드, 회전(이전 토큰 무효), 재사용 감지 후 최신 토큰도 무효, 만료, 로그아웃·멱등, 비밀번호 변경 후 다른 세션 무효·새 토큰 동작, 원문 미저장, 액세스 토큰 수명 5분.
+- **PostgreSQL** `scripts/pg_refresh_concurrency.py`: 같은 토큰 10번 동시 갱신 → 1번 성공·9번 `REFRESH_TOKEN_REUSED`, 이긴 쪽 새 토큰도 폐기, 살아 있는 토큰 0개. 잠금을 뺀 대조군은 10번 모두 성공(세션 10갈래).
+- 서버에서 확인: 앞뒤 공백·대문자 아이디로 로그인 → 새 응답 모양. 옛 비밀번호(`password1234`) 계정도 로그인됨.
+
+#### 팀 논의 포인트
+- 즉시 끊어야 하면 액세스 토큰에 `family_id`를 넣고 요청마다 세션 행을 확인하는 혼합 방식(요청당 조회 1번 추가).
+- 토큰 보관 위치(`localStorage` → `httpOnly` 쿠키)는 별도 논의 예정. → C-096에서 적용.
+
+---
+
+### C-084. 아이디 정규화와 회원 정보 입력 검증 강화
+
+- **날짜:** 2026-11-08
+- **분류:** API · 보안
+- **상태:** 적용
+- **바뀐 파일:**
+  - `users/validators.py` (새): 정규화·검사 함수와 `LoginId`·`Name`·`NickName`·`Phone`·`NewPassword` 등 Annotated 타입
+  - `users/schemas.py`: `UserCreate`, `UserLogin`, `UserUpdate`, `PasswordChange`
+  - `tests/conftest.py`, `tests/test_users.py`, `seed_demo.py`·`scripts/pg_deposit_open_concurrency.py`(가입 비밀번호를 새 규칙 값 `Passw0rd!23`으로)
+
+#### 변경 전
+- 아이디 4~50자 아무 문자, 대소문자 구분 → `tokenuser `(뒤 공백), `Tokenuser`가 별개 계정으로 가입됨. 휴대폰 자동 대문자로 로그인 실패 가능.
+- 이름 `"   "`, 전화번호 `abcdefghij`, 비밀번호 공백 8개·아이디와 같은 비밀번호가 가입됨. 내 정보 수정도 같음.
+
+#### 변경 후
+- **아이디:** 가입·로그인 모두 앞뒤 공백 제거 + 소문자. 가입만 `^[a-z0-9_]{4,20}$` 검사. **로그인은 형식 검사 없음**(형식이 달라도 401 — 아이디 규칙을 흘리지 않고 옛 계정도 막지 않게).
+- **이름:** 앞뒤 공백 제거 후 1~50자. **닉네임:** 앞뒤 공백 제거, 빈 문자열이면 null.
+- **휴대폰:** 하이픈·공백을 빼고 `^01[016789]\d{7,8}$`이면 `010-1234-5678`(10자리 `011-123-4567`) 모양으로 저장.
+- **비밀번호(가입·새 비밀번호):** 8~128자, **영문·숫자·특수문자(키보드 기호) 각 1자 이상**, 키보드 문자만(한글·공백·전각 문자 불가), 아이디와 같으면 거부(대소문자 무시). 로그인과 현재 비밀번호에는 강도 규칙 없음(옛 계정 호환).
+
+#### 이유
+- 사용자 결정(아이디 A안, 비밀번호는 은행 앱처럼 영문·숫자·특수문자 모두).
+- 한글을 받지 않는 이유: 한/영 전환 실수와 기기마다 다른 유니코드 조합(NFC/NFD) 때문에 같은 비밀번호가 다르게 저장될 수 있다. 처음 구현은 한글을 특수문자로 쳐 주었는데(정의를 "영문·숫자·공백이 아닌 문자"로 썼음) 통합하면서 키보드 기호로 좁혔다.
+
+#### 영향 범위
+- DB 컬럼 길이(50)는 그대로, 마이그레이션 없음. 개발 DB의 기존 아이디·전화번호는 모두 새 형식을 이미 만족(확인함). 운영 DB는 미확인.
+- 기존 데이터는 수정할 때만 새 규칙으로 다시 검사된다.
+
+#### 검증
+- `tests/test_users.py`: 정규화(공백·대문자 → 같은 계정), 대소문자만 다른 중복 409, 로그인은 형식 검사 없이 401, 전화번호 정규화 5가지, 이름·닉네임 공백 처리, 비밀번호 강도·아이디와 같음·키보드 문자만, 내 정보 수정도 같은 규칙, 옛 약한 비밀번호 계정도 로그인·변경 가능.
+- 브라우저: `UiTest01` 가입 → `uitest01`로 저장, 이름 `"  테스트 "` → `테스트`, `01055556666` → `010-5555-6666`.
+
+#### 팀 논의 포인트
+- DB unique는 여전히 대소문자를 구분한다(정규화로 막음). 정규화 이전 데이터가 있는 DB라면 소문자 기준 unique 인덱스를 검토.
+
+---
+
+### C-085. 422 입력 오류 메시지를 한국어 완성 문장으로
+
+- **날짜:** 2026-11-08
+- **분류:** API
+- **상태:** 적용
+- **바뀐 파일:**
+  - `core/exception_handlers.py`: `FIELD_LABELS`(약 55개 필드 이름표), 조사 선택(`_josa`), `korean_message()`
+  - `frontend/lib/api.ts`: `details[0].msg`만 표시
+
+#### 변경 전
+```
+화면: phone: String should have at most 20 characters
+```
+
+#### 변경 후
+```json
+{"loc": ["body", "phone"], "msg": "휴대폰 번호는 20자 이하로 입력해 주세요.", "type": "string_too_long"}
+```
+- 오류 종류(`missing`, `string_too_short/long`, `greater_than(_equal)`, `less_than(_equal)`, 숫자·날짜 파싱, `extra_forbidden`, `literal_error`, `json_invalid` 등)별 문장 + 필드 이름표 + `ctx`의 숫자. 직접 낸 `ValueError`는 "Value error, " 접두어를 떼고 그대로. 모르는 종류는 "입력값을 확인해 주세요: {이름표}".
+- 응답 구조(`loc`, `msg`, `type`, 상위 `message`)는 그대로.
+
+#### 이유
+- 사용자 결정(A안, 서버에서): 서버 한 곳에서 바꾸면 모든 화면에 적용된다.
+
+#### 영향 범위
+- AI 비서 도구(`domains/agent/tools/`)는 이 처리기를 거치지 않고 pydantic 메시지로 자체 문구를 만들어 **여전히 영어**다(사용자에게 직접 보이는 경로는 아님).
+
+#### 검증
+- `test_validation_messages_are_korean_sentences`(7가지, "String should"·"Field required"·"Value error" 없음), 금지·모르는 필드, 숫자·날짜 오류.
+
+#### 팀 논의 포인트
+- AI 비서 도구 입력 오류도 같은 함수로 바꿀지.
+
+---
+
+### C-086. 화면: 세션 타이머·자동 갱신·만료 처리, 비밀번호 확인 칸
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (프론트)
+- **상태:** 적용 (브라우저에서 확인)
+- **바뀐 파일:**
+  - `frontend/lib/api.ts`: `session`(한 키 `avengers_bank_session`에 토큰 묶음), `api()`의 401 → 갱신 → 재시도, `refreshSession`(single-flight + Web Locks), `logout`, `expireSession`, `safeNext`
+  - `frontend/components/ui.tsx`: `SessionTimer`(남은 시간·연장·2분 전 예고·만료)
+  - `frontend/app/login`, `signup`, `me`, `page.tsx`, `terms/[versionId]`, `components/assistant/Assistant.tsx`·`TransferCard.tsx`
+
+#### 변경 전
+- 로그인 30분 뒤부터 모든 화면이 "유효하지 않거나 만료된 토큰입니다" 문구만 띄우고 그대로였다. 내 정보 화면은 오류여도 비밀번호 변경 폼이 보였다.
+- 로그아웃은 브라우저에서 토큰만 지웠다. 가입·비밀번호 변경에 확인 칸이 없었다.
+
+#### 변경 후
+- 화면 위 **"자동 로그아웃 29:41" + [연장]**. 2분 이하면 `role="alertdialog"` 예고(포커스 [연장]). 0이 되면 서버 로그아웃 → `/login?next=<보던 화면>&reason=expired` → "로그인이 만료되었습니다" 안내 → 다시 로그인하면 보던 화면으로.
+- 액세스 토큰(5분)이 만료되면 조용히 갱신하고 원래 요청을 다시 보낸다. 갱신 토큰을 두 번 쓰지 않도록 같은 탭은 single-flight, 여러 탭은 Web Locks로 직렬화(잠금을 얻은 뒤 저장소를 다시 읽어 이미 갱신됐으면 건너뜀).
+- 로그아웃은 서버 세션도 끊는다(이 기기만). 내 정보 화면에 **"모든 기기에서 로그아웃"** 버튼(확인 창 뒤 `POST /users/logout-all`). 비밀번호 변경 성공 시 응답의 새 토큰으로 교체.
+- 가입·비밀번호 변경에 **비밀번호 확인 칸**(다르면 서버에 보내지 않음). 아이디 칸 자동 대문자·자동 수정 끔, 안내 문구.
+- `next`는 같은 사이트 경로만 받는다(오픈 리다이렉트 방지).
+
+#### 이유
+- 사용자 결정(6번 B안: 30분 유지 + 남은 시간 타이머 + 만료 예고, 4번: 확인 칸 먼저, 비밀번호 찾기는 이메일·문자 인증으로 나중에).
+
+#### 영향 범위
+- 토큰 저장 키가 바뀌어 기존 로그인 사용자는 한 번 다시 로그인해야 한다(옛 키 `avengers_bank_token`은 지우지 않고 무시).
+- 남은 시간은 서버의 `session_expires_at`을 기기 시계로 계산한다(기기 시계가 틀리면 그만큼 어긋남).
+- 타이머는 `Shell`을 쓰는 화면에만 있다(약관 전문 화면 등에는 없음, 그래도 만료 후 API는 401 흐름으로 처리됨). Web Locks가 없는 환경(비보안 http 출처)에서는 탭 사이 직렬화가 없다.
+
+#### 검증
+- 브라우저: 가입 화면 확인 칸 불일치 → "비밀번호가 일치하지 않습니다."(서버 호출 없음), 약한 비밀번호 → 서버 한국어 문장. 가입 후 타이머 "자동 로그아웃 29:52". 액세스 토큰을 망가뜨리고 내 정보를 열면 정상 표시 + 갱신 토큰 회전 + 세션 시각 갱신. 만료 시각을 100초 뒤로 당기면 예고 창(포커스 [연장]) → 연장 → 30분. 3초 뒤로 당기면 로그인 화면(`next=/me&reason=expired`) + 서버에서도 그 갱신 토큰 폐기 → `UITEST01 `로 다시 로그인 → `/me`로 복귀.
+- `npx tsc --noEmit`, `npx eslint app components lib` 에러·경고 0.
+
+#### 팀 논의 포인트
+- 은행처럼 활동과 무관한 최대 세션 시간을 둘지. 화면에서 기기 시계 보정이 필요한지.
+
+---
+
+### C-087. 액세스 토큰도 즉시 끊기 (요청마다 세션 확인)
+
+- **날짜:** 2026-11-08
+- **분류:** 보안
+- **상태:** 적용
+- **바뀐 파일:**
+  - `core/security.py`: `create_access_token(user_id, session_id)`가 `sid` 클레임을 넣고, `decode_access_token`은 `sid`를 필수로 `(user_id, sid)`를 돌려준다
+  - `users/repository.py` `is_session_active`, `users/service.py` `get_current_user`(그리고 logout·logout_all·change_password 주석)
+  - `tests/test_auth_tokens.py`(5개 추가), `tests/test_users.py`(손으로 만든 토큰에 `sid`, 거절 사례 `no_sid`·`session_not_alive` 추가)
+  - `docs/AUTH.md` 9-1장, `docs/API_ENDPOINTS.md`
+
+#### 변경 전
+- C-083의 순수 B안: 액세스 토큰은 서명·만료만 확인. 로그아웃·모든 기기 로그아웃·비밀번호 변경·재사용 감지 뒤에도 **이미 발급된 액세스 토큰은 최대 5분 더 유효**.
+
+#### 변경 후
+```python
+user_id, session_id = decode_access_token(token)        # sid 필수
+user = await user_repository.find_by_id(db, user_id)
+if user is None or not await user_repository.is_session_active(db, user_id, session_id):
+    raise UnauthorizedException(code="INVALID_TOKEN", ...)  # 끊긴 세션이면 5분이 남았어도 거절
+```
+- `is_session_active`: 그 `family_id`에 폐기되지 않은 갱신 토큰 행이 하나라도 있는가. 회전해도 새 행이 살아 있으므로 세션은 살아 있다. 만료 시각은 보지 않는다(액세스 5분 < 갱신 30분).
+- 5분 만료는 유지(1차 방어이자 안전장치).
+- `sid`가 없는 예전 액세스 토큰은 401 → 프론트가 갱신 토큰으로 새로 받는다(사용자 영향 없음).
+
+#### 이유
+- 사용자 결정: "로그아웃 뒤 5분 유효"는 은행 서비스에서 보안상 위험하다.
+- 순수 JWT의 장점(DB 조회 없음)은 이 프로젝트가 원래 요청마다 사용자를 DB에서 읽고 있어 실익이 작았다. 늘어나는 비용은 인덱스 조회 하나.
+
+#### 영향 범위
+- 요청마다 `refresh_tokens` 조회 1번 추가(`family_id` 인덱스). 액세스 토큰이 "서명된 세션 참조"가 됐다.
+- 나중에 "다른 곳에서 로그인하면 기존 세션 종료"(단일 세션)를 넣으면 그것도 즉시 적용된다.
+
+#### 검증
+- 테스트: 액세스 토큰의 `sid` = 세션 family, 로그아웃 즉시 401(다른 세션은 200), 회전 후에도 같은 세션의 이전 액세스 토큰 동작, 모든 기기 로그아웃·비밀번호 변경 즉시 다른 기기 401(새 세션은 200), 재사용 감지 즉시 401, `sid` 없음·모르는 세션 401. 전체 306개 통과(3 skip).
+- 실행 중인 서버: 두 기기 로그인 → A 로그아웃 뒤 A 401·B 200 → 모든 기기 로그아웃 뒤 B·C 모두 401.
+
+#### 팀 논의 포인트
+- 요청량이 아주 많아지면 세션 확인을 캐시(예: 짧은 TTL의 폐기 목록)로 바꿀 수 있다. 지금 규모에서는 불필요.
+
+---
+
+### C-088. 단일 세션: 다른 곳에서 로그인하면 기존 세션 종료 + 사용자 행 잠금
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · 동시성 · DB 스키마
+- **상태:** 적용 (개발 DB에 마이그레이션 적용)
+- **바뀐 파일:**
+  - `users/models.py` `RefreshToken.revoked_reason` + CHECK 2개, `alembic/versions/2026_11_08_1400-4f2a9c7e1b30_add_refresh_tokens_revoked_reason.py` (새)
+  - `users/repository.py` `lock_user`, 폐기 함수가 이유를 저장
+  - `users/service.py` `login`(다른 세션 폐기), `refresh`(잠금 순서 변경, `SESSION_REPLACED`), `logout`·`logout_all`·`change_password`(사용자 행 잠금)
+  - `frontend/lib/api.ts`(갱신 실패 이유 기억, `reason=replaced`), `frontend/app/login/page.tsx`(안내 문구)
+  - `tests/test_single_session.py` (새, 6개), `tests/test_auth_tokens.py`(`add_other_device` 도우미, 테스트 5개 수정)
+  - `scripts/pg_single_session_concurrency.py` (새), `scripts/pg_refresh_concurrency.py`(대조군에서 사용자 행 잠금도 제거), `scripts/README.md`
+  - `docs/AUTH.md` 9-2장, `docs/API_ENDPOINTS.md`, `docs/ERD.md` 규칙 9
+
+#### 변경 전
+- 같은 아이디로 여러 곳에서 로그인하면 세션이 기기마다 따로 생겨 모두 살아 있었다.
+- (숨은 문제) 다른 기기가 갱신하는 순간 비밀번호 변경·모든 기기 로그아웃을 하면, PostgreSQL READ COMMITTED에서 폐기 UPDATE가 아직 커밋 안 된 새 토큰 행을 못 봐 그 기기가 살아남을 수 있었다.
+
+#### 변경 후
+- 로그인하면 비밀번호 검증 뒤 그 사용자의 살아 있는 갱신 토큰을 모두 폐기(`LOGIN_ELSEWHERE`)하고 새 세션을 만든다. 끊긴 기기의 액세스 토큰은 C-087로 다음 요청부터 401.
+- 끊긴 세션으로 갱신하면 `401 SESSION_REPLACED`("다른 곳에서 로그인되어 로그아웃되었습니다."). 화면은 `/login?reason=replaced`로 보내 "본인이 아니라면 비밀번호를 바꿔 주세요"까지 안내.
+- 폐기 이유 저장: `ROTATED`, `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_CHANGED`, `REUSE_DETECTED`, `LOGIN_ELSEWHERE`.
+- 세션을 바꾸는 모든 작업이 **users 행 → refresh_tokens** 순서로 잠근다. 갱신은 토큰 행을 먼저 잠그던 것을 "토큰을 잠금 없이 찾기 → users 잠금 → 토큰 다시 잠그기"로 바꿔 순서를 맞췄다(데드락 방지). 로그인은 틀린 비밀번호 요청이 사용자 행을 붙잡지 않게 검증 뒤에 잠근다.
+
+#### 이유
+- 사용자 결정(단일 세션 도입). 내 계정에 누가 들어와 있어도 내가 로그인하면 끊기고, 반대로 누가 로그인하면 내가 알게 된다.
+- 아직 없는 행은 잠글 수 없어서, 같은 사용자의 세션 작업을 사용자 행 하나로 줄 세운다.
+
+#### 영향 범위
+- 같은 사용자가 두 기기를 동시에 쓸 수 없다(정책). 같은 브라우저의 여러 탭은 같은 세션이라 영향 없음.
+- 마이그레이션 전에 폐기된 행은 이유가 NULL이라 `INVALID_REFRESH_TOKEN`으로 처리된다.
+- 같은 사용자의 로그인·갱신·로그아웃이 사용자 행에서 줄을 선다(사용자 단위라 영향 작음). 비밀번호 변경은 argon2 검증 동안 잠금을 잡는다.
+- 끊긴 기기는 **다음 요청 때** 알게 된다(화면을 그냥 열어 두면 타이머가 0이 되거나 무언가를 누를 때까지 모름).
+- 기존 테스트 중 "같은 사용자로 두 번 로그인해 두 기기를 흉내 내던" 5개는 DB에 다른 기기 세션을 직접 넣는 도우미로 바꿨다(기대 동작은 그대로).
+
+#### 검증
+- 테스트: 두 번째 로그인 후 첫 세션 갱신 `SESSION_REPLACED`·액세스 401, 다른 사용자 영향 없음, 폐기 이유 6종, 로그아웃·비밀번호 변경으로 끊긴 세션은 `INVALID_REFRESH_TOKEN`. 전체 312개 통과(3 skip).
+- **PostgreSQL** `pg_single_session_concurrency.py`: 10곳 동시 로그인 → 살아 있는 세션 1개, 각 기기 갱신은 1곳 OK·9곳 `SESSION_REPLACED`. 갱신 ↔ 다른 곳 로그인 동시 15라운드 → 매번 1개만 생존. 대조군(사용자 행 잠금 제거) → 10개 모두 생존. `pg_refresh_concurrency.py`도 다시 통과.
+- 브라우저: 브라우저에서 로그인 → 셸에서 같은 아이디로 로그인 → 브라우저에서 내 정보를 누르자 `/login?next=/me&reason=replaced`와 안내 문구.
+
+#### 팀 논의 포인트
+- 아이디 단위 실패 한도는 C-089에서 아이디별 속도 제한으로 적용(믿을 수 있는 기기 예외는 9번 쿠키 전환 때 → C-096에서 "카운터 분리"로 적용).
+- 끊긴 기기에 즉시 알리려면 주기적 확인(폴링)이나 푸시가 필요하다.
+
+---
+
+### C-089. 아이디별 속도 제한: 계정을 잠그지 않고 느리게
+
+- **날짜:** 2026-11-08
+- **분류:** 보안
+- **상태:** C-090에서 대체 (복구 절차가 생겨 국내 규정대로 5회 잠금으로 바꿈)
+- **바뀐 파일:**
+  - `core/login_limiter.py`: `MAX_FAILURES_PER_ID = 10`, `SLOW_INTERVAL_SECONDS = 30`, 키 `("id", 아이디)`, `_last_slowed_attempt`
+  - `tests/test_login_limiter_concurrency.py` (4개 추가)
+  - `docs/AUTH.md` 6-1장, `docs/API_ENDPOINTS.md`
+
+#### 변경 전
+- 한도는 "아이디+IP 15분 5회"와 "IP 15분 20회"뿐. 공격자가 IP를 바꿔 가며 한 아이디를 찌르면 막지 못했다.
+
+#### 변경 후
+- IP와 상관없이 한 아이디가 15분에 10번 틀리면, 그 아이디는 **마지막 시도(성공 포함)로부터 30초가 지나야** 한 번 더 시도 가능. 그 전에는 429 `TOO_MANY_LOGIN_ATTEMPTS` + `Retry-After`.
+- 검증 전에 먼저 기록하는 기존 방식(C-082)을 그대로 따라 동시 요청으로 우회할 수 없다.
+- 주인이 성공해도 공격자가 쌓은 실패 기록은 그대로(이번 시도만 뺌).
+
+#### 이유
+- 사용자 결정(A안: 아이디별 속도 제한 지금, B안: 믿을 수 있는 기기 예외는 9번 쿠키 전환 때).
+- "N번 틀리면 잠금"은 공격자가 일부러 틀려서 진짜 사용자를 못 들어오게 하는 잠금 공격이 가능하다. 느리게만 하면 주인은 최대 30초 기다리고, 공격자는 아이디당 분당 2번으로 묶인다.
+- 처음 구현은 30초를 "마지막 실패" 기준으로 쟀다. 테스트에서 주인이 성공한 직후 공격자가 바로 다음 시도를 할 수 있는 구멍이 드러나 "마지막 시도(성공 포함)" 기준으로 고쳤다.
+
+#### 영향 범위
+- 공격받는 아이디의 주인도 새 기기에서는 최대 30초를 기다릴 수 있다(B안으로 해소 예정).
+- 프로세스 메모리 기반이라는 기존 한계(재시작 시 초기화, 워커 1개 전제)는 같다.
+
+#### 검증
+- IP 5곳에서 2번씩 틀린 뒤 처음 보는 IP에서도 429(`Retry-After` 1~30). 30초 뒤 주인은 맞는 비밀번호로 200, 그 직후 공격 시도는 다시 429.
+- 대기 중 10개 IP 동시 시도 → 모두 429. 30초 뒤 10개 IP 동시 시도 → 정확히 1개만 검증(401)·9개 429. 다른 아이디는 영향 없음.
+- 실행 중인 서버로는 확인하지 못했다(로컬 요청은 모두 같은 IP라 아이디+IP 한도에 먼저 걸림). IP를 나눈 ASGI 테스트로 확인.
+
+#### 팀 논의 포인트
+- 기준(10회, 30초)은 정책값이다. 은행처럼 5회 오류 시 추가 인증(C안)은 문자·이메일 연동 때.
+
+---
+
+### C-090. 은행식 로그인 잠금: 5회 연속 오류 → 잠금 (DB, 원자적 선증가)
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · 동시성 · DB 스키마
+- **상태:** 적용 (C-082의 아이디+IP 한도와 C-089의 아이디별 느리게를 대체)
+- **바뀐 파일:**
+  - `users/models.py`(`failed_login_count`, `login_locked_at`), `users/repository.py`(`count_login_attempt`, `lock_login`, `unlock_login`), `users/service.py`(`login`, `change_password`, `_busy`)
+  - `core/login_limiter.py`: IP 한도만 남긴 `IpLimiter`(로그인 20회, 인증번호 발송 10회)
+  - `admin.py` (새, `unlock`·`reset-password`), 개발용 `POST /dev/users/{login_id}/unlock`
+  - 마이그레이션 `6b7c8d9e0f1a`(C-091과 함께)
+  - `tests/test_login_lock.py`(새), `tests/test_login_limiter_concurrency.py`·`tests/test_users.py`(새 정책으로 교체), `scripts/pg_login_lock_concurrency.py`(새)
+
+#### 변경 전
+- 메모리 한도: 아이디+IP 15분 5회(C-082), IP 20회, 아이디별 15분 10회 후 30초에 1회(C-089). 잠그지 않음. 재시작하면 초기화.
+
+#### 변경 후
+- 같은 아이디로 **5회 연속** 틀리면 `login_locked_at` 설정 → 맞는 비밀번호도 403 `ACCOUNT_LOCKED`. 해제는 비밀번호 찾기(C-093)·관리자 명령·개발용 API.
+- 검증 **전에** `UPDATE … SET failed_login_count = failed_login_count + 1 WHERE … AND login_locked_at IS NULL AND failed_login_count < 5 RETURNING`을 자기 트랜잭션으로 커밋(롤백 불가). 성공하면 0으로.
+- 결과가 없을 때: 잠겼으면 403, 잠기지 않았는데 동시 요청들이 5번을 가져가 검증 중이면 **429 `TOO_MANY_LOGIN_ATTEMPTS`**(통합 중 수정: 처음엔 403이라 맞는 비밀번호를 동시에 6번 보낸 사용자에게 "잠김"이라는 틀린 안내가 나갔다).
+- 비밀번호 변경의 현재 비밀번호 오류도 같은 카운터. 메모리 한도는 IP 15분 20회만.
+
+#### 이유
+- 조사 결과(전자금융감독규정 제33조 ②항 3호: 5회 이내 거래 중지 + 본인확인 후 재부여). 복구 절차(C-093)가 생겨 잠금 공격의 피해가 줄었다(OWASP: 잠긴 계정도 복구는 쓸 수 있게).
+- DB 원자적 증가는 서버 재시작·여러 대에서도 정확하다(메모리 한도의 한계 해소).
+
+#### 영향 범위
+- 아이디만 알면 누구나 5번 틀려 잠글 수 있다(정책상 수용, 본인은 복구로 해제). 403은 있는 아이디에서만 나와 아이디 존재가 드러난다.
+- 잠겨도 이미 있는 세션은 끊지 않는다.
+
+#### 검증
+- 30곳 동시 오답 → 검증 정확히 5번, 401 4개 + 나머지 403/429, 잠김, 맞는 비밀번호도 403. PostgreSQL 같은 결과, 대조군(읽고 나중에 쓰기) 30번 검증.
+
+---
+
+### C-091. 휴대폰 인증번호 구조 + 가입·번호 변경 시 휴대폰 확인
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · DB 스키마 · API
+- **상태:** 적용 (실제 문자 발송은 아직 없음, 개발용 문자함)
+- **바뀐 파일:**
+  - `domains/verification/` (새): `models.py`(`verification_codes`), `sms.py`(발송기·개발용 문자함), `service.py`(`start_verification`, `verify_code`, `consume_verification`, `send_notice`), `router.py`, `dev.py`(`GET /dev/sms`)
+  - `users/models.py`(`phone_verified_at`), `users/schemas.py`·`service.py`(가입·번호 변경 증표)
+  - `core/config.py`(`sms_sender: Literal["dev"]`), 마이그레이션 `6b7c8d9e0f1a`
+  - `tests/test_verification.py`(새), `tests/verification_helpers.py`, `tests/conftest.py`(가입 자동 인증 `auto_phone_verification`)
+
+#### 변경 후
+- `POST /verification/phone/send`(SIGNUP_PHONE), `/send-for-me` 🔒(CHANGE_PHONE, ACCOUNT_PASSWORD_RESET), `/verify` → 10분짜리 증표.
+- 6자리, 10분, 5회, 1회성. 저장은 **HMAC-SHA256(서버 키, id + 코드)**(6자리는 경우의 수가 100만이라 그냥 해시면 DB 유출 시 역산됨). 틀린 시도는 비교 전에 먼저 셈.
+- 1회성은 DB 조건 UPDATE(`consumed_at IS NULL`)로 보장, 용도·번호·사용자는 DB 행으로 판정.
+- 발송 제한: 같은 번호 15분 3번(DB, PostgreSQL advisory lock으로 동시 요청 직렬화), IP 15분 10번.
+- 가입은 `phone_verification_token` 필수, 내 정보에서 번호를 바꿀 때만 증표 필요(없으면 400 `PHONE_VERIFICATION_REQUIRED`).
+
+#### 이유
+- 복구 문자를 보낼 번호가 진짜 그 사람 것이어야 한다(NIST: 미리 검증한 주소만 복구에 사용). 실제 문자 업체 계약이 없어 발송기만 바꿔 끼우는 구조로.
+
+#### 영향 범위
+- 기존 사용자는 `phone_verified_at`이 NULL(복구 자체가 그 번호로 인증번호를 받는 과정이라 동작에 문제 없음).
+- 테스트의 모든 가입은 conftest가 자동 인증(약관 자동 첨부와 같은 방식, 끌 수 있음).
+
+#### 검증
+- 발송·확인·만료·5회·1회성·용도 불일치·HMAC 저장·발송 제한(재시작 유지). PostgreSQL에서 같은 번호 동시 8번 → 3번만 발송.
+
+---
+
+### C-092. 계좌 비밀번호 (숫자 4자리, 돈이 나가는 곳 전부, 5회 잠금)
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · DB 스키마 · API
+- **상태:** 적용
+- **바뀐 파일:**
+  - `accounts/password.py` (새: `validate_account_password_format`, `check_account_password`, `verify_account_password`, `set_account_password`, `reset_account_password`), `accounts/models.py`(`AccountPasswordMixin`), `schemas.py`, `service.py`, `router.py`(`POST /accounts/{type}/{id}/password`), `dev.py`
+  - `transfers/`, `cards/`(청구서 납부 `BillPaymentCreate`), `agent/`(확인 본문 `DraftConfirmRequest`, 프롬프트에 "비밀번호를 대화로 묻지 말 것", `TransferAction.from_account_id`)
+  - 마이그레이션 `5a6b7c8d9e0f`, `tests/test_account_password.py`(새), `tests/conftest.py`(`auto_account_password`)
+  - `scripts/_common.py`·PG 스크립트 5개(계좌 비밀번호 반영), `scripts/pg_account_password_concurrency.py`(새)
+
+#### 변경 후
+- 계좌 3종 개설에 필수 `account_password`(숫자 4자리, 동일·연속 숫자 금지). 예금은 추가로 `from_account_password`(출금 계좌).
+- 필수 `account_password`: `POST /transfers`, `/transfers/savings`, 해지, 카드 청구서 납부, AI 이체 확인. 체크카드 결제는 제외(카드 PIN 영역).
+- 400 `ACCOUNT_PASSWORD_INCORRECT`(N/5) → 5번째 403 `ACCOUNT_PASSWORD_LOCKED`. 400 `ACCOUNT_PASSWORD_NOT_SET`(기존 계좌).
+- **그 계좌 행만 잠그고 비밀번호만 검사하는 짧은 트랜잭션을 먼저 커밋**한 뒤, 맞을 때만 본 작업. 실패 횟수가 본 작업 롤백에 휩쓸려 사라지지 않게(사라지면 무한 대입 가능).
+- 계좌 응답에 `password_set`, `password_locked`. 설정·재설정은 로그인 + 휴대폰 인증번호(ACCOUNT_PASSWORD_RESET).
+
+#### 이유
+- 사용자 결정(은행형 복구의 "아는 것" + 이체 시에도 요구). 감독규정 제33조 ②항 1·3호.
+
+#### 영향 범위
+- **하위 호환이 깨진다:** 계좌 개설·돈이 나가는 모든 요청에 새 필수 필드. 기존 계좌는 비밀번호를 먼저 설정해야 돈을 보낼 수 있다.
+- 돈이 나가는 요청마다 짧은 트랜잭션 + argon2 약 50ms 추가. 검증과 본 작업 사이에 다른 요청이 계좌를 잠가도 이미 통과한 요청은 진행(맞는 비밀번호를 알아야만 통과하므로 대입엔 못 씀).
+- 계좌번호를 아는 사람은 틀린 비밀번호로 계좌를 잠글 수 있다(로그인 잠금과 같은 대가, 본인은 로그인 + 휴대폰으로 해제).
+
+#### 검증
+- 형식 규칙, 6곳 각각 N/5·잠금·잠긴 뒤 맞는 비밀번호도 403·성공 시 0, **실패 횟수가 DB에 남는지**. PostgreSQL: 틀린 비밀번호 이체 20개 동시 → 검증 정확히 5번 → 잠김, 대조군 20번. 기존 PG 스크립트 11개 모두 계좌 비밀번호 반영 후 통과.
+
+---
+
+### C-093. 계정 복구: 아이디 찾기·비밀번호 찾기·계좌 비밀번호 재설정
+
+- **날짜:** 2026-11-08
+- **분류:** 보안 · API
+- **상태:** 적용. 설계 근거는 `docs/ACCOUNT_RECOVERY_RESEARCH.md`
+- **바뀐 파일:**
+  - `domains/recovery/` (새: `router.py`, `service.py`), `verification/router.py`(send-for-me의 ACCOUNT_PASSWORD_RESET, phone 생략), `accounts/repository.py`(`lock_checking_by_account_num`), `main.py`
+  - `tests/test_recovery.py`(새)
+
+#### 변경 후
+- `POST /recovery/start` `{purpose, login_id?, account_num, account_password}` → **항상 같은 200**(같은 문구·같은 모양·비슷한 응답 시간). 맞을 때만 등록 휴대폰으로 인증번호. 틀린 계좌 비밀번호는 그 계좌의 실패 횟수로 셈. 번호당 발송 제한에 걸려도 같은 200(문자만 안 보냄).
+- `recovery_token`은 `ref = vid XOR HMAC(서버 키, nonce)`로 봉인한 JWT라 진짜·가짜가 구별되지 않는다. 가짜 토큰의 인증번호 오류도 진짜와 같이 (1/5)…(5/5) 후 만료(가짜 횟수는 메모리 — `ponytail:` 표시).
+- `POST /recovery/verify`: 아이디 찾기는 `masked_login_id`(앞 2자 + 끝 1자) + 전체 아이디 문자, 비밀번호 찾기는 `reset_token`.
+- `POST /recovery/password`: 1회성 소비, 가입 규칙·아이디와 다름·현재와 다름(`SAME_PASSWORD`). 성공하면 **잠금 해제·실패 0·모든 세션 폐기·알림 문자·자동 로그인 없음**. 만료·사용된 증표는 400 `INVALID_VERIFICATION_TOKEN`.
+- 계좌 비밀번호 설정·재설정: `POST /accounts/{type}/{id}/password` 🔒 `{phone_verification_token, new_account_password}`(처음 설정 겸용, 잠금 해제 포함, 알림 문자).
+- 계좌가 없거나 두 비밀번호를 모두 잊으면 온라인 복구 불가 → 관리자 명령(고객센터 흉내).
+
+#### 이유
+- 조사 결과: 국내 은행은 계좌 + 휴대폰 두 요소, NIST는 이메일 단독 인증 금지·복구 알림 필수, OWASP는 응답 동일화·자동 로그인 금지·세션 무효화.
+
+#### 영향 범위
+- 정보가 맞는 경로는 사용자 조회·발송 트랜잭션만큼 몇 ms 더 걸린다(argon2 약 70ms보다 훨씬 작음).
+- 정상 사용자가 15분에 3번을 넘기면 문자 없이 같은 문구만 본다 → 화면 문구에 "문자가 오지 않으면 15분 뒤 다시"를 넣음.
+- `reset_token`(verification 증표) 본문에 등록 휴대폰·사용자 번호가 보인다(이미 세 요소를 증명한 뒤라 수용).
+
+#### 검증
+- 테스트 13개(응답 동일성: 계좌 없음·비밀번호 틀림·잠김·미설정 모두 같은 응답, 가짜 토큰 오류 6개 동일, 1회성, 잠금 해제 전체 흐름, 세션 폐기, 남의 아이디+내 계좌 실패 등). 전체 pytest 통과.
+- 브라우저: 휴대폰 인증 가입 → 계좌 개설(계좌 비밀번호, 연속 숫자 거부) → 이체(1/5 후 성공) → 5회 오류로 잠김(맞는 비밀번호도 거절, "비밀번호 찾기" 안내) → 비밀번호 찾기(개발용 문자함으로 인증번호) → 재설정 → 알림 문자, 새 비밀번호로 로그인, 옛 비밀번호 401. 아이디 찾기 → `re*******1` + 전체 아이디 문자, 틀린 계좌 비밀번호와 응답 문구·토큰 길이 동일.
+
+#### 팀 논의 포인트
+- 실제 문자 업체(솔라피·NHN Cloud 등) 연동 시점. 가짜 토큰 횟수·IP 한도는 프로세스 메모리(서버 여러 대면 공유 저장소).
+
+---
+
+### C-094. 화면: 휴대폰 인증·계좌 비밀번호·아이디/비밀번호 찾기·해지
+
+- **날짜:** 2026-11-08
+- **분류:** 구조 (프론트)
+- **상태:** 적용 (브라우저에서 주요 흐름 확인)
+- **바뀐 파일:**
+  - `frontend/components/verify.tsx` (새: `CodeVerify`, `PhoneVerify`, 개발용 문자함), `components/account-password.tsx` (새: 4자리 입력, 규칙 검사, 오류별 안내 링크 `MoneyErrorText`)
+  - `frontend/app/find-id/page.tsx`, `app/reset-password/page.tsx` (새)
+  - `app/login`(잠김 안내 + 비밀번호 찾기, 아이디·비밀번호 찾기 링크, `reason=reset`), `app/signup`(휴대폰 인증), `app/me`(번호 변경 인증), `app/open/...`(계좌 비밀번호·출금 계좌 비밀번호), `app/transfer`, `app/accounts/[type]/[id]`(적금 납입, **해지 화면 신설**, 계좌 비밀번호 설정·재설정), `app/cards/[type]/[id]`(청구서 납부), `components/assistant/TransferCard.tsx`, `lib/api.ts`
+
+#### 변경 후
+- 가입: 번호 → 인증번호 → 확인해야 가입 버튼이 켜짐(번호를 바꾸면 다시 인증). 내 정보: 번호를 바꿀 때만 인증.
+- 인증번호 입력칸 옆 **"개발용 문자함 보기"**(개발 모드에서만 나타남).
+- 계좌 비밀번호 입력은 6곳 모두, 오류별 안내(미설정 → 설정, 잠김 → 휴대폰 인증 후 재설정, 틀림 → N/5). 계좌 비밀번호는 입력값 보존(sessionStorage 초안)에 넣지 않는다.
+- 계좌 상세의 "계좌 비밀번호 설정/재설정"(휴대폰 인증 → 새 비밀번호 + 확인), 오류 링크로 들어오면 자동으로 펼침.
+- 아이디 찾기·비밀번호 찾기 화면, 하단에 "입출금 계좌가 없으시면 고객센터로 문의".
+
+#### 검증
+- `npx tsc --noEmit`, `npx eslint` 에러 0. 브라우저 확인은 C-093 검증 참고.
+- **하지 않은 것:** 번호 변경 인증, 해지 화면, 카드대금 납부, AI 이체 확인 카드의 계좌 비밀번호 입력은 브라우저로 직접 눌러 보지 않았다(코드·테스트만).
+
+---
+
+### C-095. 회원 탈퇴 (소프트 삭제, 계좌 닫기, 입금 경합 차단)
+
+- **날짜:** 2026-11-09
+- **분류:** 보안 · DB 스키마 · API · 동시성
+- **상태:** 적용 (개발 DB에 마이그레이션 적용, 브라우저에서 확인)
+- **바뀐 파일:**
+  - `users/withdrawal.py` (새: 조건 검사·처리), `users/models.py`(`deleted_at`, 폐기 이유 `WITHDRAWN`), `users/schemas.py`·`router.py`·`service.py`·`repository.py`
+  - `verification/models.py`·`router.py`(purpose `WITHDRAWAL`, 등록 번호로만 발송), `recovery/service.py`(탈퇴 회원 제외)
+  - `accounts/models.py`(`CheckingAccount.closed_at`), `accounts/repository.py`·`service.py`(`require_open`), `transfers/service.py`, `cards/service.py`, `accounts/dev.py`
+  - 마이그레이션 `2026_11_08_1800-8d9e0f1a2b3c_add_withdrawal.py`
+  - `frontend/app/me/page.tsx`(탈퇴 영역), `frontend/app/login/page.tsx`(`reason=withdrawn`)
+  - `tests/test_withdrawal.py`(새), `scripts/pg_withdrawal_concurrency.py`(새), `scripts/README.md`
+
+#### 변경 전
+- 회원 탈퇴 기능이 없었다.
+
+#### 변경 후
+- `GET /users/me/withdrawal` 🔒 → `{can_withdraw, blockers}`. 막는 사유: 해지하지 않은 예금(`ACTIVE_DEPOSIT`)·적금(`ACTIVE_SAVINGS`), 잔액이 남은 입출금 계좌(`CHECKING_BALANCE`), 신용카드 미결제(`CARD_UNPAID`, `outstanding_amount > 0`).
+- `POST /users/me/withdrawal` 🔒 `{current_password, phone_verification_token}`(purpose `WITHDRAWAL`). 비밀번호는 로그인 실패 카운터와 같은 규칙(선증가, 5회 잠금). 조건 불충족은 400 `WITHDRAWAL_BLOCKED`.
+- 처리(한 트랜잭션, users 행 → 입출금 계좌 ID 오름차순 → 예금·적금 → 카드 순으로 잠근 뒤 조건 재검사):
+  - **가림:** `deleted_at`, 이름 "탈퇴회원", 닉네임·`phone_verified_at` NULL, 전화 빈 문자열, 비밀번호 해시는 어떤 비밀번호로도 맞지 않는 값. **`login_id`는 유지**해 재가입을 막는다(409 문구는 기존 그대로라 탈퇴한 아이디임이 드러나지 않음).
+  - **닫음:** 입출금 계좌 `closed_at`, 카드 전부 `CLOSED`.
+  - **폐기·삭제:** 갱신 토큰 전부(`WITHDRAWN`), AI 대화·메시지·이체 초안, 그 사용자의 인증번호 행.
+  - **보존:** 계좌·거래내역·카드 사용내역·청구서·약관 동의 기록(전자금융 거래 기록 보존 의무 — 보존 기간은 법 확인 필요).
+- 탈퇴 후: 로그인은 없는 아이디와 같은 401(가짜 해시, 실패도 세지 않음), 기존 토큰 즉시 401, 아이디·비밀번호 찾기는 없는 계좌와 같은 응답, **남이 그 계좌로 이체하면 없는 계좌와 같은 404**.
+- 화면: 내 정보 맨 아래 "회원 탈퇴" — 막는 사유와 처리 링크(해지·이체·납부), 지워지는 것·보존되는 것·재가입 불가 안내, 현재 비밀번호 + 휴대폰 인증 + 최종 확인 → `/login?reason=withdrawn`. 저장된 토큰은 로그인 화면이 지운다(내 정보 화면에서 먼저 지우면 세션 타이머가 "다른 탭 로그아웃"으로 오해해 탈퇴 안내 없이 이동하기 때문).
+
+#### 이유
+- 사용자 결정(제안한 정책대로: 잔액 0·계좌 해지·카드 미결제 없음, 비밀번호 + 휴대폰 재확인, 소프트 삭제, 재가입 막기).
+- **입금 경합:** 탈퇴가 "잔액 0"을 확인한 직후 남의 입금이 들어오면 "탈퇴했는데 돈이 남는" 계좌가 생긴다. 탈퇴와 이체가 같은 입출금 계좌 행을 `FOR UPDATE`로 잠그고, 이체는 잠근 뒤 `closed_at`을 확인(`require_open`)해서 한 줄로 세운다. 이체가 먼저면 탈퇴가 막히고, 탈퇴가 먼저면 이체가 404.
+
+#### 영향 범위
+- 이체·적금 납입·예금 가입 출금·해지금 입금·체크카드 결제·청구서 납부·개발용 충전이 잠근 뒤 `require_open`을 거친다.
+- 탈퇴와 같은 순간 본인이 새 계좌를 여는 경우는 막지 못한다(개설은 users 행을 잠그지 않음, 잔액 0). 같은 사용자의 계좌 비밀번호 재설정과 탈퇴가 동시에 오면 드물게 PG 데드락 감지로 한쪽이 실패할 수 있다.
+- 마이그레이션을 되돌리면 탈퇴 표시만 사라지고 가려진 정보는 돌아오지 않는다.
+
+#### 검증
+- `tests/test_withdrawal.py` 7개(조건별 막힘·사유 목록, 비밀번호 5회 잠금, 증표 거절, 성공 후 가림·재가입 409·로그인 401·토큰 401·대화 삭제·기록 보존·계좌 닫힘·카드 해지·남의 이체 404·찾기 실패). 전체 422개 통과(3 skip).
+- **PostgreSQL** `pg_withdrawal_concurrency.py`: 탈퇴(잔액 0) ↔ 남의 1,000원 이체 20라운드 동시 → "탈퇴했는데 돈이 남음" 0번(탈퇴 성공·이체 404 19번, 탈퇴 막힘·이체 성공 1번). 잠금을 뺀 대조군은 20번 모두 돈이 남음. 기존 PG 스크립트 11개도 다시 통과.
+- 브라우저: 잔액 1,000원 계좌가 있으면 "잔액이 남은 입출금 계좌가 있습니다: 110-…(1,000원)" + 이체 링크 → 잔액을 보낸 뒤 휴대폰 인증·비밀번호로 탈퇴 → 로그인 화면 안내, 토큰 삭제, 같은 아이디 로그인은 없는 아이디와 같은 401.
+
+#### 팀 논의 포인트
+- 거래 기록 보존 기간(전자금융거래법 기준 5년으로 알려짐)과 기간 뒤 파기 작업, 탈퇴 회원 개인정보를 얼마나 남겨야 하는지(실명 확인 등)는 법 확인이 필요하다. 상대방 거래내역의 `counterpart_name`(탈퇴 회원 실명)은 상대의 기록이라 그대로 둔다.
+- 관리자 탈퇴 명령(고객센터 경로)은 정책이 정해지지 않아 만들지 않았다.
+
+---
+
+### C-096. 토큰 쿠키 전환 + 기기 등록
+
+- **날짜:** 2026-11-09
+- **분류:** 보안 · DB 스키마 · API · 구조
+- **상태:** 적용 (기기 해제 버튼 동작·build는 미확인)
+- **바뀐 파일:**
+  - `core/cookies.py`(새: 쿠키 설정·삭제, Origin 확인), `core/config.py`·`security.py`·`exception_handlers.py`
+  - `users/models.py`(`UserDevice`, 사용자 컬럼 추가)·`schemas.py`·`router.py`·`service.py`·`repository.py`·`withdrawal.py`, `verification/models.py`(purpose `NEW_DEVICE`)
+  - 마이그레이션 `2026_11_09_1000-9e0f1a2b3c4d_add_user_devices.py`
+  - `frontend/lib/api.ts`, `frontend/next.config.ts`(rewrites), `frontend/app/login`·`signup`·`me`, `.env.example`·`.env.prod.example`·`frontend/.env.example`(`API_ORIGIN`)
+  - `seed_demo.py`, `tests/`(`test_devices.py`·`cookie_helpers.py` 새, 기존 인증 테스트 수정), `scripts/pg_device_channel_concurrency.py`(새)·`scripts/README.md`
+
+#### 변경 전
+- 로그인 응답 본문에 액세스 토큰과 갱신 토큰이 모두 들어 있었고, 브라우저는 둘 다 `localStorage`(`avengers_bank_session`)에 보관했다.
+- `POST /users/token/refresh`, `POST /users/logout`은 본문에 갱신 토큰을 받았다.
+- 로그인 실패는 사용자 하나에 카운터 하나(`failed_login_count`, `login_locked_at`)였다. 남이 5번 틀리면 주인도 잠겼다(C-090).
+- 기기 개념이 없었다. 비밀번호만 맞으면 어디서든 로그인됐다.
+
+#### 변경 후
+**1. 토큰 쿠키 전환**
+- 갱신 토큰: `Set-Cookie: refresh_token=…; HttpOnly; Secure; SameSite=Strict; Path=/api/users`. **JSON 본문에는 더 이상 없다.** `refresh`·`logout`은 본문 없이 쿠키만 읽는다.
+- 액세스 토큰: 응답 본문으로 받아 **프론트 메모리(변수)에만** 둔다. 페이지를 새로고침하면 사라지고, 쿠키로 조용히 갱신해 다시 받는다.
+- `localStorage`에는 `session_expires_at`(비밀 아님)만 남긴다. 여러 탭의 타이머·로그아웃 동기화용이다.
+- `next.config.ts` rewrites가 `/api/*`를 FastAPI(서버 환경변수 `API_ORIGIN`)로 프록시한다. 브라우저에는 프론트와 **같은 주소**로 보이므로 쿠키가 first-party다.
+- 쿠키를 쓰는 엔드포인트(갱신·로그아웃·기기)는 **`Origin` 헤더를 필수로 확인**한다(`cors_origins`에 있어야 통과, 없거나 다르면 403 `CSRF_ORIGIN`. 적용: 갱신·로그아웃·기기 해제).
+- 여러 탭의 갱신을 한 번에 하나씩 하는 Web Locks와 같은 탭의 single-flight는 유지한다.
+
+**2. 기기 등록(B1)**
+- `user_devices`: `device_id`, `user_id`, `token_hash`(256비트 임의값의 SHA-256, unique), `label`(User-Agent에서 만든 "Chrome · Windows" 같은 이름), `created_at`, `last_used_at`, `revoked_at`.
+- 기기 쿠키 `device_token`: 1년, httpOnly·Secure·SameSite=Strict, Path=/api/users.
+- 로그인은 채널이 둘이다.
+  | | 등록된 기기 | 새 기기 |
+  |---|---|---|
+  | 조건 | 유효한 기기 쿠키 + 비밀번호 | 기기 쿠키 없음·무효 |
+  | 절차 | 바로 로그인 | 비밀번호 → 휴대폰 인증번호(purpose `NEW_DEVICE`) → 로그인하며 기기 등록 |
+  | 실패 카운터 | `device_failed_login_count`, `device_login_locked_at` | `failed_login_count`, `login_locked_at`(기존 컬럼) |
+  | 한도 | 5회 연속 오류 → 잠금 | 5회 연속 오류 → 잠금 |
+- 새 기기 로그인 API: `POST /users/login`이 비밀번호가 맞고 새 기기면 로그인 대신 **챌린지 토큰**을 준다 → `POST /users/login/device/send`(챌린지로 등록 번호에 인증번호 발송) → `POST /users/login/device`(챌린지 + 인증번호 → 세션과 기기 쿠키 발급).
+- 내 정보: 기기 목록(이름·마지막 사용·이 기기 표시)과 해제.
+- **비밀번호 재설정(복구)과 회원 탈퇴는 모든 기기를 해제**한다. 비밀번호 변경은 기기를 **유지**한다(본인이 현재 비밀번호를 알고 바꾸는 것이므로, 기기까지 지우면 매번 문자 인증이 필요해 불편하기만 하다).
+- 단일 세션 규칙(다른 곳에서 로그인하면 기존 세션 종료)은 그대로다.
+
+**3. 구현에서 정해진 세부 (최종 API 계약)**
+| 엔드포인트 | 요청 | 응답 · 쿠키 · 오류 |
+|---|---|---|
+| `POST /users/login` | `{login_id, password}` (+ 기기 쿠키) | `LoginOk`(`TokenResponse` + `status:"OK"`, refresh 쿠키) 또는 `DeviceChallenge`(`status:"DEVICE_VERIFICATION_REQUIRED"`, `challenge_token`, `phone_masked`; 쿠키·세션 없음). 401 `INVALID_CREDENTIALS`, 403 `ACCOUNT_LOCKED`, 429 `TOO_MANY_LOGIN_ATTEMPTS` |
+| `POST /users/login/device/send` | `{challenge_token}` | `{verification_id, expires_in}`(`send-for-me`와 같은 모양·같은 발송 한도). 등록 번호로만 발송. 401 `INVALID_DEVICE_CHALLENGE` |
+| `POST /users/login/device` | `{challenge_token, phone_verification_token}` | `LoginOk` + refresh·기기 쿠키. 400 `INVALID_VERIFICATION_TOKEN`, 401 `INVALID_DEVICE_CHALLENGE`, 403 `ACCOUNT_LOCKED`(새 기기 채널 잠김). 증표 소비·다른 세션 폐기·기기 등록·토큰 발급이 **한 트랜잭션** |
+| `POST /users/token/refresh` | 본문 없음 | 새 refresh 쿠키. 쿠키 없음 401 `INVALID_REFRESH_TOKEN`. 세션이 죽은 401(`INVALID_REFRESH_TOKEN`·`REFRESH_TOKEN_REUSED`·`SESSION_REPLACED`)에는 쿠키 삭제(`Max-Age=0`)가 함께 간다. Origin 확인 |
+| `POST /users/logout` | 본문 없음 | 항상 200, refresh 쿠키 삭제(기기 쿠키는 유지). Origin 확인이 먼저라 Origin이 없으면 403 |
+| `GET /users/me/devices` | Bearer | `[{device_id, label, created_at, last_used_at, current}]`(해제 안 된 것만, 최근 사용순) |
+| `DELETE /users/me/devices/{id}` | Bearer + Origin | 남의·없는·이미 해제된 기기 404 `DEVICE_NOT_FOUND`. 현재 기기면 기기 쿠키 삭제. 세션은 유지 |
+
+- 설정: `cookie_secure`(기본 True), `refresh_cookie_path`(기본 `/api/users`), `device_cookie_days`(기본 365). **기기 쿠키도 `refresh_cookie_path`를 같이 쓴다**(따로 설정 없음). 기기 쿠키의 1년은 발급 때 정해지고 사용할 때마다 늘어나지 않는다(등록 기기 로그인은 쿠키를 새로 주지 않는다).
+- **채널 판정은 비밀번호 검증 *전에*** 한다: 요청의 기기 쿠키가 로그인 대상 사용자의 해제 안 된 기기와 일치하면 등록 기기, 아니면 새 기기. 선증가(`count_login_attempt`)와 `lock_login`은 `device` 인자만 더했고 로직은 하나다. 성공은 해당 채널만 0으로 만든다. 새 기기에서 비밀번호가 맞으면 새 기기 카운터를 0으로 하고 챌린지를 준다.
+- **비밀번호 변경·회원 탈퇴**의 현재 비밀번호 확인도 요청의 기기 쿠키로 채널을 정해 센다(`withdraw(..., raw_device_token)`). 탈퇴는 성공 시 두 쿠키를 모두 지우고 기기를 전부 해제한다.
+- **챌린지 1회성:** 챌린지 JWT 자체는 10분 안에 다시 쓸 수 있다. 1회성은 `NEW_DEVICE` 인증 행의 `consumed_at`(조건 UPDATE 한 문장)이 보장한다. 같은 증표는 두 번 못 쓰고, 기기를 등록할 때마다 새 문자 인증이 필요하다. 챌린지 저장소(jti)는 만들지 않았다.
+- 운영 코드에 "기기 인증 건너뛰기" 설정은 없다. 테스트는 `BankClient.post`가 `/users/login`에서 챌린지를 받으면 실제 경로(send → 개발용 문자함 → verify → `/login/device`)로 자동 인증한다(`auto_device_verification`). 테스트 환경에서만 `COOKIE_SECURE=false`, `REFRESH_COOKIE_PATH=/users`를 둔다(http·프록시 없음).
+- `seed_demo.py`는 새 기기 챌린지를 `010-1234-5678` 개발용 문자함으로 자동 인증한다(기존 아이디의 번호가 다르면 실패, 실행마다 기기 1개 등록). PG 스크립트는 기기를 `register_device_sql`로 SQL 직접 등록한다(번호당 3회 발송 한도 때문에 실제 흐름으로는 기기를 여러 개 준비할 수 없다).
+
+#### 이유
+- **XSS와 토큰:** `localStorage`의 토큰은 페이지에서 실행되는 어떤 스크립트든 읽어서 밖으로 보낼 수 있다. 훔친 갱신 토큰은 공격자 PC에서 30분 넘게 이어 쓸 수 있다. `httpOnly` 쿠키와 메모리 보관으로 바꾸면 스크립트가 **읽을 수 없는 토큰은 훔칠 수 없다.**
+  - **한계(정직하게):** XSS가 페이지에서 실행되는 동안에는 그 스크립트가 **사용자인 척 API를 호출**할 수 있다(브라우저가 쿠키를 알아서 붙인다). 쿠키 전환은 "토큰을 들고 나가 나중에 쓰는 것"을 막을 뿐, XSS 자체의 해를 없애지 않는다. 그래서 이체 때 계좌 비밀번호·휴대폰 인증을 다시 받는 기존 방어가 여전히 중요하다.
+- **프록시:** 프론트(예: `app.example.com`)와 API(`api.example.com`)가 다르면 쿠키가 제3자 쿠키가 되어 브라우저가 막는다. 같은 주소로 프록시하면 쿠키가 정상이고, 프론트를 어디에 배포하든 API 주소를 바꿀 필요가 없다.
+- **CSRF(쿠키는 브라우저가 알아서 붙이므로 새로 생긴 위험):** 겹쳐서 막는다.
+  - `SameSite=Strict`: 다른 사이트에서 시작한 요청에는 쿠키를 붙이지 않는다. 가장 강한 방어다.
+  - 쿠키 `Path=/api/users`: 다른 API 경로에는 쿠키가 아예 가지 않는다.
+  - `Origin` 확인: 브라우저 버전·설정 차이나 SameSite 우회 사례가 있어도, 서버가 **요청을 보낸 사이트가 허용 목록에 있는지** 직접 본다. **Strict와 Origin을 함께 쓰는 이유:** 하나는 브라우저가 지켜 주는 약속이고 하나는 서버가 직접 하는 검사라서, 한쪽이 뚫리거나 설정이 틀려도 다른 쪽이 남는다. Origin을 필수(없으면 거절)로 한 것은 "헤더를 지우면 통과"하는 구멍을 없애기 위해서다.
+  - 액세스 토큰은 `Authorization` 헤더로만 가므로 쿠키를 쓰지 않는 일반 API는 CSRF 대상이 아니다.
+- **Web Locks를 유지하는 이유:** 갱신 토큰을 한 번 쓰면 폐기되고 재사용하면 세션이 끊긴다(AUTH.md 4장). 이제는 브라우저가 **항상 현재 쿠키를 보낸다**. 그래서 갱신이 *순차*로 일어나면(탭 A가 갱신하고, 그다음 탭 B가 갱신) B도 새 쿠키를 보내므로 문제없다. 위험한 건 *동시*에 두 탭이 같은 옛 쿠키를 보내는 경우뿐이고, 이것을 Web Locks가 막는다. 예전처럼 "내가 쓴 토큰이 저장소에 있는 것과 다른가" 확인할 필요는 없어졌다(토큰이 JS에 없으므로).
+- **기기 등록:** 아이디만 알면 5번 틀려 잠글 수 있는 문제(AUTH.md 6-1·9-3의 한계)를, 주인이 평소 쓰는 기기에는 영향이 없게 해서 줄인다. 또 비밀번호만 유출돼도 **모르는 기기에서는 휴대폰 인증이 한 번 더** 필요하다.
+- **규정 해석(팀 확인 필요):** 전자금융감독규정은 "5회 이내 오류 시 거래 중지"를 요구한다. 이를 **채널별로 적용**한다고 해석했다. 공격자는 새 기기 채널만 잠글 수 있고, 주인은 등록된 기기에서 계속 로그인하거나 복구로 푼다. 사용자 하나에 카운터 하나인 구조라면 공격자가 주인을 완전히 막는다. 이 해석이 규정의 취지에 맞는지는 확인이 필요하다.
+- AUTH.md 6-1의 "다음 단계(B)"(믿을 수 있는 기기 예외)가 이것으로 해결된다. 단 방식은 "제한 면제"가 아니라 "카운터 분리"다.
+
+#### 영향 범위
+- **API 계약이 바뀐다:** 로그인·갱신 응답에서 `refresh_token`이 사라지고, 갱신·로그아웃은 본문을 받지 않는다. 프론트와 테스트(`cookie_helpers.py`)를 같이 바꿨다. 다른 클라이언트가 있다면 쿠키 저장소를 지원해야 한다.
+- 프론트는 이제 **Next.js 서버(프록시)를 거친다.** `API_ORIGIN`을 서버 환경변수로 설정해야 하고, 프록시가 죽으면 API도 안 닿는다. 개발에서 Swagger(`:8000`)는 그대로 쓸 수 있다.
+- 마이그레이션: `user_devices` 테이블, `users`에 `device_failed_login_count`·`device_login_locked_at`, 인증 purpose `NEW_DEVICE`. 되돌리면 등록된 기기가 모두 사라져 다음 로그인에 휴대폰 인증이 필요하다.
+- **기존 사용자는 모두 새 기기로 처음 한 번 휴대폰 인증을 거친다.** `users.phone`은 필수 컬럼이라 인증 대상 번호는 항상 있다(가입 전 `phone_verified_at`이 비어 있어도 등록 번호로 보낸다).
+- 복구(비밀번호 재설정)·관리자 명령은 두 채널의 잠금을 모두 풀고 기기를 전부 해제한다. 브라우저에 남은 옛 `avengers_bank_session`(토큰 포함)은 따로 지우지 않는다: 다음 로그인·로그아웃이 덮어쓰거나 지우며, 옛 갱신 토큰은 서버에서 최대 30분 뒤 만료된다.
+- 돈이 움직이는 코드는 건드리지 않았다. 사용자 행 잠금 순서(users → 토큰·기기)는 같다.
+- 개발 환경: 개발 `.env`에 `COOKIE_SECURE`가 없으면 기본 True다(`localhost`의 Chrome은 http에서도 받는다). Safari 등은 `COOKIE_SECURE=false`가 필요하다(`.env.example`에 안내).
+
+#### 검증
+- 전체 pytest `453 passed, 3 skipped`(기존 422, 2026-11-09, 직접 재실행).
+- PostgreSQL 스크립트 5개 통과: `pg_device_channel_concurrency`(30곳 동시 오답 → 검증 정확히 5번, 등록 기기 채널만 잠김·새 기기는 영향 없음, 대조군 30번), `pg_refresh_concurrency`, `pg_single_session_concurrency`, `pg_login_lock_concurrency`, `pg_deposit_open_concurrency`.
+- 브라우저(프록시 경유): 새 기기 로그인 → 인증번호 → 로그인, `document.cookie` 비어 있음, localStorage에 `session_expires_at`만, 새로고침 뒤 `token/refresh` 200으로 로그인 유지, 로그아웃 뒤 갱신 401, 같은 브라우저 재로그인은 인증번호 없이 통과, 내 정보에 기기 목록 표시.
+- 미확인: 기기 해제 버튼 동작, 프록시가 낡은 8000번 서버를 가리키던 개발 환경 정리(낡은 API 서버를 내리고 새 코드로 다시 띄워 확인함), `npm run build`(`/find-id`의 `Date.now` 오류, 이번 변경 파일 아님).
+
+#### 팀 논의 포인트
+- **`Secure` 쿠키와 http:** `localhost`는 브라우저가 예외로 허용하지만 **Safari는 http에서 Secure 쿠키를 저장하지 않는다.** 개발·시연은 Chrome 또는 HTTPS로 한다. 운영은 HTTPS 전제다.
+- **기기 쿠키를 잃으면:** 시크릿 창, 쿠키 삭제, 브라우저 변경 → 새 기기로 보고 휴대폰 인증을 다시 받는다(불편하지만 안전한 쪽).
+- **기기를 도난당한 경우:** 기기 쿠키만으로는 로그인되지 않는다(비밀번호도 필요). 둘을 모두 가진 공격자는 등록 기기 채널로 문자 없이 들어올 수 있다. 주인이 내 정보에서 기기를 해제하거나 비밀번호를 재설정(모든 기기 해제)해야 한다.
+- **공용 PC:** "이 기기 등록 안 함" 선택이 아직 없다. 새 기기 로그인을 통과하면 무조건 1년짜리가 등록된다. 공용 PC에서 쓴 사람이 해제하지 않으면 다음 사람이 비밀번호만으로 들어올 수 있다는 뜻이다. 선택 옵션을 둘지 정해야 한다.
+- **비밀번호를 아는 공격자의 문자 발송:** 비밀번호를 알면 새 기기 로그인 단계에서 주인에게 인증번호 문자를 계속 보낼 수 있다. 발송 제한(번호당 15분 3번, IP 15분 10번)으로 묶었지만 주인이 문자를 받는 불편은 남는다.
+- **기기 개수·정리:** 기기 등록 개수 상한과 오래된 기기 정리가 없다. 같은 브라우저가 쿠키를 잃고 다시 등록하면 옛 행이 목록에 남는다. 상한(예: 10개)과 자동 정리를 둘지 정해야 한다.
+- **챌린지 JWT 재사용:** 10분 안에는 같은 챌린지로 문자를 다시 보낼 수 있다(발송 한도로 묶임). 인증 증표가 1회용이라 기기 등록은 문자 인증마다 한 번뿐이다. 챌린지 자체를 1회용으로(jti 저장) 할지는 필요해지면.
+- **잠금 해석:** 위 "규정 해석"이 맞는지, 공격자가 새 기기 채널을 잠글 수 있는 점(주인이 새 기기에서 쓰려면 복구 필요)을 받아들일지.
+- **XSS 한계:** 쿠키 전환은 토큰 탈취만 막는다. 페이지가 열려 있는 동안의 대리 요청은 막지 못한다(CSP 같은 XSS 자체 방어는 별도 과제).
+- **갱신 쿠키 `Path=/api/users`가 `/api/users/*` 전체**에 간다. 갱신·로그아웃만이 아니라 `/api/users/me` 등에도 쿠키가 붙는다. 해당 엔드포인트들은 쿠키를 읽지 않지만, 경로를 `/api/users/token`·`/api/users/logout`처럼 더 좁히려면 API 주소 구조를 바꿔야 한다.
+
+
+### C-097. 새 기기 로그인 화면에서 개발용 문자함이 안 열리던 문제
+
+- **날짜:** 2026-11-09
+- **분류:** 구조
+- **상태:** 적용
+- **바뀐 파일:**
+  - `frontend/app/login/page.tsx` (`CodeVerify`의 `devPhone` 제거)
+
+#### 변경 전
+```tsx
+<CodeVerify devPhone={challenge.phone} ... />
+```
+`challenge.phone`은 서버가 가려 보낸 번호(`010-****-9999`)다.
+
+#### 변경 후
+`devPhone`을 넘기지 않는다. `DevInbox`는 번호가 없으면 입력칸을 보여 주므로, 사용자가 가입한 번호를 직접 입력해 문자함을 연다.
+
+#### 이유
+- `DevInbox`는 `PHONE` 정규식을 통과해야 "개발용 문자함 보기" 버튼을 켠다. 가려진 번호는 통과하지 못해 버튼이 항상 비활성이었고, 번호가 주어졌으므로 입력칸도 숨겨졌다.
+- 재현: 회원가입 후 새 기기(기기 쿠키 없음)로 로그인하면 인증번호 단계에서 문자함을 열 수 없다.
+
+#### 영향 범위
+- 개발 화면만. `/dev/sms`가 없는 운영에서는 `DevInbox` 자체가 숨겨진다. 다른 `devPhone` 사용처(`me`, 계좌 상세)는 실제 번호를 넘기므로 그대로다.
+
+#### 검증
+- 브라우저에서 새 기기 로그인 → 번호 입력 → 문자함에 인증번호 표시 → 로그인 성공 확인.
+
+#### 팀 논의 포인트
+- 서버가 개발 모드에서만 전체 번호를 같이 주게 할 수도 있지만, 개발용 기능 때문에 응답을 바꾸지 않기로 했다.
+
+
+### C-098. 계좌 가입 화면 입력값 유지 (계좌 비밀번호 포함, 다른 화면에 갔다 와도)
+
+- **날짜:** 2026-11-09
+- **분류:** 구조 · 보안
+- **상태:** 적용
+- **바뀐 파일:**
+  - `frontend/app/open/[kind]/[[...product]]/page.tsx` (`SECRET_FIELDS`·`heldSecrets`, 맡기기 effect, 비밀번호 칸을 `bind`로)
+
+#### 변경 전
+- 입력값은 "전문 보기" 링크를 누를 때만(`saveDraft`) sessionStorage에 맡기고, 돌아오면 한 번 꺼낸 뒤 지웠다.
+- 계좌 비밀번호(새 비밀번호·확인·예금의 출금 계좌 비밀번호)는 비제어 입력이라 저장되지 않았다 → 약관 전문을 보고 오면 별명은 남고 비밀번호만 비었다.
+- 상단 메뉴 등 다른 곳으로 나갔다 오면 아무것도 남지 않았다.
+
+#### 변경 후
+- 입력값이 바뀔 때마다 `open-draft:{kind}`에 맡긴다. 화면이 다시 열리면 채우고, **가입에 성공하면 지운다.** 어느 경로로 나갔다 와도 같다.
+- 계좌 비밀번호도 상태(`fields`)로 들고 있지만, **sessionStorage에는 쓰지 않고 모듈 변수 `heldSecrets`(메모리)에만** 둔다. 앱 안 이동에는 남고, 새로고침·탭 닫기면 사라진다.
+- 주소의 상품이 맡겨 둔 상품과 다르면(상품 목록에서 다른 상품을 골라 들어옴) 주소를 따른다. 약관 동의는 상품·약관 묶음(`set_hash`)이 같을 때만 되살린다(기존 규칙 그대로).
+- 아무것도 안 건드린 첫 화면은 맡기지 않는다. 처음 그린 빈 값이 맡겨 둔 값을 덮지 않게 하기 위해서다(React StrictMode의 이중 마운트 포함).
+
+#### 이유
+- 사용자 제보: 약관 전문을 보고 돌아오면 입력한 계좌 비밀번호가 사라진다. 다른 곳에 다녀와도 유지되길 원함.
+- 비밀번호를 sessionStorage에 두면 같은 탭의 스크립트가 언제든 읽을 수 있고 새로고침 뒤에도 남는다. 메모리에만 두면 React 상태에 있는 것과 노출 범위가 같다.
+
+#### 영향 범위
+- 입출금·예금·적금·카드 가입 화면 전부(같은 컴포넌트). 카드는 비밀번호 칸이 없어 일반 입력값만 해당.
+- 가입하지 않고 떠나면 같은 탭에서는 다음에 들어올 때 값이 남아 있다(의도). 비밀번호는 메모리라 새로고침하면 사라진다.
+
+#### 검증
+- 브라우저(로컬, 테스트 계정)에서 확인:
+  - 입출금: 별명·비밀번호·확인·약관 동의 입력 → 전문 보기 → "가입 화면으로" → 모두 남음. sessionStorage에는 별명·동의만 있고 비밀번호는 없음.
+  - 예금: 두 번째 상품·가입 금액·두 번째 출금 계좌·만기일·별명·비밀번호 3칸·동의 → 전문 보기 → 돌아옴 → 모두 남음.
+  - 적금: 상품·납입액·납입일·별명·비밀번호·동의 → 상단 "상품" 메뉴 → 뒤로 가기 → 모두 남음. 가입 성공 후 `open-draft:savings` 지워짐.
+- `tsc --noEmit`, eslint 통과.
+
+#### 팀 논의 포인트
+- 떠난 가입 화면의 값을 계속 남길지, 일정 시간이 지나면 지울지.
+
+
+### C-099. AI 비서 이체: 내 계좌 id를 매 턴 주고, 본인 계좌로는 to_account_id로 이체
+
+- **날짜:** 2026-11-09
+- **분류:** API · 구조 · 테스트
+- **상태:** 일부 C-100에서 대체 (매 턴 계좌 목록 → 이름으로 찾기. `to_account_id` 방식도 같이 대체됨)
+- **바뀐 파일:**
+  - `domains/agent/tools/transfers.py` (`PrepareTransferArgs`, `_own_checking_num`, `prepare_transfer`)
+  - `domains/agent/prompts.py` (`build_system_prompt`, 이체 규칙), `domains/agent/service.py` (`_checking_accounts`), `domains/agent/tools/__init__.py`(도구 설명)
+  - `tests/test_agent.py` (FakeClient가 system 프롬프트를 기록, 테스트 3개 추가)
+
+#### 변경 전
+- 첫 질문 "내 계좌 목록"에서 `get_my_accounts` 결과(account_id 포함)를 보고도, 다음 질문의 모델에게는 **글자 답변만** 전달됐다(`_history`는 도구 결과를 저장·복원하지 않는다). 모델은 "이미 봤다"며 `get_my_accounts`를 건너뛰고 `from_account_id`를 짐작해 넣었고 `FROM_ACCOUNT_NOT_FOUND`로 실패했다.
+- `prepare_transfer`는 받는 계좌를 **전체 번호(`to_account_num`)로만** 받았다. 도구가 마스킹된 번호만 주므로 "생활비 계좌로"처럼 본인 계좌를 가리켜도 모델이 번호를 만들 수 없었다.
+- 오류가 나도 모델이 오류 문구를 그대로 사용자에게 전했다.
+
+#### 변경 후
+- **계좌 id를 매 턴 준다:** `_chat`이 로그인 사용자의 입출금 계좌 `(account_id, 이름, 마스킹된 번호)`를 읽어 시스템 프롬프트 끝(날짜 뒤)에 붙인다. 앞부분은 고정이라 프롬프트 캐시는 그대로다. **잔액은 넣지 않는다**(잔액은 도구 결과만 쓴다는 기존 규칙). 별칭은 줄바꿈을 없애고 50자로 자른다(사용자가 정한 글자라 지시문처럼 읽히지 않게).
+- **받는 계좌 두 가지:** `to_account_id`(본인 입출금 계좌) 또는 `to_account_num`(다른 사람 계좌 전체 번호) 중 **정확히 하나**. 둘 다 있거나 둘 다 없으면 `INVALID_ARGUMENTS`. `to_account_id`는 서버가 소유 계좌인지 확인하고 번호를 직접 찾아 넣는다(모델은 전체 번호를 볼 필요가 없다).
+- **오류 코드 분리:** 출금 계좌 `FROM_ACCOUNT_NOT_FOUND`, 받는 내 계좌 `TO_ACCOUNT_NOT_FOUND`. 남의 계좌 id도 같은 코드로 404(존재 여부를 드러내지 않음).
+- 프롬프트: id는 위 목록(없으면 `get_my_accounts`)에서만 쓰고, 마스킹된 번호로 계좌번호를 만들지 않으며, 계좌를 못 찾는다는 오류면 `get_my_accounts`로 다시 확인해 한 번 더 시도한다.
+
+#### 이유
+- 사용자 제보: "월급 계좌에서 생활비 계좌로 900만원 입금해줘"에 "출금 계좌를 찾을 수 없습니다"가 나온다. 모델에게 도구 결과를 다시 보여 주는 대신, 이체에 꼭 필요한 id만 서버가 매번 정확히 알려 준다.
+
+#### 영향 범위
+- 채팅 요청마다 계좌 조회 쿼리 1회 추가(입출금·예금·적금 목록).
+- 이체 실행(`confirm`)·초안 검증 규칙(잔액·한도·같은 계좌)은 그대로다. 비밀번호는 여전히 확인 카드에서만 받는다.
+- 모델 응답은 비결정적이라 프롬프트만으로는 100% 막지 못한다. 서버가 id를 주는 것이 핵심 대책이고, 오류 시 재시도 규칙은 보조다.
+
+#### 검증
+- `tests/test_agent.py` 23개 통과: 본인 계좌 id로 초안 생성(번호 미노출, 초안에 서버가 찾은 번호 저장), 대상 오류 5종(남의 계좌 id·없는 출금 계좌·같은 계좌·대상 없음·둘 다 줌), 시스템 프롬프트에 내 입출금 계좌만 있고 남의 계좌·전체 번호는 없음.
+- 실제 모델(Gemini)로 직접 확인: 같은 순서("내 계좌 목록" → "월급 계좌에서 생활비 계좌로 100만원 입금해줘")에서 두 번째 질문이 `get_my_accounts` 없이 `prepare_transfer`만으로 성공, 확인 카드 생성. 이체 실행은 하지 않았다.
+
+#### 팀 논의 포인트
+- 지난 대화의 도구 결과를 모델에게 계속 보여 줄지(전체 재현), 지금처럼 필요한 id만 매번 줄지. LangGraph로 옮길 때 상태(state)에 계좌 목록을 두는 방식과 함께 정한다.
+
+
+### C-100. AI 비서 이체: 계좌 id 대신 이름으로 찾기 (C-099의 매 턴 계좌 목록 대체)
+
+- **날짜:** 2026-11-09
+- **분류:** API · 구조 · 테스트
+- **상태:** 적용
+- **바뀐 파일:**
+  - `domains/agent/tools/transfers.py` (`PrepareTransferArgs`, `_key`, `_find_own_checking`, `prepare_transfer`)
+  - `domains/agent/prompts.py`(이체 규칙, `build_system_prompt`에서 계좌 목록 제거), `domains/agent/service.py`(`_checking_accounts` 삭제), `domains/agent/tools/__init__.py`(도구 설명)
+  - `tests/test_agent.py`, `tests/test_account_password.py`, `docs/AGENT.md`
+
+#### 변경 전 (C-099)
+- 서버가 매 요청마다 내 입출금 계좌 `(account_id, 별칭, 마스킹된 번호)`를 시스템 프롬프트 끝에 붙였다. 모델은 그 id를 `from_account_id`·`to_account_id`로 넘겼다.
+- 이체 요청이 아닌 말("안녕")에도 계좌 조회가 매번 실행됐고, 사용자가 정한 별칭이 시스템 프롬프트에 들어갔다.
+
+#### 변경 후
+- `prepare_transfer`는 **이름**을 받는다: `from_account`(출금), `to_account`(받는 내 계좌) 또는 `to_account_num`(다른 사람 계좌 전체 번호). 둘 중 받는 쪽은 정확히 하나. id 인자(`from_account_id`·`to_account_id`)는 없앴다(`extra="forbid"`라 옛 인자는 `INVALID_ARGUMENTS`).
+- **서버가 이름으로 찾는다**(`_find_own_checking`): 로그인 사용자의 입출금 계좌에서
+  1) 이름이 같음(공백·"계좌"·"통장"을 뺀 뒤 비교: "월급 계좌"="월급 통장"="월급"),
+  2) 한쪽이 다른 쪽을 포함,
+  3) 번호 끝 4자리 이상 일치
+  순서로 보고, 앞 단계에서 하나라도 나오면 뒤는 보지 않는다.
+- **하나일 때만 진행한다.** 없으면 `FROM/TO_ACCOUNT_NOT_FOUND`, 여럿이면 `ACCOUNT_AMBIGUOUS`. 오류 메시지에 후보(이름·마스킹된 번호, id 없음)를 넣고 "사용자에게 어느 계좌인지 물어보세요"를 붙여, 모델이 임의로 고르지 않고 되묻게 한다.
+- 시스템 프롬프트의 계좌 목록과 서비스의 `_checking_accounts`를 지웠다. 프롬프트 규칙은 "이름을 그대로 넣고, id·번호를 짐작하지 않는다"로 바꿨다.
+
+#### 이유
+- 모델이 순서를 지킬지(먼저 목록 조회)에 기대던 구조가 첫 실패의 원인이었고, 매 턴 목록 주입은 그 임시 대책이었다. 사용자가 말한 이름을 서버가 결정적으로 해석하면 id를 모델 쪽에서 알 필요가 없다.
+
+#### 영향 범위
+- 채팅마다 계좌 조회가 1번 줄고(이체 요청 때만 조회), 프롬프트에서 별칭 주입 통로가 없어졌다.
+- 이체 검증(소유권·같은 계좌·잔액·1회/1일 한도)과 확인 카드·비밀번호 흐름은 그대로다. 잘못 고른 계좌가 있어도 확인 카드에 이름과 마스킹된 번호가 보인다.
+- 부분 일치로 하나만 걸리면 그 계좌로 초안을 만든다(예: "월"만 말해도 별칭에 "월"이 들어간 계좌가 하나면 선택). 확인 카드에서 사용자가 걸러 낸다.
+
+#### 검증
+- `tests/test_agent.py`·`tests/test_account_password.py` 통과(78개): 이름 표기 6종과 번호 끝자리, 남의 계좌는 번호 끝자리로도 못 찾음(후보에 내 계좌만), 없음·여럿·같은 계좌·대상 없음/둘 다·옛 id 인자 거절, 프롬프트에 계좌 정보 없음, 본인 계좌 이체 초안에 서버가 번호를 넣음.
+- 실제 모델(Gemini)로 직접 확인(로컬 테스트 계정, 이체 실행은 하지 않음): 계좌 목록을 먼저 보지 않고 "월급 계좌에서 생활비 계좌로 100만원 입금해줘" → `prepare_transfer` 한 번으로 확인 카드 생성. "생활비 통장에서 월급 통장으로 5만원"도 성공. 없는 계좌 "여행 통장으로 1만원"은 도구를 부르지 않고 출금 계좌를 되물음.
+
+#### 팀 논의 포인트
+- 이름 매칭 규칙(부분 일치 허용 범위). 더 엄격하게 하려면 2단계(포함)를 빼고 정확히 같을 때만 허용한다.
+
+
+### C-101. AI 비서 모델↔도구 반복을 LangGraph로 이식
+
+- **날짜:** 2026-11-09
+- **분류:** 구조 · 테스트
+- **상태:** 적용 (동작은 그대로)
+- **바뀐 파일:**
+  - `domains/agent/graph.py`(새), `domains/agent/service.py`(`_chat`의 for 루프와 `_respond` 삭제, 상한·문구 상수 이동)
+  - `pyproject.toml`·`uv.lock`(`langgraph` 추가), `tests/test_agent.py`(상수·`TOOL_SPECS`를 graph에서 import, 테스트 내용은 그대로), `docs/AGENT.md`, `docs/RETROSPECTIVE.md`
+
+#### 변경 전
+- `service.py`의 `for _ in range(MAX_MODEL_CALLS)` 루프가 모델 호출 → 도구 실행 → 결과 전달을 반복하고, 호출·도구 상한과 이체 카드(`TransferAction`) 포착을 직접 처리했다.
+
+#### 변경 후
+`StateGraph` 노드 4개:
+
+```
+START → call_model ─┬─ 도구 호출 없음 ──────────→ finish → END
+                    ├─ 도구 호출이 상한 초과 ───→ limit  → END
+                    └─ 도구 호출 있음 → tools ─┬─ 모델 호출 상한 도달 → limit
+                              ↑                └─ 아니면 → call_model
+```
+
+- 상태(`AgentState`): `system`, `turns`, `reply`, `model_calls`, `tool_log`, `action`, `answer`. 요청마다 다른 값(모델 클라이언트, 로그인 사용자)은 상태가 아니라 `context`(`AgentContext`)로 넘긴다.
+- 상한 의미는 그대로다: 모델 호출 6번, 도구 8개. 마지막(6번째) 응답에 도구 호출이 있으면 그 도구는 실행하고 나서 "단계가 너무 많이 필요합니다"로 끝난다. 도구가 상한을 넘기는 응답은 실행하지 않고 같은 문구로 끝난다.
+- `ModelTimeout`→504 `AGENT_TIMEOUT`, `ModelError`→503 `AGENT_UNAVAILABLE` 변환은 `call_model` 노드로 옮겼다.
+- **그래프 밖에 둔 것:** 지난 대화 불러오기, 인용 정리, 대화 저장(DB를 만지는 일)은 `service.py`에 그대로 둔다. 그래프가 `service.py`의 `extract_citations`를 불러야 하면 순환 import가 되고, DB 접근을 한곳에 두는 편이 단순하다.
+- **checkpointer는 쓰지 않는다.** 그래프 상태는 요청 하나 동안만 살고, 대화 기록은 `agent_messages`가 유일한 저장소다(같은 개인 금융 정보 사본을 하나 더 만들지 않기 위해).
+- `RECURSION_LIMIT = 2*6+3`: 그래프 단계 수 상한을 명시해서, LangGraph 기본값(25)이 아니라 우리 상한이 먼저 걸리게 한다.
+
+#### 이유
+- 학습과 확장: 노드·간선으로 흐름이 보이고, 스트리밍·이체 전용 서브그래프 같은 이후 확장이 쉬워진다. 사용자에게 보이는 동작을 바꾸려는 변경이 아니다.
+- **`langchain-google-genai`는 쓰지 않았다.** 설치를 시뮬레이션하니 `google-genai`를 1.75 → 3.0.0으로 올려야 했다(프로젝트는 `<2`, 약관 검색 `terms/embedding.py`도 사용). `langgraph` 단독은 충돌이 없어서, 기존 `GeminiModelClient`(생각 서명 보존 등 구현·테스트 완료)를 노드에서 그대로 부른다.
+
+#### 영향 범위
+- `ModelClient`·`tools/`·`prompts.py`·라우터·응답 스키마·프런트엔드·DB 스키마는 그대로다. `langgraph`와 함께 `langchain-core` 등 15개 패키지가 설치된다(`google-genai` 1.75.0 유지).
+- 약관 출처를 모으는 `request_sources` 컨텍스트 변수가 그래프 노드 안에서도 같은 값으로 보이는지가 위험이었다 → 채팅 인용 테스트로 확인.
+
+#### 검증
+- 테스트 90개 통과(`test_agent.py` 24, `test_terms_rag.py`, `test_account_password.py`). 테스트 본문은 바꾸지 않고 상수·`TOOL_SPECS`의 import 위치만 고쳤다 — 상한, 오류 변환, 대화 이어가기·소유권, 인용 출처, 이체 초안이 모두 기존 테스트로 동등함을 확인했다.
+- 실제 모델(Gemini)로 직접 확인(로컬 테스트 계정): 이체 요청은 `prepare_transfer` 한 번으로 확인 카드, 약관 질문은 `search_product_terms` 후 답변에 검증된 출처(어벤져스 입출금계좌 이용약관 › 1회·1일 이체 한도)가 붙음.
+- 전체 테스트 스위트는 다시 돌리지 않았다(바뀐 곳은 에이전트 쪽).
+
+#### 팀 논의 포인트
+- 다음 확장 후보: 답변 스트리밍, 이체 전용 서브그래프, 실행 추적. 각각 따로 정한다.
+
+---
+
 ## 부록 A. 초기 리뷰(2026-11-04) 항목 처리 현황
 
 처음 코드 리뷰에서 나온 9개 항목의 처리 결과다. 취소선은 처리 완료이고 오른쪽이 처리한 항목 번호다. **9개 모두 처리됐다**(9번은 보류했다가 C-026에서 처리).
@@ -3717,6 +4781,32 @@ async with db.begin():
 | C-073 | 2026-11-07 | 구조 | AI 비서 패널 폭을 경계선 끌기·←→ 키로 조절 | 적용 |
 | C-074 | 2026-11-07 | 구조 | AI 답변 서식(굵게·목록 카드) + 등장·입력 중 애니메이션 | 적용 |
 | C-075 | 2026-11-07 | DB 스키마 | 상품 약관 동의(버전 보존·동시성) + 약관 검색 RAG Tool(pgvector) + 검증된 출처 | 적용 |
+| C-076 | 2026-11-08 | API | 예금 가입 때 가입 금액·출금 계좌를 받아 개설과 같은 트랜잭션에서 입금 | 적용 |
+| C-077 | 2026-11-08 | 구조 | 약관 전문 보기를 같은 탭으로, 돌아와도 가입 입력값·동의 유지 | 적용 |
+| C-078 | 2026-11-08 | 구조 | 데모 사용자·계좌 시드 스크립트 `seed_demo.py` | 적용 |
+| C-079 | 2026-11-08 | API | 예금 가입 금액 필수화, 가입 후 추가 입금 금지(`POST /transfers/deposit` 삭제) | 적용 |
+| C-080 | 2026-11-08 | DB 스키마 | 예금 상품별 최소 가입 금액 `account_products.min_amount` | 적용 |
+| C-081 | 2026-11-08 | 문서 | 예금 약관 1.1.0 개정(가입 금액·최소 금액·추가 입금 불가) + 발행·색인 | 적용 |
+| C-082 | 2026-11-08 | 보안 | 로그인 실패 한도를 동시 요청으로 우회하던 버그 수정(검증 전에 시도를 먼저 셈) | 적용 |
+| C-083 | 2026-11-08 | 보안 | 액세스 토큰 5분 + 갱신 토큰(회전·재사용 감지, 해시 저장) 세션 구조 | 적용 |
+| C-084 | 2026-11-08 | API | 아이디 정규화, 이름·휴대폰·비밀번호(영문·숫자·특수문자) 입력 검증 | 적용 |
+| C-085 | 2026-11-08 | API | 422 입력 오류 메시지를 한국어 완성 문장으로 | 적용 |
+| C-086 | 2026-11-08 | 구조 | 화면: 세션 타이머·자동 갱신·만료 처리, 비밀번호 확인 칸 | 적용 |
+| C-087 | 2026-11-08 | 보안 | 액세스 토큰에 세션 번호(`sid`)를 넣고 요청마다 세션 확인 → 로그아웃 등 즉시 적용 | 적용 |
+| C-088 | 2026-11-08 | 보안 | 단일 세션(다른 곳 로그인 시 기존 세션 종료, `SESSION_REPLACED`) + 세션 작업의 사용자 행 잠금 | 적용 |
+| C-089 | 2026-11-08 | 보안 | 아이디별 속도 제한(IP와 무관하게 15분 10회 실패 후 30초에 1회, 잠그지 않음) | C-090에서 대체 |
+| C-090 | 2026-11-08 | 보안 | 은행식 로그인 잠금(5회 연속 → 잠금, DB 원자적 선증가, 동시 요청은 429) | 적용 |
+| C-091 | 2026-11-08 | 보안 | 휴대폰 인증번호 구조(HMAC 저장·1회성·발송 제한·개발용 문자함) + 가입·번호 변경 확인 | 적용 |
+| C-092 | 2026-11-08 | 보안 | 계좌 비밀번호(숫자 4자리, 돈이 나가는 곳 전부, 5회 잠금, 실패 횟수 커밋 보장) | 적용 |
+| C-093 | 2026-11-08 | 보안 | 계정 복구: 아이디 찾기·비밀번호 찾기·계좌 비밀번호 재설정(응답 동일화) | 적용 |
+| C-094 | 2026-11-08 | 구조 | 화면: 휴대폰 인증·계좌 비밀번호 입력·찾기 화면·해지 화면 | 적용 |
+| C-095 | 2026-11-09 | 보안 | 회원 탈퇴(소프트 삭제·개인정보 가림·계좌 닫기·입금 경합 차단) | 적용 |
+| C-096 | 2026-11-09 | 보안 | 토큰 쿠키 전환(갱신 토큰 httpOnly 쿠키·액세스 토큰 메모리·Next.js 프록시·Origin 확인) + 기기 등록(새 기기 휴대폰 인증, 채널별 5회 잠금) | 적용 (기기 해제 버튼 동작·build는 미확인) |
+| C-097 | 2026-11-09 | 구조 | 새 기기 로그인의 개발용 문자함: 가려진 번호 대신 번호 직접 입력 | 적용 |
+| C-098 | 2026-11-09 | 구조 | 계좌 가입 화면 입력값 유지(바뀔 때마다 맡김, 계좌 비밀번호는 메모리에만, 가입 성공 시 삭제) | 적용 |
+| C-099 | 2026-11-09 | API | AI 비서 이체: 내 입출금 계좌 id를 매 턴 프롬프트에 제공, 본인 계좌로는 to_account_id(번호 없이)로 초안 생성, 출금·받는 계좌 오류 코드 분리 | 적용 |
+| C-100 | 2026-11-09 | API | AI 비서 이체: 계좌 id 대신 이름으로 찾기(서버가 해석, 없음·여럿이면 후보를 돌려 되묻기). C-099의 매 턴 계좌 목록 대체 | 적용 |
+| C-101 | 2026-11-09 | 구조 | AI 비서 모델↔도구 반복을 LangGraph(StateGraph)로 이식. 동작 동일, checkpointer 없음, langchain-google-genai 대신 기존 GeminiModelClient 유지 | 적용 |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`

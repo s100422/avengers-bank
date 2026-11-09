@@ -1,12 +1,51 @@
 // FastAPI 호출 도우미. 성공은 { data }, 실패는 { error: { message, details } } 모양이다.
-const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-const TOKEN_KEY = "avengers_bank_token";
+// 같은 출처의 /api로 부르면 next.config.ts의 rewrites가 FastAPI로 넘긴다(갱신 토큰 쿠키가 자사 쿠키가 되도록).
+const BASE = "/api";
+export const SESSION_KEY = "avengers_bank_session"; // storage 이벤트에서 이 키를 본다
 
-// shortcut: 토큰을 localStorage에 둔다(XSS에 약함). 실서비스로 가면 httpOnly 쿠키로 바꾼다.
-export const token = {
-  get: () => (typeof window === "undefined" ? null : localStorage.getItem(TOKEN_KEY)),
-  set: (t: string) => localStorage.setItem(TOKEN_KEY, t),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
+// 로그인·갱신·비밀번호 변경이 돌려주는 토큰 묶음. 갱신 토큰은 httpOnly 쿠키라 JS에는 보이지 않는다
+export type Session = {
+  access_token: string;
+  token_type: "bearer";
+  expires_in: number; // 액세스 토큰 수명(초)
+  session_expires_at: string; // 갱신 토큰 만료 시각(ISO8601 UTC). 지나면 자동 로그아웃
+};
+
+// 로그인 응답. 새 기기 인증(DEVICE_VERIFICATION_REQUIRED)은 2단계에서 이 타입에 더한다
+export type LoginResult =
+  | (Session & { status: "OK" })
+  | { status: "DEVICE_VERIFICATION_REQUIRED"; challenge_token: string; phone_masked: string };
+
+// 로그인한(등록된) 기기. current = 지금 이 브라우저
+export type Device = { device_id: string; label: string; created_at: string; last_used_at: string | null; current: boolean };
+export const devices = {
+  list: () => api<Device[]>("/users/me/devices"),
+  revoke: (id: string) => api<unknown>(`/users/me/devices/${encodeURIComponent(id)}`, undefined, "DELETE"),
+};
+
+// 액세스 토큰은 메모리에만 둔다(XSS로 훔쳐 가도 새로고침·탭 종료면 사라짐). 새로고침하면 비어 있고, 첫 401 → 쿠키로 갱신 경로가 다시 채운다.
+let accessToken: string | undefined;
+
+// localStorage에는 비밀이 아닌 만료 시각만 둔다. 다른 탭·타이머·가드가 "로그인 중인지, 언제 끝나는지" 동기적으로 읽는 표시다.
+export const session = {
+  save: (s: Session) => {
+    accessToken = s.access_token;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ session_expires_at: s.session_expires_at }));
+  },
+  clear: () => {
+    accessToken = undefined;
+    localStorage.removeItem(SESSION_KEY);
+  },
+  expiresAt: () => {
+    if (typeof window === "undefined") return 0;
+    try {
+      return Date.parse(JSON.parse(localStorage.getItem(SESSION_KEY) ?? "null")?.session_expires_at ?? "") || 0;
+    } catch {
+      return 0;
+    }
+  },
+  // 로그인 상태 = 만료 시각 표시가 있다 (액세스 토큰은 5분마다 만료되어도 쿠키로 갱신하면 된다)
+  active: () => session.expiresAt() > 0,
 };
 
 export class ApiError extends Error {
@@ -16,32 +55,113 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, body?: unknown, method?: "PATCH" | "POST"): Promise<T> {
-  const headers: Record<string, string> = {};
-  const t = token.get();
-  if (t) headers.Authorization = `Bearer ${t}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+// 갱신 토큰으로 다시 받을 수 없는 요청들. 이 요청의 401은 그대로 화면에 보여 준다
+const AUTH_PATHS = ["/users/login", "/users/signup", "/users/token/refresh", "/users/logout"];
+const isAuthPath = (path: string) => AUTH_PATHS.includes(path) || path.startsWith("/users/login/device");
 
-  let res: Response;
-  try {
-    res = await fetch(BASE + path, {
-      method: method ?? (body === undefined ? "GET" : "POST"),
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
+function send(path: string, body: unknown, method: string | undefined) {
+  const headers: Record<string, string> = {};
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  return fetch(BASE + path, {
+    method: method ?? (body === undefined ? "GET" : "POST"),
+    headers,
+    credentials: "same-origin", // 갱신 토큰 쿠키를 실어 보낸다
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }).catch(() => {
     throw new ApiError(0, "서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+  });
+}
+
+export async function api<T>(path: string, body?: unknown, method?: "PATCH" | "POST" | "DELETE"): Promise<T> {
+  let res = await send(path, body, method);
+
+  // 액세스 토큰(5분)이 만료됐으면 한 번만 갱신하고 다시 보낸다. 401은 서버가 처리 전에 거절한 것이라 POST도 다시 보내도 된다
+  if (res.status === 401 && session.active() && !isAuthPath(path)) {
+    if (await refreshSession()) res = await send(path, body, method);
+    if (res.status === 401) {
+      const replaced = lastRefreshFailure === "SESSION_REPLACED";
+      expireSession();
+      throw new ApiError(401, replaced ? REPLACED_MESSAGE : "로그인이 만료되었습니다. 다시 로그인해 주세요.", "SESSION_EXPIRED");
+    }
   }
 
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    if (res.status === 401) token.clear();
     const err = json?.error;
-    const detail = err?.details?.[0];
-    const message = detail ? `${detail.loc.at(-1)}: ${detail.msg}` : err?.message;
+    // 422의 msg는 서버가 필드 이름까지 넣은 한국어 문장이다
+    const message = err?.details?.[0]?.msg ?? err?.message;
     throw new ApiError(res.status, message ?? `요청이 실패했습니다 (${res.status}).`, err?.code);
   }
   return json.data as T;
+}
+
+// 갱신 토큰은 한 번 쓰면 폐기되고, 쓴 토큰을 다시 보내면 서버가 세션을 통째로 끊는다.
+// 그래서 같은 탭에서는 진행 중인 갱신 하나를 같이 기다리고(single-flight),
+// 여러 탭 사이에서는 Web Locks로 한 번에 한 탭만 갱신한다.
+// 쿠키는 브라우저가 항상 최신 값을 보내므로, 다른 탭이 방금 갱신했어도 차례로 한 번 더 갱신하는 것은 무해하다(동시 갱신만 막으면 된다).
+let inflight: Promise<boolean> | null = null;
+
+// 마지막 갱신이 실패한 이유(서버 오류 코드). SESSION_REPLACED = 다른 곳에서 로그인해 이 세션이 끊김(단일 세션)
+let lastRefreshFailure: string | undefined;
+export const REPLACED_MESSAGE = "다른 곳에서 로그인되어 로그아웃되었습니다.";
+
+/**
+ * 세션을 갱신한다. 성공이면 true, 갱신 토큰(쿠키)이 죽었으면 false.
+ * 서버에 닿지 못하면 ApiError(0)를 던진다(세션은 그대로 둔다).
+ */
+export function refreshSession(): Promise<boolean> {
+  inflight ??= (async () => {
+    try {
+      return await (navigator.locks ? navigator.locks.request("avengers-bank-refresh", refreshOnce) : refreshOnce());
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
+}
+
+async function refreshOnce(): Promise<boolean> {
+  if (!session.active()) return false; // 잠금을 얻은 뒤 저장소를 다시 읽는다(그사이 다른 탭이 로그아웃했을 수 있다)
+  try {
+    session.save(await api<Session>("/users/token/refresh", undefined, "POST"));
+    lastRefreshFailure = undefined;
+    return true;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 0) throw e;
+    lastRefreshFailure = e instanceof ApiError ? e.code : undefined;
+    return false;
+  }
+}
+
+/** 서버 세션을 끊고(실패해도 무시, 쿠키는 서버가 지운다) 저장된 토큰을 지운다 */
+export async function logout() {
+  const was = session.active();
+  session.clear();
+  if (was) await api("/users/logout", undefined, "POST").catch(() => {});
+}
+
+/** 이 기기를 포함한 모든 기기의 세션을 서버에서 끊고 저장된 토큰을 지운다. 서버가 거절하면 오류를 던진다(세션 유지) */
+export async function logoutAll() {
+  await api("/users/logout-all", {});
+  session.clear();
+}
+
+// 만료로 로그인 화면으로 가는 중. 타이머가 "다른 탭 로그아웃"으로 오해해 경로를 덮어쓰지 않게 한다
+export let expiring = false;
+
+/** 세션을 지우고 지금 화면으로 돌아올 수 있게 로그인 화면으로 보낸다. 다른 곳 로그인으로 끊겼으면 그 이유를 넘긴다 */
+export function expireSession() {
+  expiring = true;
+  session.clear();
+  if (location.pathname === "/login") return;
+  const reason = lastRefreshFailure === "SESSION_REPLACED" ? "replaced" : "expired";
+  location.replace(`/login?next=${encodeURIComponent(location.pathname + location.search)}&reason=${reason}`);
+}
+
+/** 로그인 뒤 돌아갈 곳. 다른 사이트로 보내지 않게 같은 사이트 경로만 받는다 */
+export function safeNext(next: string | null) {
+  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/accounts";
 }
 
 export type AccountSummary = {
@@ -79,7 +199,7 @@ export const HISTORY_TYPE: Record<string, [string, boolean]> = {
   DEV_CHARGE: ["충전(개발용)", false],
 };
 
-export type Product = { product_id: number; name: string; description: string; interest_rate: string };
+export type Product = { product_id: number; name: string; description: string; interest_rate: string; min_amount?: number | null };
 
 export const won = (n: number) => n.toLocaleString("ko-KR") + "원";
 
@@ -136,7 +256,8 @@ export type AgentTransferResult = {
 
 export const agent = {
   chat: (message: string, conversation_id: number | null) => api<AgentReply>("/agent/chat", { message, conversation_id }),
-  confirm: (draftId: string) => api<AgentTransferResult>(`/agent/transfers/${encodeURIComponent(draftId)}/confirm`, undefined, "POST"),
+  confirm: (draftId: string, account_password: string) =>
+    api<AgentTransferResult>(`/agent/transfers/${encodeURIComponent(draftId)}/confirm`, { account_password }),
   messages: (conversationId: number) => api<AgentMessage[]>(`/agent/conversations/${conversationId}/messages`),
   cancel: (draftId: string) =>
     api<{ draft_id: string; status: "CANCELLED" }>(`/agent/transfers/${encodeURIComponent(draftId)}/cancel`, undefined, "POST"),

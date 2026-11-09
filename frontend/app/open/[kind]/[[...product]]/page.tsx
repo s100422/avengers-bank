@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Button, ErrorText, Field, MoneyField, Shell } from "@/components/ui";
-import { AccountSummary, ApiError, TermsSet, api, termsHref } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { ACCOUNT_PASSWORD_RULE, AccountPasswordField, MoneyErrorText, accountPasswordProblem } from "@/components/account-password";
+import { Button, Field, MoneyField, Shell } from "@/components/ui";
+import { AccountSummary, ApiError, TermsSet, api, termsHref, won } from "@/lib/api";
 
 // 상품 가입(계좌 개설·카드 발급) 화면 하나로 다섯 종류를 처리한다. /open/{kind}/{상품 id(선택)}
 const KINDS = {
@@ -16,8 +17,13 @@ const KINDS = {
 } as const;
 type Kind = keyof typeof KINDS;
 
-type Product = { product_id: number; name: string; description: string; interest_rate?: string; credit_limit?: number | null };
+type Product = { product_id: number; name: string; description: string; interest_rate?: string; credit_limit?: number | null; min_amount?: number | null };
 type Opened = { account_num?: string; card_num?: string };
+// 입력값을 바뀔 때마다 sessionStorage에 맡겼다가, 다른 화면(약관 전문 등)에서 돌아오면 채운다. 가입에 성공하면 지운다.
+// 계좌 비밀번호는 저장소에 쓰지 않고 이 모듈 변수(메모리)에만 둔다 → 화면 이동(클라이언트 이동)에는 남고, 새로고침·탭 닫기면 사라진다
+type Draft = { productId: number | null; setHash?: string; agreed: Record<number, boolean>; fields: Record<string, string> };
+const SECRET_FIELDS = ["account_password", "account_password_confirm", "from_account_password"];
+const heldSecrets: Record<string, Record<string, string>> = {};
 
 // 날짜 입력칸 값(YYYY-MM-DD). 오늘에서 days일 뒤.
 const dayAfter = (days: number) => {
@@ -42,7 +48,7 @@ function Open() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [checking, setChecking] = useState<AccountSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null); // Error 또는 ApiError (계좌 비밀번호 오류면 링크를 붙인다)
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<Opened | null>(null);
   const [productId, setProductId] = useState<number | null>(null);
@@ -50,11 +56,40 @@ function Open() {
   const [termsReload, setTermsReload] = useState(0);
   const [terms, setTerms] = useState<{ key: string; data?: TermsSet; error?: string; code?: string } | null>(null);
   const [agreed, setAgreed] = useState<Record<number, boolean>>({});
+  // 입력칸 값은 상태로 들고 있다 → 화면이 다시 살아나도(뒤로 가기 등) 그대로다. 안 건드린 칸은 기본값
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const bind = (name: string, fallback: string | number = "") => ({
+    name,
+    value: fields[name] ?? String(fallback),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setFields((f) => ({ ...f, [name]: e.target.value })),
+  });
+  const needsChecking = conf?.card || kind === "deposit"; // 카드는 결제·출금 계좌, 예금은 가입 금액을 뺄 계좌
+  const fromAcc = checking?.find((a) => String(a.account_id) === (fields.checking_account_id ?? String(checking[0]?.account_id)));
+  const draftKey = `open-draft:${kind}`;
+  const draftRef = useRef<Draft | null>(null); // 맡겨 둔 값. 다시 열린 화면이 약관을 불러올 때 동의 상태를 한 번 꺼내 쓴다
+  const agreedFor = useRef<string | null>(null); // 지금 동의 상태가 어느 상품·약관 묶음의 것인지
+
+  useEffect(() => {
+    let d: Draft | null = null;
+    try {
+      const raw = sessionStorage.getItem(draftKey);
+      if (raw) d = JSON.parse(raw);
+    } catch {}
+    const secrets = heldSecrets[draftKey];
+    if (!d && !secrets) return;
+    draftRef.current = d;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sessionStorage는 마운트 뒤에만 읽을 수 있다
+    setFields({ ...d?.fields, ...secrets });
+    // 다른 상품을 골라 들어왔으면 주소의 상품을 따른다 (동의는 약관 묶음이 다르면 아래에서 비워진다)
+    if (d && (!picked || picked === d.productId)) setProductId(d.productId);
+  }, [draftKey]); // eslint-disable-line react-hooks/exhaustive-deps -- 마운트 때 한 번만 채운다
 
   // 주소의 상품 id가 이 종류에 없으면 첫 상품을 고른다
   const has = (id: number | null) => products.some((p) => p.product_id === id);
   const selected = has(productId) ? productId : has(picked) ? picked : products[0]?.product_id;
   const termsKey = `${kind}:${selected}:${termsReload}`;
+  const selectedMin = products.find((p) => p.product_id === selected)?.min_amount ?? null; // 예금만 값이 온다
+  const minAmount = selectedMin ?? 1;
 
   useEffect(() => {
     if (!conf || !selected) return;
@@ -65,7 +100,14 @@ function Open() {
         if (!alive) return;
         if (d.product_kind !== kind || d.product_id !== selected) throw new Error("약관을 불러오지 못했습니다.");
         setTerms({ key, data: d });
-        setAgreed({}); // 상품이나 약관 묶음이 바뀌면 동의는 처음부터
+        // 상품이나 약관 묶음이 바뀌면 동의는 처음부터. 같은 묶음이면 그대로 둔다 (전문을 보고 돌아온 경우 포함)
+        const sig = `${selected}:${d.set_hash}`;
+        const back = draftRef.current;
+        if (agreedFor.current !== sig) {
+          setAgreed(back && back.productId === selected && back.setHash === d.set_hash ? back.agreed : {});
+          agreedFor.current = sig;
+        }
+        draftRef.current = null;
       })
       .catch((e) => alive && setTerms({ key, error: e.message, code: e instanceof ApiError ? e.code : undefined }));
     return () => {
@@ -80,12 +122,31 @@ function Open() {
 
   useEffect(() => {
     if (!conf) return;
-    api<Product[]>(`/products/${conf.list}?type=${conf.type}`).then(setProducts).catch((e) => setError(e.message));
+    api<Product[]>(`/products/${conf.list}?type=${conf.type}`).then(setProducts).catch(setError);
     // 카드는 결제·출금할 입출금 계좌를 골라야 한다
     api<AccountSummary[]>("/accounts")
       .then((a) => setChecking(a.filter((x) => x.account_type === "checking")))
-      .catch((e) => setError(e.message));
+      .catch(setError);
   }, [conf]);
+
+  const setHash = termsNow?.data?.set_hash;
+  useEffect(() => {
+    if (opened) {
+      delete heldSecrets[draftKey];
+      try {
+        sessionStorage.removeItem(draftKey);
+      } catch {}
+      return;
+    }
+    // 아직 아무것도 안 건드렸으면 맡기지 않는다 (처음 그린 빈 값이 맡겨 둔 값을 덮지 않게)
+    if (productId === null && !Object.keys(fields).length && !Object.keys(agreed).length) return;
+    const pub = Object.fromEntries(Object.entries(fields).filter(([k]) => !SECRET_FIELDS.includes(k)));
+    heldSecrets[draftKey] = Object.fromEntries(Object.entries(fields).filter(([k]) => SECRET_FIELDS.includes(k)));
+    const d: Draft = { productId: selected ?? null, setHash, agreed, fields: pub };
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify(d));
+    } catch {}
+  }, [opened, draftKey, productId, selected, setHash, agreed, fields]);
 
   if (!conf) return <p className="mt-10 text-slate">없는 상품 종류입니다.</p>;
 
@@ -94,15 +155,29 @@ function Open() {
     const f = new FormData(e.currentTarget);
     const num = (k: string) => Number(f.get(k));
     const nickname = f.get("nickname") || null;
+    const account_password = String(f.get("account_password") ?? "");
+    if (!conf.card) {
+      const problem = accountPasswordProblem(account_password, String(f.get("account_password_confirm") ?? ""));
+      if (problem) return setError(new Error(problem));
+    }
     const body = {
-      checking: { product_id: num("product_id"), nickname },
-      deposit: { product_id: num("product_id"), maturity_date: f.get("maturity_date"), nickname },
+      checking: { product_id: num("product_id"), nickname, account_password },
+      deposit: {
+        product_id: num("product_id"),
+        initial_amount: num("initial_amount"),
+        from_checking_account_id: num("checking_account_id"),
+        from_account_password: f.get("from_account_password"),
+        maturity_date: f.get("maturity_date"),
+        nickname,
+        account_password,
+      },
       savings: {
         product_id: num("product_id"),
         monthly_payment: num("monthly_payment"),
         monthly_deposit_date: num("monthly_deposit_date"),
         maturity_date: f.get("maturity_date"),
         nickname,
+        account_password,
       },
       credit: { product_id: num("product_id"), checking_account_id: num("checking_account_id"), payment_date: num("payment_date") },
       debit: { product_id: num("product_id"), checking_account_id: num("checking_account_id") },
@@ -120,9 +195,9 @@ function Open() {
       setOpened(await api<Opened>(conf.endpoint, { ...body, terms: termsBody }));
     } catch (err) {
       if (err instanceof ApiError && err.code === "TERMS_OUTDATED") {
-        setError("약관이 변경되었습니다. 최신 약관을 확인하고 다시 동의해 주세요.");
+        setError(new Error("약관이 변경되었습니다. 최신 약관을 확인하고 다시 동의해 주세요."));
         setTermsReload((n) => n + 1);
-      } else setError((err as Error).message);
+      } else setError(err);
     }
     setBusy(false);
   }
@@ -133,6 +208,7 @@ function Open() {
         <span className="seal stamp size-20 text-lg">{conf.stamp}</span>
         <h1 className="mt-6 text-2xl font-semibold">{conf.done}</h1>
         <p className="mt-2 text-slate tabular-nums">{opened.account_num ?? opened.card_num}</p>
+        {kind === "deposit" && <p className="mt-1 text-sm text-slate tabular-nums">가입 금액 {won(Number(fields.initial_amount))}</p>}
         <Link href="/accounts" className="mt-8 inline-block rounded-xl bg-coral px-6 py-3 font-medium text-paper">
           홈으로
         </Link>
@@ -140,10 +216,10 @@ function Open() {
     );
   }
 
-  if (conf.card && checking?.length === 0) {
+  if (needsChecking && checking?.length === 0) {
     return (
       <p className="mt-10 text-center text-slate">
-        카드를 만들려면 결제할 입출금 계좌가 먼저 필요합니다.{" "}
+        {kind === "deposit" ? "가입하려면 출금할 입출금 계좌가 먼저 필요합니다." : "카드를 만들려면 결제할 입출금 계좌가 먼저 필요합니다."}{" "}
         <Link href="/open/checking" className="text-ink underline underline-offset-4">
           입출금 계좌 만들기
         </Link>
@@ -178,40 +254,64 @@ function Open() {
                 <span className="block font-medium">{p.name}</span>
                 <span className="block text-sm text-slate">{p.description}</span>
                 {p.interest_rate && <span className="block text-sm font-medium text-coral">연 {Number(p.interest_rate)}%</span>}
+                {kind === "deposit" && p.min_amount != null && (
+                  <span className="block text-sm text-slate tabular-nums">최소 가입 {won(p.min_amount)}</span>
+                )}
               </span>
             </label>
           ))}
         </fieldset>
 
-        {conf.card && (
+        {kind === "deposit" && (
+          <div>
+            <MoneyField label="가입 금액 (원)" min={minAmount} {...bind("initial_amount")} required />
+            {selectedMin != null && <span className="mt-1 block text-sm text-slate tabular-nums">최소 {won(selectedMin)}</span>}
+            {selectedMin != null && fields.initial_amount && Number(fields.initial_amount) < selectedMin && (
+              <span className="mt-1 block text-sm text-seal">이 상품의 최소 가입 금액은 {won(selectedMin)}입니다.</span>
+            )}
+          </div>
+        )}
+        {needsChecking && (
           <label className="block">
             <span className="mb-1 block text-sm text-slate">{kind === "credit" ? "결제 계좌" : "출금 계좌"}</span>
             <select
-              name="checking_account_id"
+              {...bind("checking_account_id", checking?.[0]?.account_id ?? "")}
+              onChange={(e) => setFields((f) => ({ ...f, checking_account_id: e.target.value }))}
               required
               className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 outline-none focus:border-coral"
             >
               {checking?.map((a) => (
                 <option key={a.account_id} value={a.account_id}>
-                  {a.nickname ?? "입출금"} {a.account_num}
+                  {a.nickname ?? "입출금"} {a.account_num}{kind === "deposit" && ` · ${won(a.balance)}`}
                 </option>
               ))}
             </select>
+            {kind === "deposit" && fromAcc && Number(fields.initial_amount) > fromAcc.balance && (
+              <span className="mt-1 block text-sm text-seal">출금 계좌 잔액({won(fromAcc.balance)})보다 큽니다.</span>
+            )}
           </label>
         )}
         {kind === "credit" && (
-          <Field label="매월 결제일 (1~31일)" name="payment_date" type="number" min={1} max={31} defaultValue={14} required />
+          <Field label="매월 결제일 (1~31일)" type="number" min={1} max={31} {...bind("payment_date", 14)} required />
         )}
         {kind === "savings" && (
           <>
-            <MoneyField label="매월 납입액 (원)" name="monthly_payment" min={1} defaultValue={100000} required />
-            <Field label="매월 납입일 (1~31일)" name="monthly_deposit_date" type="number" min={1} max={31} defaultValue={25} required />
+            <MoneyField label="매월 납입액 (원)" min={1} {...bind("monthly_payment", 100000)} required />
+            <Field label="매월 납입일 (1~31일)" type="number" min={1} max={31} {...bind("monthly_deposit_date", 25)} required />
           </>
         )}
         {(kind === "deposit" || kind === "savings") && (
-          <Field label="만기일" name="maturity_date" type="date" min={dayAfter(1)} defaultValue={dayAfter(365)} required />
+          <Field label="만기일" type="date" min={dayAfter(1)} {...bind("maturity_date", dayAfter(365))} required />
         )}
-        {!conf.card && <Field label="계좌 별명 (선택)" name="nickname" maxLength={50} />}
+        {!conf.card && <Field label="계좌 별명 (선택)" maxLength={50} {...bind("nickname")} />}
+        {!conf.card && (
+          <div className="space-y-3">
+            <AccountPasswordField label="새 계좌 비밀번호" {...bind("account_password")} />
+            <AccountPasswordField label="새 계좌 비밀번호 확인" {...bind("account_password_confirm")} />
+            <p className="text-sm text-slate">{ACCOUNT_PASSWORD_RULE}. 이체·납입·해지할 때 입력합니다.</p>
+          </div>
+        )}
+        {kind === "deposit" && <AccountPasswordField label="출금 계좌 비밀번호" {...bind("from_account_password")} />}
 
         <fieldset className="space-y-2">
           <legend className="mb-1 text-sm text-slate">약관 동의</legend>
@@ -262,7 +362,7 @@ function Open() {
                         </span>
                       </label>
                       {href && (
-                        <Link href={href} target="_blank" className="shrink-0 text-slate underline underline-offset-4 hover:text-ink">
+                        <Link href={href} className="shrink-0 text-slate underline underline-offset-4 hover:text-ink">
                           전문 보기
                         </Link>
                       )}
@@ -274,7 +374,8 @@ function Open() {
           )}
         </fieldset>
 
-        <ErrorText message={error} />
+        {/* 예금 가입에서 계좌 비밀번호를 확인하는 곳은 출금 입출금 계좌뿐이다 */}
+        <MoneyErrorText error={error} accountHref={fromAcc ? `/accounts/checking/${fromAcc.account_id}` : undefined} />
         <Button busy={busy} disabled={products.length === 0 || !allRequired}>
           {kind === "checking" ? "계좌 만들기" : `${conf.stamp}하기`}
         </Button>

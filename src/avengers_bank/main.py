@@ -15,9 +15,12 @@ from avengers_bank.domains.accounts.router import router as account_router
 from avengers_bank.domains.agent.router import router as agent_router
 from avengers_bank.domains.cards.router import router as card_router
 from avengers_bank.domains.products.router import router as product_router
+from avengers_bank.domains.recovery.router import router as recovery_router
 from avengers_bank.domains.terms.router import router as terms_router
 from avengers_bank.domains.transfers.router import router as transfer_router
 from avengers_bank.domains.users.router import router as user_router
+from avengers_bank.domains.verification.dev import router as verification_dev_router
+from avengers_bank.domains.verification.router import router as verification_router
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +51,11 @@ app.include_router(transfer_router)
 app.include_router(card_router)
 app.include_router(agent_router)
 app.include_router(terms_router)
+app.include_router(verification_router)
+app.include_router(recovery_router)
 if get_settings().enable_dev_endpoints:
     app.include_router(dev_router)
+    app.include_router(verification_dev_router)  # 문자함 읽기, 로그인 잠금 해제
 
 
 @app.get("/", response_model=SuccessResponse[dict[str, str]])

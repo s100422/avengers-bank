@@ -16,7 +16,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 from avengers_bank.core.database import Base
 
 
-class CheckingAccount(Base):
+class AccountPasswordMixin:
+    """계좌 비밀번호 (accounts/password.py). 기존 계좌는 NULL = 미설정이라 돈이 나가지 않는다."""
+
+    password_hash: Mapped[str | None] = mapped_column(String(255))  # argon2 해시. 응답에 절대 넣지 않는다
+    password_failed_count: Mapped[int] = mapped_column(
+        SmallInteger, default=0, server_default="0", nullable=False
+    )
+    password_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 5회 틀리면 잠김
+
+
+class CheckingAccount(AccountPasswordMixin, Base):
     """입출금 계좌"""
 
     __tablename__ = "checking_accounts"
@@ -42,9 +52,12 @@ class CheckingAccount(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # 회원 탈퇴로 닫힌 시각 (users/withdrawal.py). 닫힌 계좌는 이체·납입·결제에서 없는 계좌처럼 거절한다
+    # (accounts/service.py require_open). 행·거래내역은 보존한다
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class DepositAccount(Base):
+class DepositAccount(AccountPasswordMixin, Base):
     """예금 계좌"""
 
     __tablename__ = "deposit_accounts"
@@ -74,7 +87,7 @@ class DepositAccount(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class SavingsAccount(Base):
+class SavingsAccount(AccountPasswordMixin, Base):
     """적금 계좌"""
 
     __tablename__ = "savings_accounts"

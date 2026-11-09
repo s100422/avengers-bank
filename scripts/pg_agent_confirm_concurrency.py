@@ -10,7 +10,7 @@ from collections import Counter
 
 from sqlalchemy import update
 
-from _common import check, cleanup, connect, execute, finish, make_checking, make_user, one, run, user_schema
+from _common import ACCOUNT_PASSWORD, check, cleanup, connect, execute, finish, make_checking, make_user, one, run, user_schema
 from avengers_bank.core.database import SessionLocal, engine
 from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.agent.models import TransferDraft
@@ -40,7 +40,7 @@ def new_draft(user_id: int) -> str:
 async def fire(user, draft_id: str, n: int = 10) -> Counter:
     async def confirm():
         async with SessionLocal() as db:
-            await agent_service.confirm_draft(db, draft_id, user)
+            await agent_service.confirm_draft(db, draft_id, ACCOUNT_PASSWORD, user)
 
     results = await asyncio.gather(*[confirm() for _ in range(n)], return_exceptions=True)
     return Counter("OK" if r is None else r.code if isinstance(r, ApiException) else f"ERR:{type(r).__name__}" for r in results)

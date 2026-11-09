@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Brand, ErrorText } from "@/components/ui";
 import { TermsMarkdown } from "@/components/terms/TermsMarkdown";
-import { ASSISTANT_ASK, SECTION_ID, TermsVersion, api, token } from "@/lib/api";
+import { ASSISTANT_ASK, SECTION_ID, TermsVersion, api, session } from "@/lib/api";
 
 // 약관 전문. 로그인 없이 볼 수 있고, 불러올 때 AI를 부르지 않는다.
 // useParams는 프리렌더 중 멈출 수 있어 Suspense로 감싼다 (cacheComponents)
@@ -19,6 +19,7 @@ export default function TermsPage() {
 
 function Terms() {
   const { versionId } = useParams<{ versionId: string }>();
+  const router = useRouter();
   // 가입 화면에서 왔으면 그 상품으로 돌아간다. 다른 사이트로 보내지 않게 가입 화면 경로만 받는다
   const from = useSearchParams().get("from");
   const back = from && /^\/open\/(checking|deposit|savings|credit|debit)\/\d+$/.test(from) ? from : null;
@@ -29,7 +30,7 @@ function Terms() {
   useEffect(() => {
     // AI 비서는 로그인했을 때만 떠 있다 (AssistantGate)
     // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage는 마운트 뒤에만 읽을 수 있다
-    setAuthed(!!token.get());
+    setAuthed(!!session.active());
   }, []);
 
   useEffect(() => {
@@ -103,9 +104,20 @@ function Terms() {
           </div>
         </article>
       )}
-      <Link href={back ?? "/products"} className="mt-8 inline-block text-sm text-slate hover:text-ink">
-        {back ? "← 가입 화면으로" : "← 상품"}
-      </Link>
+      {back ? (
+        <Link href={back} className="mt-8 inline-block text-sm text-slate hover:text-ink">
+          ← 가입 화면으로
+        </Link>
+      ) : (
+        // 이전 페이지가 있으면 거기로, 새 탭 등으로 바로 열었으면 상품 목록으로
+        <button
+          type="button"
+          onClick={() => (history.length > 1 ? router.back() : router.push("/products"))}
+          className="mt-8 inline-block text-sm text-slate hover:text-ink"
+        >
+          ← 이전 페이지
+        </button>
+      )}
     </div>
   );
 }

@@ -6,12 +6,13 @@ from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.timezone import kst_start_utc, today_kst
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
 from avengers_bank.domains.accounts.service import account_service
+from tests.helpers import open_deposit
 
 pytestmark = pytest.mark.anyio
 
 FUTURE = (today_kst() + timedelta(days=365)).isoformat()
 CHECKING = {"product_id": 1, "nickname": "생활비"}
-DEPOSIT = {"product_id": 2, "maturity_date": FUTURE}
+DEPOSIT = {"product_id": 2, "maturity_date": FUTURE, "initial_amount": 1000, "from_checking_account_id": 1}
 SAVINGS = {"product_id": 3, "monthly_payment": 100_000, "monthly_deposit_date": 25, "maturity_date": FUTURE}
 
 
@@ -45,6 +46,8 @@ async def test_open_checking_with_default_limits(client, headers):
 
 
 async def test_open_deposit_and_savings_prefixes(client, headers):
+    await open_account(client, headers, "checking", CHECKING)
+    await client.post("/dev/accounts/checking/1/charge", json={"amount": 1000}, headers=headers)
     deposit = await open_account(client, headers, "deposit", DEPOSIT)
     savings = await open_account(client, headers, "savings", SAVINGS)
     assert deposit["account_num"].startswith("120-")
@@ -68,10 +71,13 @@ async def test_open_with_unknown_product(client, headers):
         ("checking", {**CHECKING, "per_transfer_limit": 6_000_000}),  # 1회 > 1일(기본 500만)
         ("checking", {**CHECKING, "per_transfer_limit": 0}),
         ("deposit", {**DEPOSIT, "maturity_date": today_kst().isoformat()}),  # 오늘은 안 됨
+        ("deposit", {k: v for k, v in DEPOSIT.items() if k != "initial_amount"}),  # 가입 금액 필수
+        ("deposit", {k: v for k, v in DEPOSIT.items() if k != "from_checking_account_id"}),  # 출금 계좌 필수
         ("savings", {**SAVINGS, "monthly_deposit_date": 32}),
         ("savings", {**SAVINGS, "monthly_payment": -1}),
     ],
-    ids=["per_over_daily", "zero_limit", "maturity_today", "deposit_date_32", "negative_payment"],
+    ids=["per_over_daily", "zero_limit", "maturity_today", "no_initial_amount", "no_from_account",
+         "deposit_date_32", "negative_payment"],
 )
 async def test_open_validation_errors(client, headers, kind, body):
     response = await client.post(f"/accounts/{kind}", json=body, headers=headers)
@@ -96,6 +102,7 @@ async def test_account_number_gives_up_after_max_attempts(client, headers, monke
 
 async def test_list_only_my_accounts_across_types(client, headers, make_user):
     await open_account(client, headers, "checking", CHECKING)
+    await client.post("/dev/accounts/checking/1/charge", json={"amount": 1000}, headers=headers)
     await open_account(client, headers, "deposit", DEPOSIT)
     await open_account(client, headers, "savings", SAVINGS)
     other = await make_user("hulk")
@@ -203,7 +210,7 @@ async def test_update_nickname_and_limits(client, headers):
 
 async def test_update_rejects_invalid_requests(client, headers, make_user):
     await open_account(client, headers, "checking", CHECKING)
-    await open_account(client, headers, "deposit", DEPOSIT)
+    assert (await open_deposit(client, headers)).status_code == 201  # 예금 1번 (입출금 2번에서 가입)
 
     response = await client.patch("/accounts/checking/1", json={"per_transfer_limit": 6_000_000}, headers=headers)
     assert error_of(response) == (400, "INVALID_TRANSFER_LIMIT")

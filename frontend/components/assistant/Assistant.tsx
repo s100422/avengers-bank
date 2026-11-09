@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ASSISTANT_ASK, ApiError, Citation, TransferAction, agent, termsHref, token } from "@/lib/api";
+import { ASSISTANT_ASK, Citation, TransferAction, agent, session, termsHref } from "@/lib/api";
 import { RichText } from "./RichText";
 import { TransferCard } from "./TransferCard";
 
@@ -19,7 +19,7 @@ export function AssistantGate() {
   useEffect(() => {
     // localStorage는 마운트 뒤에만 읽을 수 있다. 경로가 바뀔 때마다(로그인·로그아웃 뒤) 다시 본다.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAuthed(!!token.get() && !["/", "/login", "/signup"].includes(path));
+    setAuthed(!!session.active() && !["/", "/login", "/signup"].includes(path));
   }, [path]);
   return authed ? <Assistant /> : null;
 }
@@ -53,7 +53,6 @@ const MAX_W = 720;
 const clampWidth = (w: number) => Math.round(Math.max(MIN_W, Math.min(w, MAX_W, window.innerWidth - 560)));
 
 function Assistant() {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -113,8 +112,7 @@ function Assistant() {
               ms.map((m) => ({ id: nextId++, role: m.role === "user" ? "user" : "ai", text: m.content, citations: m.citations })),
         );
       })
-      .catch((e) => {
-        onAuthError(e);
+      .catch(() => {
         convo.set(null); // 다른 사용자 대화이거나 사라진 대화
       });
   });
@@ -145,10 +143,6 @@ function Assistant() {
 
   const add = (m: Omit<Msg, "id">) => setMessages((ms) => [...ms, { ...m, id: nextId++ }]);
 
-  function onAuthError(e: unknown) {
-    if (e instanceof ApiError && e.status === 401) router.replace("/login"); // api()가 토큰을 지웠다
-  }
-
   async function send(text: string, retry = false) {
     text = text.trim();
     if (!text || sending) return;
@@ -164,7 +158,7 @@ function Assistant() {
       convo.set(r.conversation_id);
       add({ role: "ai", text: r.answer, action: r.action ?? undefined, citations: r.citations });
     } catch (e) {
-      onAuthError(e);
+      // 로그인 만료(401)는 api()가 세션을 지우고 로그인 화면으로 보낸다
       setFailed({ text, error: (e as Error).message });
     } finally {
       setSending(false);
@@ -303,7 +297,7 @@ function Assistant() {
                     </ul>
                   )}
                   {m.action?.type === "TRANSFER_CONFIRMATION" && (
-                    <TransferCard action={m.action} onDone={(text) => add({ role: "ai", text })} onAuthError={onAuthError} />
+                    <TransferCard action={m.action} onDone={(text) => add({ role: "ai", text })} />
                   )}
                 </div>
               ),

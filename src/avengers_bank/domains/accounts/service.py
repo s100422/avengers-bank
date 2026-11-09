@@ -20,6 +20,7 @@ from avengers_bank.domains.accounts.kinds import (
     AccountKind,
 )
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
+from avengers_bank.domains.accounts.password import check_account_password, set_account_password
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.accounts.schemas import (
     RESPONSES,
@@ -39,17 +40,29 @@ from avengers_bank.domains.terms.schemas import TermsConsentIn
 from avengers_bank.domains.users.schemas import UserResponse
 
 MAX_NUMBER_ATTEMPTS = 5
+# 응답 dict에 절대 싣지 않는 컬럼 (응답 스키마에 없어도 실수로 추가되는 일을 막으려고 여기서 뺀다)
+SECRET_COLUMNS = {"password_hash", "password_failed_count", "password_locked_at"}
 
 
 def _as_dict(kind: AccountKind, account) -> dict:
     """모델 컬럼을 응답용 dict로. 종류마다 다른 PK 이름은 account_id로 통일한다."""
-    data = {c.name: getattr(account, c.name) for c in account.__table__.columns}
+    data = {c.name: getattr(account, c.name) for c in account.__table__.columns if c.name not in SECRET_COLUMNS}
     data["account_id"] = data.pop(kind.id_column)
+    # 화면 안내용 상태만 bool로 내보낸다 (해시·실패 횟수는 내보내지 않는다)
+    data["password_set"] = account.password_hash is not None
+    data["password_locked"] = account.password_locked_at is not None
     return data
 
 
 def to_response(kind: AccountKind, account):
     return RESPONSES[kind.name].model_validate(_as_dict(kind, account))
+
+
+def require_open(account, message: str = "계좌를 찾을 수 없습니다.") -> None:
+    """탈퇴로 닫힌 입출금 계좌(closed_at)는 없는 계좌처럼 404. 잔액을 바꾸는 곳에서 **행을 잠근 뒤** 부른다:
+    탈퇴는 같은 행을 잠그고 '잔액 0 확인 → closed_at'을 하므로, 잠근 뒤 확인하면 '탈퇴했는데 돈이 들어옴'이 없다."""
+    if account.closed_at is not None:
+        raise NotFoundException(code="ACCOUNT_NOT_FOUND", message=message)
 
 
 def _kst_date(moment: datetime):
@@ -62,28 +75,49 @@ def _kst_date(moment: datetime):
 class AccountService:
     async def open_checking(self, db: AsyncSession, data: CheckingAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["checking"], user, data.product_id, data.terms,
+            db, KINDS["checking"], user, data.product_id, data.terms, data.account_password,
             nickname=data.nickname,
             per_transfer_limit=data.per_transfer_limit,
             daily_transfer_limit=data.daily_transfer_limit,
         )
 
-    async def open_deposit(self, db: AsyncSession, data: DepositAccountCreate, user: UserResponse):
+    async def open_deposit(
+        self, db: AsyncSession, data: DepositAccountCreate, user: UserResponse, after_open=None
+    ):
+        """after_open(db, account): 개설과 같은 트랜잭션 안에서 호출된다 (가입 금액 입금용)."""
+        inner = after_open
+
+        async def checked_after_open(db, account):
+            # 돈을 옮기기 전에 상품별 최소 가입 금액을 확인한다 (실패하면 개설 전체 롤백)
+            product = await product_service.get_account_product(db, data.product_id)
+            if data.initial_amount is not None and product.min_amount and data.initial_amount < product.min_amount:
+                raise BadRequestException(
+                    code="BELOW_MIN_AMOUNT",
+                    message=f"이 상품의 최소 가입 금액은 {product.min_amount:,}원입니다.",
+                )
+            if inner:
+                await inner(db, account)
+
+        # 가입 금액이 나가는 입출금 계좌의 비밀번호를 먼저 확인한다 (실패 횟수는 따로 커밋, password.py)
+        await check_account_password(
+            db, KINDS["checking"], data.from_checking_account_id, data.from_account_password, user
+        )
         return await self._open(
-            db, KINDS["deposit"], user, data.product_id, data.terms,
+            db, KINDS["deposit"], user, data.product_id, data.terms, data.account_password,
+            after_open=checked_after_open,
             nickname=data.nickname, maturity_date=data.maturity_date,
         )
 
     async def open_savings(self, db: AsyncSession, data: SavingsAccountCreate, user: UserResponse):
         return await self._open(
-            db, KINDS["savings"], user, data.product_id, data.terms,
+            db, KINDS["savings"], user, data.product_id, data.terms, data.account_password,
             nickname=data.nickname, maturity_date=data.maturity_date,
             monthly_payment=data.monthly_payment, monthly_deposit_date=data.monthly_deposit_date,
         )
 
     async def _open(
         self, db: AsyncSession, kind: AccountKind, user: UserResponse, product_id: int, terms: TermsConsentIn,
-        **fields,
+        password: str, after_open=None, **fields,
     ):
         # 같은 테이블 안에서 번호가 겹치면 unique 제약(IntegrityError)이 막는다. 새 번호로 다시 시도한다.
         for _ in range(MAX_NUMBER_ATTEMPTS):
@@ -96,10 +130,13 @@ class AccountService:
                         user_id=user.user_id, product_id=product_id,
                         account_num=self._new_account_num(kind), **fields,
                     )
+                    await set_account_password(db, account, password)
                     await account_repository.save(db, account)
                     await terms_service.record_consent(
                         db, user, kind.name, getattr(account, kind.id_column), current, agreed
                     )
+                    if after_open:
+                        await after_open(db, account)
                     await db.refresh(account)
                 return to_response(kind, account)
             except IntegrityError as e:
@@ -167,11 +204,14 @@ class AccountService:
         kind = KINDS[type]
         if kind.name == "checking":
             raise BadRequestException(code="CLOSE_NOT_SUPPORTED", message="예금·적금만 해지할 수 있습니다.")
+        # 해지하는 예금·적금 계좌의 비밀번호. 이 짧은 트랜잭션은 그 계좌만 잠그고 커밋한다 (password.py)
+        await check_account_password(db, kind, account_id, data.account_password, user)
         async with db.begin():
             await self.get_owned(db, kind, account_id, user)
             await self.get_owned(db, KINDS["checking"], data.to_checking_account_id, user)
 
             (checking,) = await account_repository.lock_checking_accounts(db, [data.to_checking_account_id])
+            require_open(checking)
             account = await account_repository.lock_account(db, kind, account_id)
             if account.status == "CLOSED":  # 잠근 뒤에 확인해야 동시에 두 번 눌러도 한 번만 해지된다
                 raise BadRequestException(code="ACCOUNT_CLOSED", message="이미 해지된 계좌입니다.")

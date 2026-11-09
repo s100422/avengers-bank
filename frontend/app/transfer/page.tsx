@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Button, ErrorText, Field, MoneyField, Shell } from "@/components/ui";
+import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
+import { Button, Field, MoneyField, Shell } from "@/components/ui";
 import { AccountSummary, History, api, won } from "@/lib/api";
 
 type Result = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
@@ -40,7 +41,7 @@ function Transfer() {
   const [recent, setRecent] = useState<Recent[]>([]);
   const [from, setFrom] = useState<number | null>(null);
   const [to, setTo] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
 
@@ -56,7 +57,7 @@ function Transfer() {
         setTo(q.get("to")?.slice(0, 20) ?? "");
         return loadRecent(checking).then(setRecent);
       })
-      .catch((e) => setError(e.message));
+      .catch(setError);
   }, []);
 
   // 출금 계좌로 고른 계좌는 받는 쪽 후보에서 뺀다
@@ -73,10 +74,11 @@ function Transfer() {
           from_checking_account_id: Number(f.get("from")),
           to_account_num: String(f.get("to")).trim(),
           amount: Number(f.get("amount")),
+          account_password: f.get("account_password"),
         }),
       );
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
     setBusy(false);
   }
@@ -143,7 +145,8 @@ function Transfer() {
           />
         </div>
         <MoneyField label="금액 (원)" name="amount" min={1} required />
-        <ErrorText message={error} />
+        <AccountPasswordField label="출금 계좌 비밀번호" />
+        <MoneyErrorText error={error} accountHref={from ? `/accounts/checking/${from}` : undefined} />
         <Button busy={busy} disabled={!accounts}>
           보내기
         </Button>

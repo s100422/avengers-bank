@@ -9,6 +9,7 @@ class AccountProductResponse(BaseModel):
     name: str
     description: str
     interest_rate: Decimal
+    min_amount: int | None  # 예금 상품만 값이 있음(최소 가입 금액)
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -4,13 +4,15 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConsentRecord } from "@/components/terms/ConsentRecord";
-import { ErrorText, Shell } from "@/components/ui";
+import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
+import { Button, ErrorText, Shell } from "@/components/ui";
 import { TermsKind, api, won } from "@/lib/api";
 
 type Card = {
   card_type: "credit" | "debit";
   card_num: string;
   product_id: number;
+  checking_account_id: number; // 결제 계좌
   status: string;
   credit_limit?: number;
   outstanding_amount?: number;
@@ -30,19 +32,22 @@ type Bill = {
 // "2026-11-14" → "11월 14일"
 const dateLabel = (d: string) => `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일`;
 
-function BillRow({ cardId, bill, onPaid }: { cardId: number; bill: Bill; onPaid: () => void }) {
+function BillRow({ cardId, checkingId, bill, onPaid }: { cardId: number; checkingId: number; bill: Bill; onPaid: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [paying, setPaying] = useState(false); // 결제 계좌 비밀번호 입력칸을 펼쳤는지
+  const [error, setError] = useState<unknown>(null);
   const paid = bill.status === "PAID";
 
-  async function pay() {
+  async function pay(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
     setBusy(true);
     setError(null);
     try {
-      await api(`/cards/credit/${cardId}/bills/${bill.bill_id}/payments`, {});
+      await api(`/cards/credit/${cardId}/bills/${bill.bill_id}/payments`, { account_password: f.get("account_password") });
       onPaid();
     } catch (err) {
-      setError((err as Error).message);
+      setError(err);
     }
     setBusy(false);
   }
@@ -58,19 +63,29 @@ function BillRow({ cardId, bill, onPaid }: { cardId: number; bill: Bill; onPaid:
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <span className={`font-semibold tabular-nums ${paid ? "text-slate" : ""}`}>{won(bill.total_amount)}</span>
-          {!paid && (
+          {!paid && !paying && (
             <button
               type="button"
-              onClick={pay}
-              disabled={busy}
-              className="rounded-full bg-coral px-3.5 py-1.5 text-sm font-medium whitespace-nowrap text-paper disabled:opacity-50"
+              onClick={() => setPaying(true)}
+              className="rounded-full bg-coral px-3.5 py-1.5 text-sm font-medium whitespace-nowrap text-paper"
             >
-              {busy ? "처리 중…" : "지금 납부"}
+              지금 납부
             </button>
           )}
         </div>
       </div>
-      <ErrorText message={error} />
+      {!paid && paying && (
+        <form onSubmit={pay} className="mt-3 space-y-2">
+          <AccountPasswordField label="결제 계좌 비밀번호" autoFocus />
+          <MoneyErrorText error={error} accountHref={`/accounts/checking/${checkingId}`} />
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setPaying(false)} className="w-full rounded-xl border border-line py-3 text-slate hover:text-ink">
+              취소
+            </button>
+            <Button busy={busy}>{won(bill.total_amount)} 납부</Button>
+          </div>
+        </form>
+      )}
     </li>
   );
 }
@@ -160,7 +175,7 @@ function CardDetail() {
           <h2 className="text-sm text-slate">청구서</h2>
           <ul className="mt-3 divide-y divide-line rounded-xl border border-line bg-paper">
             {bills.map((b) => (
-              <BillRow key={b.bill_id} cardId={Number(id)} bill={b} onPaid={() => setReload((n) => n + 1)} />
+              <BillRow key={b.bill_id} cardId={Number(id)} checkingId={card.checking_account_id} bill={b} onPaid={() => setReload((n) => n + 1)} />
             ))}
           </ul>
         </section>

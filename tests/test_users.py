@@ -6,6 +6,7 @@ import pytest
 from avengers_bank.core.config import get_settings
 from avengers_bank.core.security import DUMMY_HASH, password_hash
 from avengers_bank.domains.users import service as user_service_module
+from tests.verification_helpers import phone_token
 
 pytestmark = pytest.mark.anyio
 
@@ -13,7 +14,7 @@ SECRET = get_settings().jwt_secret_key.get_secret_value()
 
 SIGNUP = {
     "login_id": "ironman",
-    "password": "password1234",
+    "password": "Passw0rd!23",
     "name": "토니 스타크",
     "phone": "010-1234-5678",
 }
@@ -62,7 +63,10 @@ async def test_signup_race_unique_violation_returns_409(client, monkeypatch):
 
 async def test_update_me_changes_only_sent_fields(client, make_user):
     headers = await make_user("ironman")
-    response = await client.patch("/users/me", json={"name": "페퍼", "phone": "010-9999-8888"}, headers=headers)
+    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", headers)  # 번호를 바꾸려면 새 번호로 인증
+    response = await client.patch(
+        "/users/me", json={"name": "페퍼", "phone": "010-9999-8888", "phone_verification_token": token}, headers=headers
+    )
     assert response.status_code == 200
     data = response.json()["data"]
     assert (data["name"], data["phone"], data["login_id"]) == ("페퍼", "010-9999-8888", "ironman")
@@ -89,10 +93,12 @@ async def test_update_me_can_clear_nickname_and_empty_body_is_noop(client, make_
     "body",
     [
         {"name": None}, {"phone": None},  # 가입 때 필수였던 값은 비울 수 없다
-        {"name": ""}, {"phone": "123"}, {"name": "x" * 51}, {"nick_name": "x" * 51},
+        {"name": ""}, {"name": "   "}, {"phone": "123"}, {"phone": "02-123-4567"}, {"phone": "010-1234-567a"},
+        {"name": "x" * 51}, {"nick_name": "x" * 51},
         {"login_id": "hacker"}, {"password": "newpassword1"}, {"user_id": 99},  # 바꿀 수 없는 필드
     ],
-    ids=["null_name", "null_phone", "empty_name", "short_phone", "long_name", "long_nick",
+    ids=["null_name", "null_phone", "empty_name", "blank_name", "short_phone", "landline", "phone_letter",
+         "long_name", "long_nick",
          "login_id", "password", "user_id"],
 )
 async def test_update_me_rejects_invalid_requests(client, make_user, body):
@@ -156,12 +162,17 @@ def test_dummy_hash_is_a_real_hash():
     "override",
     [
         {"login_id": "abc"}, {"login_id": "x" * 51},
-        {"password": "short1!"}, {"password": "x" * 129},
+        {"login_id": "iron-man"}, {"login_id": "아이언맨"}, {"login_id": "x" * 21}, {"login_id": "iron man"},
+        {"password": "Short1!"}, {"password": "Aa1!" * 33},
+        {"password": "password!!"}, {"password": "12345678!"}, {"password": "Password12"}, {"password": "        "},
+        {"name": "   "}, {"phone": "010-1234-56"}, {"phone": "02-1234-5678"},
         {"name": ""}, {"name": "x" * 51},
         {"phone": "12345678"}, {"phone": "1" * 21},
         {"nick_name": "x" * 51},
     ],
-    ids=["login_id_3", "login_id_51", "password_7", "password_129", "name_empty", "name_51",
+    ids=["login_id_3", "login_id_51", "login_id_hyphen", "login_id_hangul", "login_id_21", "login_id_space",
+         "password_7", "password_132", "password_no_digit", "password_no_letter", "password_no_special",
+         "password_blank", "name_blank", "phone_short", "phone_landline", "name_empty", "name_51",
          "phone_8", "phone_21", "nick_51"],
 )
 async def test_signup_validation_errors(client, override):
@@ -180,7 +191,9 @@ async def test_signup_requires_fields(client, missing):
 
 
 async def test_signup_accepts_boundary_lengths(client):
-    body = {"login_id": "abcd", "password": "12345678", "name": "x", "phone": "123456789", "nick_name": "n" * 50}
+    body = {"login_id": "abcd", "password": "Abcdef1!", "name": "x", "phone": "0111234567", "nick_name": "n" * 50}
+    assert (await client.post("/users/signup", json=body)).status_code == 201
+    body = {**body, "login_id": "a" * 20, "password": "Aa1!" * 32}  # 아이디 20자, 비밀번호 128자
     assert (await client.post("/users/signup", json=body)).status_code == 201
 
 
@@ -199,18 +212,36 @@ async def test_login_validation_errors(client, body):
 # ── 인증(401): 토큰이 없거나 잘못됐을 때 ─────────────────────────────
 
 
-def token(sub="1", key=SECRET, algorithm="HS256", expires_in=timedelta(minutes=5), with_exp=True):
+LIVE_SID = "live-session"  # 아래 거절 테스트에서 '살아 있는 세션'으로 쓰는 family_id (live_session 픽스처가 만든다)
+
+
+def token(sub="1", key=SECRET, algorithm="HS256", expires_in=timedelta(minutes=5), with_exp=True, sid=LIVE_SID):
     now = datetime.now(timezone.utc)
     payload = {"sub": sub, "iat": now}
+    if sid is not None:
+        payload["sid"] = sid
     if with_exp:
         payload["exp"] = now + expires_in
     return jwt.encode(payload, key, algorithm=algorithm)
+
+
+async def add_live_session(user_id: int) -> None:
+    """1번 사용자에게 폐기되지 않은 갱신 토큰 행(family = LIVE_SID)을 넣어 '살아 있는 세션'을 만든다."""
+    from avengers_bank.core.database import SessionLocal
+    from avengers_bank.domains.users.models import RefreshToken
+
+    async with SessionLocal() as db, db.begin():
+        db.add(RefreshToken(
+            user_id=user_id, family_id=LIVE_SID, token_hash="0" * 64,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+        ))
 
 
 async def test_helper_makes_a_valid_token(client):
     """아래 거절 테스트가 '토큰을 잘못 만들어서' 통과하는 착시가 아님을 확인하는 대조군."""
     signup = await client.post("/users/signup", json=SIGNUP)
     user_id = signup.json()["data"]["user_id"]
+    await add_live_session(user_id)
     response = await client.get("/users/me", headers={"Authorization": f"Bearer {token(sub=str(user_id))}"})
     assert response.status_code == 200 and response.json()["data"]["login_id"] == SIGNUP["login_id"]
 
@@ -234,11 +265,15 @@ async def test_me_without_credentials(client, headers):
         token(key=None, algorithm="none"),
         token(sub="abc"),
         token(sub="999"),
+        token(sid=None),
+        token(sid="ended-or-unknown-session"),
     ],
-    ids=["garbage", "expired", "wrong_key", "no_exp", "alg_none", "sub_not_number", "user_not_found"],
+    ids=["garbage", "expired", "wrong_key", "no_exp", "alg_none", "sub_not_number", "user_not_found",
+         "no_sid", "session_not_alive"],
 )
 async def test_me_rejects_bad_tokens(client, bad_token):
     await client.post("/users/signup", json=SIGNUP)  # 사용자는 있다 (1번). 토큰이 문제다
+    await add_live_session(1)  # 1번 사용자의 살아 있는 세션도 있다 (session_not_alive는 다른 세션 번호)
     response = await client.get("/users/me", headers={"Authorization": f"Bearer {bad_token}"})
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "INVALID_TOKEN"
@@ -260,18 +295,18 @@ async def test_responses_never_expose_password(client):
     assert "$argon2" not in signup.text + login.text + me.text + patched.text
 
 
-async def test_login_blocked_after_repeated_failures(client):
+async def test_login_locked_after_five_failures(client):
+    # C-090: 예전에는 15분 동안 429(일시 차단)였다. 지금은 5회 연속이면 잠금(403), 해제는 본인 확인으로만
     await client.post("/users/signup", json=SIGNUP)
     bad = {"login_id": SIGNUP["login_id"], "password": "wrong-password"}
-    for _ in range(5):
+    for _ in range(4):
         assert (await client.post("/users/login", json=bad)).status_code == 401
 
     blocked = await client.post("/users/login", json=bad)
-    assert (blocked.status_code, blocked.json()["error"]["code"]) == (429, "TOO_MANY_LOGIN_ATTEMPTS")
-    assert int(blocked.headers["Retry-After"]) > 0
+    assert (blocked.status_code, blocked.json()["error"]["code"]) == (403, "ACCOUNT_LOCKED")
     # 맞는 비밀번호도 잠금 중에는 거절된다
     good = {"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]}
-    assert (await client.post("/users/login", json=good)).status_code == 429
+    assert (await client.post("/users/login", json=good)).status_code == 403
     # 다른 아이디는 영향이 없다 (실패 5번은 이 아이디에만 쌓였다)
     other = await client.post("/users/login", json={"login_id": "nobody-here", "password": "x" * 10})
     assert other.status_code == 401
@@ -306,23 +341,24 @@ async def _auth(client):
 async def test_change_password_then_login_with_new_one(client):
     headers = await _auth(client)
     response = await client.patch(
-        "/users/me/password", json={"current_password": SIGNUP["password"], "new_password": "newpassword99"}, headers=headers
+        "/users/me/password", json={"current_password": SIGNUP["password"], "new_password": "NewPassw0rd!"}, headers=headers
     )
-    assert response.status_code == 200 and response.json()["data"] is None
+    assert response.status_code == 200 and response.json()["data"]["access_token"]  # 새 토큰 묶음을 돌려준다
 
     old = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]})
-    new = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": "newpassword99"})
+    new = await client.post("/users/login", json={"login_id": SIGNUP["login_id"], "password": "NewPassw0rd!"})
     assert (old.status_code, new.status_code) == (401, 200)
 
 
 @pytest.mark.parametrize(
     "body, expected",
     [
-        ({"current_password": "wrong-password", "new_password": "newpassword99"}, (400, "INVALID_CURRENT_PASSWORD")),
+        ({"current_password": "wrong-password", "new_password": "NewPassw0rd!"}, (400, "INVALID_CURRENT_PASSWORD")),
         ({"current_password": SIGNUP["password"], "new_password": SIGNUP["password"]}, (400, "SAME_PASSWORD")),
         ({"current_password": SIGNUP["password"], "new_password": "short"}, (422, "VALIDATION_ERROR")),
+        ({"current_password": SIGNUP["password"], "new_password": "newpassword99"}, (422, "VALIDATION_ERROR")),
     ],
-    ids=["wrong_current", "same_as_current", "new_too_short"],
+    ids=["wrong_current", "same_as_current", "new_too_short", "new_too_weak"],
 )
 async def test_change_password_rejections_change_nothing(client, body, expected):
     headers = await _auth(client)
@@ -333,17 +369,20 @@ async def test_change_password_rejections_change_nothing(client, body, expected)
 
 
 async def test_change_password_requires_login(client):
-    response = await client.patch("/users/me/password", json={"current_password": "x", "new_password": "newpassword99"})
+    response = await client.patch("/users/me/password", json={"current_password": "x", "new_password": "NewPassw0rd!"})
     assert response.status_code == 401
 
 
-async def test_change_password_wrong_current_is_rate_limited(client):
+async def test_change_password_wrong_current_locks_login(client):
+    # C-090: 현재 비밀번호 틀림도 로그인 실패 카운터로 센다. 5번째에 로그인이 잠긴다(예전에는 429)
     headers = await _auth(client)
-    bad = {"current_password": "wrong-password", "new_password": "newpassword99"}
-    for _ in range(5):
+    bad = {"current_password": "wrong-password", "new_password": "NewPassw0rd!"}
+    for _ in range(4):
         assert (await client.patch("/users/me/password", json=bad, headers=headers)).status_code == 400
     blocked = await client.patch("/users/me/password", json=bad, headers=headers)
-    assert (blocked.status_code, blocked.json()["error"]["code"]) == (429, "TOO_MANY_LOGIN_ATTEMPTS")
+    assert (blocked.status_code, blocked.json()["error"]["code"]) == (403, "ACCOUNT_LOCKED")
+    good = {"login_id": SIGNUP["login_id"], "password": SIGNUP["password"]}
+    assert (await client.post("/users/login", json=good)).status_code == 403
 
 
 async def test_health_ok_and_db_failure(client, monkeypatch):
@@ -394,3 +433,132 @@ async def test_startup_warns_when_dev_endpoints_enabled(caplog, monkeypatch):
     monkeypatch.setattr(main_module, "get_settings", lambda: type("S", (), {"enable_dev_endpoints": False})())
     await start()
     assert not any("ENABLE_DEV_ENDPOINTS" in r.message for r in caplog.records)
+
+
+# ── 회원 정보 입력 규칙: 아이디·이름·전화번호·닉네임·비밀번호 강도, 422 한국어 메시지 ──
+
+
+async def test_login_id_is_trimmed_and_lowercased_on_signup_and_login(client):
+    signup = await client.post("/users/signup", json={**SIGNUP, "login_id": "  IronMan_7 "})
+    assert signup.status_code == 201 and signup.json()["data"]["login_id"] == "ironman_7"
+    for login_id in ("ironman_7", " IRONMAN_7 ", "IronMan_7"):  # 모두 같은 계정
+        login = await client.post("/users/login", json={"login_id": login_id, "password": SIGNUP["password"]})
+        assert login.status_code == 200, login_id
+
+
+async def test_login_id_duplicate_check_ignores_case(client):
+    assert (await client.post("/users/signup", json={**SIGNUP, "login_id": "Admin"})).status_code == 201
+    again = await client.post("/users/signup", json={**SIGNUP, "login_id": "admin"})
+    assert (again.status_code, again.json()["error"]["code"]) == (409, "LOGIN_ID_ALREADY_EXISTS")
+
+
+@pytest.mark.parametrize("login_id", ["iron-man", "ab", "x" * 30, "아이언맨!", "a b c d"])
+async def test_login_does_not_check_login_id_format(client, login_id):
+    """로그인은 형식 검사를 하지 않는다: 422가 아니라 401이어야 아이디 규칙이 새지 않는다."""
+    response = await client.post("/users/login", json={"login_id": login_id, "password": "x"})
+    assert (response.status_code, response.json()["error"]["code"]) == (401, "INVALID_CREDENTIALS")
+
+
+@pytest.mark.parametrize(
+    "phone, saved",
+    [("01012345678", "010-1234-5678"), ("010 1234 5678", "010-1234-5678"), (" 010-1234-5678 ", "010-1234-5678"),
+     ("0111234567", "011-123-4567"), ("019-123-4567", "019-123-4567")],
+)
+async def test_phone_is_normalized(client, phone, saved):
+    response = await client.post("/users/signup", json={**SIGNUP, "phone": phone})
+    assert response.status_code == 201 and response.json()["data"]["phone"] == saved
+
+
+async def test_name_and_nickname_are_trimmed(client):
+    response = await client.post("/users/signup", json={**SIGNUP, "name": "  토니  ", "nick_name": "   "})
+    data = response.json()["data"]
+    assert (response.status_code, data["name"], data["nick_name"]) == (201, "토니", None)
+
+
+async def test_signup_rejects_password_same_as_login_id(client):
+    body = {**SIGNUP, "login_id": "tony_1234", "password": "TONY_1234"}  # 대소문자만 다른 것도 거절
+    response = await client.post("/users/signup", json=body)
+    assert response.status_code == 422
+    assert response.json()["error"]["details"][0]["msg"] == "비밀번호는 아이디와 같을 수 없습니다."
+
+
+@pytest.mark.parametrize("password", ["Passw0rd가", "Pass w0rd!", "Passw0rd！"])  # 한글, 공백, 전각 느낌표
+async def test_password_allows_only_keyboard_characters(client, password):
+    """은행 앱처럼 영문·숫자·키보드 특수문자만. 한글·공백·전각 문자는 특수문자로 쳐 주지 않고 거절한다."""
+    response = await client.post("/users/signup", json={**SIGNUP, "password": password})
+    assert response.status_code == 422
+    assert response.json()["error"]["details"][0]["msg"] == "비밀번호는 영문, 숫자, 특수문자(!@#$ 등)만 사용할 수 있습니다."
+
+
+async def test_update_me_uses_same_rules(client, make_user):
+    headers = await make_user("ironman")
+    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", headers)
+    response = await client.patch(
+        "/users/me",
+        json={"name": "  페퍼 ", "phone": "01099998888", "nick_name": "", "phone_verification_token": token},
+        headers=headers,
+    )
+    data = response.json()["data"]
+    assert (data["name"], data["phone"], data["nick_name"]) == ("페퍼", "010-9999-8888", None)
+    bad = await client.patch("/users/me", json={"phone": "02-123-4567"}, headers=headers)
+    assert bad.json()["error"]["details"][0]["msg"] == "휴대폰 번호를 010-1234-5678 형식으로 입력해 주세요."
+
+
+async def test_old_weak_password_still_works_for_login_and_change(client):
+    """예전 규칙으로 만든 계정(약한 비밀번호·대문자 아이디)도 로그인과 비밀번호 변경은 된다."""
+    from avengers_bank.core.database import SessionLocal
+    from avengers_bank.domains.users.models import User
+
+    async with SessionLocal() as db, db.begin():
+        db.add(User(login_id="legacy", hashed_password=password_hash.hash("password1234"), name="옛날", phone="010-0000-0000"))
+    login = await client.post("/users/login", json={"login_id": "legacy", "password": "password1234"})
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
+    change = await client.patch(
+        "/users/me/password", json={"current_password": "password1234", "new_password": "NewPassw0rd!"}, headers=headers
+    )
+    assert change.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "url, body, expected",
+    [
+        ("/users/signup", {**SIGNUP, "phone": "1" * 21}, "휴대폰 번호는 20자 이하로 입력해 주세요."),
+        ("/users/signup", {**SIGNUP, "password": "password!!"}, "비밀번호는 영문, 숫자, 특수문자를 모두 포함해야 합니다."),
+        ("/users/signup", {**SIGNUP, "password": "Pa1!"}, "비밀번호는 8자 이상 입력해 주세요."),
+        ("/users/signup", {**SIGNUP, "login_id": "Iron-Man"}, "아이디는 영문 소문자, 숫자, 밑줄(_)만 4~20자로 입력해 주세요."),
+        ("/users/signup", {**SIGNUP, "name": "  "}, "이름을 입력해 주세요."),
+        ("/users/signup", {k: v for k, v in SIGNUP.items() if k != "phone"}, "필수 항목입니다: 휴대폰 번호"),
+        ("/users/login", {"login_id": "", "password": "x"}, "아이디를 입력해 주세요."),
+    ],
+    ids=["phone_long", "password_weak", "password_short", "login_id_format", "name_blank", "phone_missing", "login_empty"],
+)
+async def test_validation_messages_are_korean_sentences(client, url, body, expected):
+    response = await client.post(url, json=body)
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["message"] == "입력값을 확인해 주세요."
+    assert error["details"][0]["msg"] == expected
+    assert not any(word in response.text for word in ("String should", "Field required", "Value error"))
+
+
+async def test_validation_message_for_forbidden_and_unknown_fields(client, make_user):
+    headers = await make_user("ironman")
+    details = (await client.patch("/users/me", json={"login_id": "x", "foo": 1}, headers=headers)).json()["error"]["details"]
+    assert [d["msg"] for d in details] == ["변경할 수 없는 항목입니다: 아이디", "변경할 수 없는 항목입니다: 입력값"]
+    assert [d["type"] for d in details] == ["extra_forbidden", "extra_forbidden"]  # 응답 구조는 그대로
+
+
+def test_korean_message_covers_number_and_date_errors():
+    from avengers_bank.core.exception_handlers import korean_message
+
+    assert korean_message({"type": "greater_than", "loc": ("body", "amount"), "msg": "", "ctx": {"gt": 0}}) == "금액은 0보다 커야 합니다."
+    assert korean_message(
+        {"type": "greater_than_equal", "loc": ("body", "initial_amount"), "msg": "", "ctx": {"ge": 1000000}}
+    ) == "가입 금액은 1,000,000 이상이어야 합니다."
+    assert korean_message({"type": "int_parsing", "loc": ("body", "monthly_payment"), "msg": ""}) == "매월 납입액은 정수로 입력해 주세요."
+    assert korean_message({"type": "date_parsing", "loc": ("body", "maturity_date"), "msg": ""}) == (
+        "만기일은 YYYY-MM-DD 형식의 날짜로 입력해 주세요."
+    )
+    assert korean_message({"type": "missing", "loc": ("body", "from_checking_account_id"), "msg": ""}) == "필수 항목입니다: 출금 계좌"
+    assert korean_message({"type": "something_new", "loc": ("body", "weird"), "msg": ""}) == "입력값을 확인해 주세요: 입력값"

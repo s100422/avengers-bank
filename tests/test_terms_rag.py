@@ -32,6 +32,7 @@ from avengers_bank.domains.terms.models import (
 from avengers_bank.domains.terms.publish import publish_corpus
 from avengers_bank.domains.users.schemas import UserResponse
 from avengers_bank.main import app
+from tests.helpers import open_deposit
 from tests.test_agent import FakeClient, tool
 
 pytestmark = pytest.mark.anyio
@@ -253,7 +254,7 @@ async def test_new_version_not_indexed_is_error_not_old_version(rag, embedder, t
 
 async def test_my_contract_uses_consented_version(client, rag, embedder, tmp_path):
     tony, bruce = rag["tony"], rag["bruce"]
-    r = await client.post("/accounts/deposit", json={"product_id": DEPOSIT, "maturity_date": FUTURE}, headers=tony)
+    r = await open_deposit(client, tony, product_id=DEPOSIT)
     assert r.status_code == 201, r.text
     account_id = r.json()["data"]["account_id"]
     await publish(bump_deposit_rules(tmp_path))  # 가입 뒤에 약관이 v2로 바뀐다

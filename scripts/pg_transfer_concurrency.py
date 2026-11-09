@@ -9,7 +9,7 @@ from collections import Counter
 
 from sqlalchemy import select
 
-from _common import check, cleanup, connect, execute, finish, make_checking, make_user, one, run, user_schema
+from _common import ACCOUNT_PASSWORD, check, cleanup, connect, execute, finish, make_checking, make_user, one, run, user_schema
 from avengers_bank.core.database import SessionLocal, engine
 from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.accounts.models import CheckingAccount
@@ -40,7 +40,10 @@ async def fire(user, jobs) -> Counter:
     async def one_transfer(src, dst, amount):
         async with SessionLocal() as db:
             await transfer_service.transfer(
-                db, TransferCreate(from_checking_account_id=ids[src], to_account_num=NUMS[dst], amount=amount), user
+                db, TransferCreate(
+                    from_checking_account_id=ids[src], to_account_num=NUMS[dst], amount=amount,
+                    account_password=ACCOUNT_PASSWORD,
+                ), user
             )
 
     results = await asyncio.gather(*[one_transfer(*j) for j in jobs], return_exceptions=True)

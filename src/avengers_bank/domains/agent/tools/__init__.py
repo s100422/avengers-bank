@@ -49,7 +49,8 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          "부족 금액은 서버가 계산한다.",
          NoArgs, get_card_payment_status),
     Tool("prepare_transfer", "이체 초안만 만든다(실제 이체 아님). 출금 계좌·수취 계좌·잔액·한도를 서버가 검증하고, "
-         "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. from_account_id는 먼저 get_my_accounts로 확인한 값만 쓴다.",
+         "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. 출금·받는 계좌는 사용자가 말한 이름(별칭·상품명)이나 번호 끝 4자리로 적고, 서버가 찾는다(id 불필요). "
+         "받는 계좌가 본인 계좌면 to_account, 다른 사람 계좌면 to_account_num(전체 번호) 중 하나만 쓴다.",
          PrepareTransferArgs, prepare_transfer),
     Tool("search_product_terms", "AvengersBank 데모 약관에서 상품 조건·중도해지·이자·한도·카드 결제 등 조항을 검색한다. "
          "scope=current는 상품의 현재 가입 약관(product_kind+product_id, product_id를 모르면 비워서 후보를 받는다), "

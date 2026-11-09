@@ -1,6 +1,7 @@
 """개발용 상품 데이터를 넣는다: uv run python -m avengers_bank.seed
 
-이름이 같은 상품이 이미 있으면 건너뛴다(여러 번 실행해도 안전, 새 상품만 추가된다).
+이름이 같은 상품이 이미 있으면 새로 넣지 않고, 예금 최소 가입 금액(min_amount)만 시드 값으로 갱신한다
+(여러 번 실행해도 안전).
 금리·한도·혜택은 시중은행 상품 구성을 참고해 만든 예시 값이다. 실제 상품·현재 금리가 아니다 (C-061).
 """
 
@@ -15,9 +16,9 @@ ACCOUNT_PRODUCTS = [
     AccountProduct(type="CHECKING", name="어벤져스 입출금통장", description="자유롭게 입출금하는 기본 계좌", interest_rate=0.10),
     AccountProduct(type="CHECKING", name="어벤져스 월급통장", description="급여가 들어오는 달은 이체·ATM 수수료 면제", interest_rate=0.20),
     # 예금
-    AccountProduct(type="DEPOSIT", name="어벤져스 정기예금", description="목돈을 맡기고 만기에 이자를 받는 예금", interest_rate=3.00),
-    AccountProduct(type="DEPOSIT", name="어벤져스 스타 정기예금", description="1개월~3년 중 원하는 기간으로 맡기는 기본 예금", interest_rate=2.85),
-    AccountProduct(type="DEPOSIT", name="어벤져스 모바일 특판예금", description="앱에서만 가입하는 1년 특판, 한도 소진 시 종료", interest_rate=3.10),
+    AccountProduct(type="DEPOSIT", name="어벤져스 정기예금", description="목돈을 맡기고 만기에 이자를 받는 예금", interest_rate=3.00, min_amount=100000),
+    AccountProduct(type="DEPOSIT", name="어벤져스 스타 정기예금", description="1개월~3년 중 원하는 기간으로 맡기는 기본 예금", interest_rate=2.85, min_amount=1000000),
+    AccountProduct(type="DEPOSIT", name="어벤져스 모바일 특판예금", description="앱에서만 가입하는 1년 특판, 한도 소진 시 종료", interest_rate=3.10, min_amount=500000),
     # 적금
     AccountProduct(type="SAVINGS", name="어벤져스 정기적금", description="매월 일정액을 납입하는 적금", interest_rate=3.50),
     AccountProduct(type="SAVINGS", name="어벤져스 내맘대로 적금", description="납입일과 금액을 직접 정하는 6개월~3년 적금", interest_rate=3.80),
@@ -40,12 +41,18 @@ def main() -> None:
     # 시드는 단발 스크립트라 동기 엔진을 쓴다 (Windows에서 psycopg 비동기 이벤트 루프 문제를 피함).
     engine = create_engine(get_settings().database_url)
     with Session(engine) as db, db.begin():
-        have_accounts = set(db.scalars(select(AccountProduct.name)))
+        have_accounts = {p.name: p for p in db.scalars(select(AccountProduct))}
+        updated = 0
+        for p in ACCOUNT_PRODUCTS:
+            row = have_accounts.get(p.name)
+            if row and row.min_amount != p.min_amount:
+                row.min_amount = p.min_amount
+                updated += 1
         have_cards = set(db.scalars(select(CardProduct.name)))
         new_accounts = [p for p in ACCOUNT_PRODUCTS if p.name not in have_accounts]
         new_cards = [p for p in CARD_PRODUCTS if p.name not in have_cards]
         db.add_all([*new_accounts, *new_cards])
-        print(f"계좌 상품 {len(new_accounts)}개, 카드 상품 {len(new_cards)}개를 새로 넣었습니다.")
+        print(f"계좌 상품 {len(new_accounts)}개, 카드 상품 {len(new_cards)}개를 새로 넣었습니다. (최소 가입 금액 갱신 {updated}개)")
     engine.dispose()
 
 

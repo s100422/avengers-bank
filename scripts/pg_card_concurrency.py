@@ -11,7 +11,7 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from _common import (
-    check, cleanup, connect, execute, finish, make_checking, make_user, one, product_id, run, user_schema,
+    ACCOUNT_PASSWORD, check, cleanup, connect, execute, finish, make_checking, make_user, one, product_id, run, user_schema,
 )
 from avengers_bank.core.database import SessionLocal, engine
 from avengers_bank.core.exceptions import ApiException
@@ -20,7 +20,7 @@ from avengers_bank.domains.accounts.models import CheckingAccount
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.cards.models import CreditCardBill
 from avengers_bank.domains.cards.repository import card_repository
-from avengers_bank.domains.cards.schemas import BillCreate, CardPaymentCreate
+from avengers_bank.domains.cards.schemas import BillCreate, BillPaymentCreate, CardPaymentCreate
 from avengers_bank.domains.cards.service import card_service
 from avengers_bank.domains.transfers.schemas import TransferCreate
 from avengers_bank.domains.transfers.service import transfer_service
@@ -91,12 +91,15 @@ def pay_debit(card_id, amount, user):
 
 
 def pay_bill(card_id, bill_id, user):
-    return lambda db: card_service.pay_bill(db, card_id, bill_id, user)
+    return lambda db: card_service.pay_bill(db, card_id, bill_id, BillPaymentCreate(account_password=ACCOUNT_PASSWORD), user)
 
 
 def transfer(amount, user):
     return lambda db: transfer_service.transfer(
-        db, TransferCreate(from_checking_account_id=state["A"], to_account_num=state["B_num"], amount=amount), user
+        db, TransferCreate(
+            from_checking_account_id=state["A"], to_account_num=state["B_num"], amount=amount,
+            account_password=ACCOUNT_PASSWORD,
+        ), user
     )
 
 

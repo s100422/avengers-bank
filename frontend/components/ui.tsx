@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
-import { token } from "@/lib/api";
+import { useEffect, useId, useRef, useState } from "react";
+import { SESSION_KEY, expireSession, expiring, logout, refreshSession, session } from "@/lib/api";
 
 export function Brand() {
   return (
@@ -76,14 +76,14 @@ function Nav() {
   );
 }
 
-// 로그인이 필요한 화면의 틀. 토큰이 없으면 로그인으로 보낸다.
+// 로그인이 필요한 화면의 틀. 갱신 토큰이 없으면 로그인으로 보낸다.
 // wide: 홈처럼 카드 격자를 쓰는 화면은 PC에서 넓게, 입력 화면은 읽기 좋은 폭으로 둔다.
 export function Shell({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!token.get()) router.replace("/login");
+    if (!session.active()) router.replace("/login");
     // localStorage는 브라우저에서만 읽을 수 있어서 마운트 뒤에 확인한다
     // eslint-disable-next-line react-hooks/set-state-in-effect
     else setReady(true);
@@ -94,13 +94,117 @@ export function Shell({ children, wide }: { children: React.ReactNode; wide?: bo
     <>
       <div className="md:pl-60">
         <div className={`mx-auto w-full px-4 pb-28 md:px-10 md:pt-10 md:pb-16 ${wide ? "max-w-xl md:max-w-5xl" : "max-w-xl"}`}>
-          <header className="py-5 md:hidden">
-            <Brand />
+          <header className="flex items-center justify-between gap-3 py-5 md:justify-end md:pt-0">
+            <span className="md:hidden">
+              <Brand />
+            </span>
+            <SessionTimer />
           </header>
           {children}
         </div>
       </div>
       <Nav />
+    </>
+  );
+}
+
+const WARN_MS = 2 * 60 * 1000;
+export const mmss = (ms: number) => {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  return `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
+};
+
+// 세션(갱신 토큰) 만료까지 남은 시간. 만료 시각은 매번 저장소에서 읽으므로
+// 자동 갱신·비밀번호 변경·다른 탭의 연장이 그대로 반영된다(다른 탭은 storage 이벤트로 바로 다시 그린다).
+function SessionTimer() {
+  const router = useRouter();
+  const [now, setNow] = useState(Date.now);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const titleId = useId();
+  const left = session.expiresAt() - now;
+  const active = session.active();
+
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const id = setInterval(tick, 1000);
+    const onStorage = (e: StorageEvent) => (e.key === SESSION_KEY || e.key === null) && tick();
+    window.addEventListener("storage", onStorage);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  const ending = useRef(false); // 이 탭이 직접 로그아웃 중이면 아래 "다른 탭 로그아웃" 처리를 건너뛴다
+  const expired = left <= 0;
+
+  useEffect(() => {
+    if (ending.current || expiring) return;
+    if (!active) router.replace("/login"); // 다른 탭에서 로그아웃했다
+    else if (expired) {
+      ending.current = true;
+      logout().then(expireSession);
+    }
+  }, [active, expired, router]);
+
+  async function extend() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (!(await refreshSession())) return expireSession();
+      setNow(Date.now());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signOut() {
+    ending.current = true;
+    await logout();
+    router.replace("/login");
+  }
+
+  if (!active) return null;
+  return (
+    <>
+      <p className="flex items-center gap-2 text-xs text-slate tabular-nums">
+        <span>
+          자동 로그아웃 <time aria-label={`${mmss(left)} 남음`}>{mmss(left)}</time>
+        </span>
+        <button
+          type="button"
+          onClick={extend}
+          disabled={busy}
+          className="rounded-full border border-line px-2.5 py-1 text-ink hover:border-coral disabled:opacity-50"
+        >
+          연장
+        </button>
+      </p>
+      {left <= WARN_MS && (
+        <div
+          role="alertdialog"
+          aria-labelledby={titleId}
+          className="fixed inset-x-4 top-4 z-30 mx-auto max-w-sm rounded-2xl border border-coral bg-paper p-4 shadow-lg"
+        >
+          <p id={titleId} className="font-semibold">
+            2분 후 자동으로 로그아웃됩니다.
+          </p>
+          <p className="mt-1 text-sm text-slate tabular-nums">남은 시간 {mmss(left)}</p>
+          <ErrorText message={error} />
+          <div className="mt-3 flex gap-2">
+            {/* 뜨자마자 연장 버튼으로 포커스를 옮겨 Enter 한 번으로 연장할 수 있게 한다 */}
+            <Button type="button" busy={busy} onClick={extend} autoFocus>
+              연장
+            </Button>
+            <button type="button" onClick={signOut} className="w-full rounded-xl border border-line py-3 text-slate hover:text-ink">
+              로그아웃
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

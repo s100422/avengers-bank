@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from avengers_bank.domains.accounts.schemas import Amount
+from avengers_bank.domains.accounts.schemas import AccountPassword, Amount
 from avengers_bank.domains.terms.schemas import TermsConsentIn
 
 # ── 요청 ──────────────────────────────────────────────────────────────
@@ -27,6 +27,12 @@ class DebitCardCreate(BaseModel):
 class CardPaymentCreate(BaseModel):
     place_of_use: str = Field(min_length=1, max_length=100)
     used_amount: Amount
+
+
+class BillPaymentCreate(BaseModel):
+    """청구서 납부: 카드의 결제 계좌(입출금)에서 돈이 나가므로 그 계좌의 비밀번호를 받는다."""
+
+    account_password: AccountPassword
 
 
 class BillCreate(BaseModel):

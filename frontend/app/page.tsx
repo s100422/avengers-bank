@@ -2,12 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { token } from "@/lib/api";
+import { session } from "@/lib/api";
 
 export default function Home() {
   const router = useRouter();
   useEffect(() => {
-    router.replace(token.get() ? "/accounts" : "/login");
+    router.replace(session.active() ? "/accounts" : "/login");
   }, [router]);
   return null;
 }

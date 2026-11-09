@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from avengers_bank.domains.accounts.schemas import AccountPassword
+
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
@@ -12,6 +14,9 @@ class ChatRequest(BaseModel):
 class TransferAction(BaseModel):
     type: Literal["TRANSFER_CONFIRMATION"] = "TRANSFER_CONFIRMATION"
     draft_id: str
+    # 보내는 입출금 계좌 id (비밀번호 미설정·잠김 안내 링크를 그 계좌 상세로 보낸다). 새 초안은 항상 채운다.
+    # None 허용: 이 필드가 생기기 전에 저장된 대화 기록(agent_messages.action)을 다시 읽을 때 검증이 깨지지 않게
+    from_account_id: int | None = None
     from_account_name: str
     from_account_num_masked: str
     recipient_name: str
@@ -47,6 +52,12 @@ class MessageItem(BaseModel):
     action: TransferAction | None = None
     citations: list[Citation] = []
     created_at: datetime
+
+
+class DraftConfirmRequest(BaseModel):
+    """확인 카드에서 사용자가 직접 입력한다. 대화(LLM)로는 절대 받지 않는다 (대화·로그에 남지 않게)."""
+
+    account_password: AccountPassword  # 보내는 입출금 계좌의 비밀번호
 
 
 class DraftConfirmResponse(BaseModel):

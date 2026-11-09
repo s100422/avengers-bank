@@ -51,7 +51,7 @@
       "expected_sources": [
         {
           "document_key": "ab.deposit.rules",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "section_id": "early-close"
         }
       ],
@@ -65,7 +65,7 @@
       "expected_sources": [
         {
           "document_key": "ab.deposit.rules",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "section_id": "maturity"
         }
       ],
@@ -75,16 +75,16 @@
     {
       "id": "T06",
       "product_code": "deposit-basic",
-      "query": "예금에 돈 여러 번 넣을 수 있어?",
+      "query": "예금에 가입하고 나서 돈을 더 넣을 수 있어?",
       "expected_sources": [
         {
           "document_key": "ab.deposit.rules",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "section_id": "funding"
         }
       ],
       "expected_behavior": "answer_with_citation",
-      "must_include": "본인 입출금에서 만기 전 여러 차례 가능. 해지 상태 불가."
+      "must_include": "가입 후 추가 입금 불가. 가입 때 정한 가입 금액을 본인 입출금에서 한 번에 입금."
     },
     {
       "id": "T07",
@@ -93,7 +93,7 @@
       "expected_sources": [
         {
           "document_key": "ab.product.deposit-star",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "section_id": "demo-limitations"
         }
       ],
@@ -107,7 +107,7 @@
       "expected_sources": [
         {
           "document_key": "ab.product.deposit-mobile",
-          "version": "1.0.0",
+          "version": "1.1.0",
           "section_id": "demo-limitations"
         }
       ],
@@ -361,6 +361,48 @@
       "expected_sources": [],
       "expected_behavior": "lookup_owned_agreement",
       "must_include": "소유권 검증 후 저장된 동의 버전 조회. 이력이 없으면 없다고 안내. 현재 초안으로 대체 금지."
+    },
+    {
+      "id": "T28",
+      "product_code": "deposit-basic",
+      "query": "정기예금 최소 가입 금액이 얼마야?",
+      "expected_sources": [
+        {
+          "document_key": "ab.product.deposit-basic",
+          "version": "1.1.0",
+          "section_id": "conditions"
+        }
+      ],
+      "expected_behavior": "answer_with_citation",
+      "must_include": "최소 가입 금액 100,000원. 이보다 작으면 가입 불가."
+    },
+    {
+      "id": "T29",
+      "product_code": "deposit-star",
+      "query": "스타 정기예금은 얼마부터 가입돼?",
+      "expected_sources": [
+        {
+          "document_key": "ab.product.deposit-star",
+          "version": "1.1.0",
+          "section_id": "conditions"
+        }
+      ],
+      "expected_behavior": "answer_with_citation",
+      "must_include": "최소 가입 금액 1,000,000원."
+    },
+    {
+      "id": "T30",
+      "product_code": "deposit-mobile",
+      "query": "예금 가입할 때 입출금 잔액이 모자라면 어떻게 돼?",
+      "expected_sources": [
+        {
+          "document_key": "ab.deposit.rules",
+          "version": "1.1.0",
+          "section_id": "funding"
+        }
+      ],
+      "expected_behavior": "answer_with_citation",
+      "must_include": "개설과 입금이 한 번에 처리되어 입금 실패 시 가입 안 됨. 동의 기록도 남지 않음."
     }
   ]
 }

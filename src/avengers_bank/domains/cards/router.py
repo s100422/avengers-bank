@@ -9,6 +9,7 @@ from avengers_bank.core.responses import SuccessResponse, error_responses
 from avengers_bank.domains.cards.kinds import CardType
 from avengers_bank.domains.cards.schemas import (
     BillCreate,
+    BillPaymentCreate,
     BillDetailResponse,
     BillResponse,
     CardHistoryResponse,
@@ -149,6 +150,6 @@ async def get_bill(card_id: int, bill_id: int, db: DbSession, user: CurrentUser)
     response_model=SuccessResponse[BillResponse],
     responses=error_responses(400, 404, 409),
 )
-async def pay_bill(card_id: int, bill_id: int, db: DbSession, user: CurrentUser):
-    bill = await card_service.pay_bill(db, card_id, bill_id, user)
+async def pay_bill(card_id: int, bill_id: int, data: BillPaymentCreate, db: DbSession, user: CurrentUser):
+    bill = await card_service.pay_bill(db, card_id, bill_id, data, user)
     return SuccessResponse[BillResponse](data=bill, message="청구서 납부가 완료되었습니다.")

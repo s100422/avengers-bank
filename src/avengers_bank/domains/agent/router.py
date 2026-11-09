@@ -11,6 +11,7 @@ from avengers_bank.domains.agent.schemas import (
     ChatRequest,
     ChatResponse,
     DraftCancelResponse,
+    DraftConfirmRequest,
     DraftConfirmResponse,
     MessageItem,
 )
@@ -49,10 +50,10 @@ async def conversation_messages(
     responses=error_responses(400, 404, 409),
 )
 async def confirm_transfer(
-    draft_id: DraftId, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
+    draft_id: DraftId, data: DraftConfirmRequest, user: CurrentUser, db: Annotated[AsyncSession, Depends(get_db)]
 ):
-    """사용자가 확인 카드에서 '이체하기'를 눌렀을 때만 부른다. 잔액·한도를 다시 검사하고 이체한다."""
-    result = await agent_service.confirm_draft(db, draft_id, user)
+    """사용자가 확인 카드에서 계좌 비밀번호를 넣고 '이체하기'를 눌렀을 때만 부른다. 잔액·한도를 다시 검사하고 이체한다."""
+    result = await agent_service.confirm_draft(db, draft_id, data.account_password, user)
     return SuccessResponse[DraftConfirmResponse](data=result, message="이체가 완료되었습니다.")
 
 

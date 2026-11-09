@@ -14,14 +14,16 @@ from avengers_bank.core.exceptions import (
 from avengers_bank.core.timezone import kst_start_utc, today_kst
 from avengers_bank.domains.accounts.kinds import KINDS as ACCOUNT_KINDS
 from avengers_bank.domains.accounts.models import CheckingAccountHistory
+from avengers_bank.domains.accounts.password import check_account_password
 from avengers_bank.domains.accounts.repository import account_repository
-from avengers_bank.domains.accounts.service import account_service
+from avengers_bank.domains.accounts.service import account_service, require_open
 from avengers_bank.domains.cards.kinds import CARD_BILL_PAYMENT, CARD_PAYMENT, KINDS, CardKind
 from avengers_bank.domains.cards.models import CreditCardBill
 from avengers_bank.domains.cards.repository import card_repository
 from avengers_bank.domains.cards.schemas import (
     RESPONSES,
     BillCreate,
+    BillPaymentCreate,
     BillDetailResponse,
     BillResponse,
     CardHistoryResponse,
@@ -168,9 +170,12 @@ class CardService:
         amount = data.used_amount
         async with db.begin():
             card = await self.get_owned(db, kind, card_id, user)  # 소유자는 바뀌지 않는 정보라 잠그기 전에 확인
+            # 체크카드 결제에는 계좌 비밀번호를 받지 않는다: 가맹점 결제는 실제로 카드 PIN·카드사 인증 영역이고
+            # (이 API는 가맹점 결제 흉내), 계좌 비밀번호는 은행 앱에서 계좌 돈을 직접 옮길 때 쓰는 것이다.
             if kind.name == "debit":
                 # 체크카드: 연결 계좌에서 바로 출금한다. 입출금 계좌 → 카드 순서로 잠근다.
                 (account,) = await account_repository.lock_checking_accounts(db, [card.checking_account_id])
+                require_open(account)
                 card = await card_repository.lock_card(db, kind, card_id)
                 self._require_active(card)
                 if account.balance < amount:
@@ -256,15 +261,22 @@ class CardService:
         return BillResponse.model_validate(bill)
 
     async def pay_bill(
-        self, db: AsyncSession, card_id: int, bill_id: int, user: UserResponse
+        self, db: AsyncSession, card_id: int, bill_id: int, data: BillPaymentCreate, user: UserResponse
     ) -> BillResponse:
         kind = KINDS["credit"]
+        # 돈이 나가는 결제 계좌의 비밀번호를 먼저 따로 확인·커밋한다 (틀린 횟수가 롤백되지 않게, password.py).
+        # 결제 계좌는 발급 때 본인 계좌로 확인했고 바뀌지 않는다
+        async with db.begin():
+            card = await self.get_owned(db, kind, card_id, user)
+            await self._get_bill_of_card(db, card_id, bill_id)  # 없는 청구서면 비밀번호를 세기 전에 404
+        await check_account_password(db, ACCOUNT_KINDS["checking"], card.checking_account_id, data.account_password, user)
         async with db.begin():
             card = await self.get_owned(db, kind, card_id, user)
             await self._get_bill_of_card(db, card_id, bill_id)  # 이 카드의 청구서인지 (없으면 404)
 
             # 규칙 9: 입출금 계좌 → 카드 → 청구서 순서로 잠근 뒤에 검사한다
             (account,) = await account_repository.lock_checking_accounts(db, [card.checking_account_id])
+            require_open(account)
             card = await card_repository.lock_card(db, kind, card_id)
             bill = await card_repository.lock_bill(db, bill_id)
 

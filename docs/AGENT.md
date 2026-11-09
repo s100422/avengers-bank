@@ -100,7 +100,7 @@
 | `get_financial_summary` | 없음 | 활성 계좌 수, 전체·입출금·예금·적금 잔액 합계, 신용카드 미결제액, 미납 청구서 합계, 가장 가까운 카드 결제 예정일, 예·적금 만기(남은 일수) |
 | `get_transaction_history` | 계좌 종류, `account_id`, 시작·종료일(KST), 거래 유형, 상대방 이름, 개수(기본 20, 최대 50) | 거래일, 계좌, 유형, 금액, 거래 후 잔액, 마스킹된 상대 계좌, 상대방 이름, 더 있는지(`has_more`) |
 | `get_card_payment_status` | 없음 | 카드별 종류·마스킹 번호·미결제액·미납 청구서·다음 결제일, 결제계좌별 이름·마스킹 번호·잔액·**부족 금액** |
-| `prepare_transfer` | 출금 `account_id`, 받는 계좌번호, 금액 | 이체 초안(`draft_id`, 출금 계좌 이름·마스킹 번호, 받는 분 실명, 마스킹된 받는 계좌, 금액, 예상 잔액, 만료 시각) |
+| `prepare_transfer` | 출금 `from_account`(이름·별칭·번호 끝 4자리), 받는 계좌(본인 계좌면 `to_account` 이름, 다른 사람이면 `to_account_num` 전체 번호. 둘 중 하나), 금액. 서버가 이름으로 계좌를 찾고, 없거나 여럿이면 후보를 돌려줘 되묻는다(C-100) | 이체 초안(`draft_id`, 출금 계좌 이름·마스킹 번호, 받는 분 실명, 마스킹된 받는 계좌, 금액, 예상 잔액, 만료 시각) |
 
 - **`user_id` 인자는 없습니다.** 모든 Tool은 서버가 JWT로 확인한 로그인 사용자로만 동작하고, 정의되지 않은 인자(`user_id` 등)를 보내면 `INVALID_ARGUMENTS`로 거절합니다.
 - 합계·부족 금액·남은 일수는 모두 백엔드 코드가 계산합니다. 모델에게는 계산하지 말고 Tool 값을 쓰라고 지시합니다.
@@ -112,18 +112,24 @@
 사용자 ──POST /agent/chat──▶ AgentService.chat
                                │  지난 대화(최근 10개 메시지) + 새 질문
                                ▼
-                         ModelClient.respond ──▶ (Gemini)
-                               │  tool 호출이 있으면
+                         agent_graph (LangGraph, graph.py)
+                               │
+        START → call_model ─┬─ 도구 호출 없음 ──────────→ finish → END
+                            ├─ 도구 호출이 상한 초과 ───→ limit  → END
+                            └─ 도구 호출 있음 → tools ─┬─ 모델 호출 상한 도달 → limit
+                                      ↑                └─ 아니면 → call_model
+                                      └──────────────────────────┘
+                               │
+      call_model: ModelClient.respond (Gemini)   tools: run_tool(name, args, 로그인 사용자)
+                               │                       (인자 재검증 → Tool 함수 → 결과 JSON)
                                ▼
-                         run_tool(name, args, 로그인 사용자)
-                               │  인자 재검증(pydantic) → Tool 함수(기존 서비스 재사용) → 결과 JSON
+                         답변 + (prepare_transfer가 성공했으면) action
+                               │  인용 정리 → 대화 저장 (agent_messages)
                                ▼
-                         결과를 모델에 돌려주고 반복 (모델 호출 최대 6번, Tool 최대 8개)
-                               │  tool 호출이 없으면 끝
-                               ▼
-                         답변 + (prepare_transfer가 성공했으면) action 저장 후 응답
+                             응답
 ```
 
+- 모델 호출은 질문 하나에 최대 6번, Tool은 최대 8개입니다(`graph.py`). 그래프 상태는 요청 하나 동안만 살고, 대화는 `agent_messages`에만 저장합니다(checkpointer 없음, C-101).
 - Tool 실패(소유권, 잔액, 한도 등)는 예외로 끝내지 않고 `{ "error": { code, message } }`를 모델에 돌려줘서, 모델이 쉬운 말로 설명하게 합니다.
 - 상한에 걸리면 "질문을 처리하는 데 단계가 너무 많이 필요합니다…"라고 답합니다.
 - Tool마다 DB 세션을 따로 열고 바로 닫아서, 모델 응답을 기다리는 동안 DB 커넥션을 잡지 않습니다.
@@ -131,7 +137,7 @@
 ## 이체 확인 흐름
 
 1. 사용자가 "생활비 통장에서 김철수에게 5만 원 보내줘"라고 말합니다.
-2. 모델이 `get_my_accounts`로 출금 계좌를 찾고 `prepare_transfer`를 부릅니다.
+2. 모델이 사용자가 말한 계좌 이름을 그대로 `prepare_transfer`에 넘깁니다(id 불필요). 서버가 이름으로 내 입출금 계좌를 찾습니다(C-100).
 3. 서버가 **기존 이체 코드(`transfer_service.preview`)** 로 출금 계좌 소유권, 받는 계좌 존재, 같은 계좌 여부, 잔액, 1회·1일 한도, 금액 범위를 검사하고, 받는 분 실명을 찾아 `PENDING` 초안(유효 5분)을 저장합니다. **잔액은 바뀌지 않습니다.**
 4. 응답의 `action`을 프론트엔드가 **별도 확인 카드**로 보여 줍니다(채팅 글로 확인을 받지 않음).
 5. 사용자가 `이체하기`를 누르면 `/confirm`이 한 트랜잭션 안에서
@@ -166,7 +172,8 @@ Tool의 원본 결과(잔액 목록, 거래내역 등)는 저장하지 않습니
 ```
 src/avengers_bank/domains/agent/
 ├── router.py          # /agent/chat, /agent/transfers/{id}/confirm|cancel
-├── service.py         # Agent 루프(상한), 대화 저장, 초안 확인·취소
+├── graph.py           # LangGraph: 모델↔도구 반복(노드·상한). DB를 모름
+├── service.py         # 대화 불러오기·인용 정리·저장, 초안 확인·취소
 ├── repository.py      # 대화·메시지 조회, 초안 조건부 상태 변경
 ├── schemas.py         # 요청·응답, TransferAction
 ├── models.py          # 대화·메시지·이체 초안 테이블

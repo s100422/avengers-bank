@@ -8,9 +8,11 @@
 |---|---|
 | [docs/ERD.md](docs/ERD.md) | ER 다이어그램 (Mermaid), 코드에서 지킬 규칙 · 원본: [AvengersBankDiagram.drawio](docs/AvengersBankDiagram.drawio) · 최신(현재 코드): [AvengersBankDiagram_v2.drawio](docs/AvengersBankDiagram_v2.drawio) |
 | [docs/API_ENDPOINTS.md](docs/API_ENDPOINTS.md) | API 엔드포인트 목록, 요청·응답 형식, 구현 상태 |
+| [docs/AUTH.md](docs/AUTH.md) | 로그인·세션 구조(액세스/갱신 토큰, 로그인 한도, 화면 타이머) — 학습용 설명 |
 | [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | 폴더 구조, 계층(router → service → repository) 설명, 역할 분담 |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | AWS 배포 흐름(EC2 + RDS + Caddy), 다시 접속·코드 업데이트 방법, 겪은 문제 |
 | [docs/AGENT.md](docs/AGENT.md) | AI 금융 비서: 실행 방법, 환경변수, Tool 목록, 이체 확인 흐름, 보안 |
+| [docs/ACCOUNT_RECOVERY_RESEARCH.md](docs/ACCOUNT_RECOVERY_RESEARCH.md) | 계정 복구 조사: 국내 은행·규정·NIST·OWASP |
 | [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) | 회고록(작성 중): 기술 선택과 이유(예: nginx 대신 Caddy), 배운 점 |
 
 ## 시작하기
@@ -23,7 +25,7 @@ cp .env.example .env
 docker compose up -d --wait   # PostgreSQL 17을 127.0.0.1:5435에 띄움 (docker-compose.yml)
 ```
 
-`.env`에 `JWT_SECRET_KEY`(32자 이상)를 채웁니다. `POSTGRES_PASSWORD`(DB 비밀번호)는 `docker-compose.yml`이 읽고 `DATABASE_URL`의 비밀번호와 같아야 합니다(`.env.example`에 맞춰져 있음). **예전 `.env`를 쓰고 있다면 `POSTGRES_PASSWORD=1234`를 추가하세요**(없으면 `docker compose`가 오류를 냅니다).
+`.env`에 `JWT_SECRET_KEY`(32자 이상)를 채웁니다. `POSTGRES_PASSWORD`(DB 비밀번호)는 `docker-compose.yml`이 읽고 `DATABASE_URL`의 비밀번호와 같아야 합니다(`.env.example`에 맞춰져 있음). **예전 `.env`를 쓰고 있다면 `POSTGRES_PASSWORD=1234`를 추가하세요**(없으면 `docker compose`가 오류를 냅니다). `ACCESS_TOKEN_EXPIRE_MINUTES`(기본 5)·`SESSION_EXPIRE_MINUTES`(기본 30)는 토큰 수명이며 없으면 기본값을 씁니다([docs/AUTH.md](docs/AUTH.md)).
 
 > **Windows 주의**
 > - `DATABASE_URL`의 호스트는 `localhost`가 아니라 `127.0.0.1`로 둡니다. `localhost`는 IPv6(`::1`)로 먼저 연결을 시도하는데, Windows에서 psycopg 비동기 연결이 거절된 `::1`에서 다음 주소로 넘어가지 못하고 멈춥니다.
@@ -35,7 +37,7 @@ uv run python -m avengers_bank.seed   # 개발용 상품 데이터 (같은 이�
 uv run fastapi dev
 ```
 
-최초 마이그레이션(`alembic/versions/6e15576e9ff5_create_initial_tables.py`)은 저장소에 들어 있으므로 `upgrade head`만 실행합니다.
+최초 마이그레이션(`alembic/versions/6e15576e9ff5_create_initial_tables.py`)은 저장소에 들어 있으므로 `upgrade head`만 실행합니다. 새 마이그레이션을 받았을 때(예: 갱신 토큰용 `refresh_tokens` 테이블)도 `uv run alembic upgrade head`만 다시 실행하면 됩니다.
 
 ### 프론트엔드 (Next.js)
 
@@ -55,6 +57,19 @@ npm run dev
 
 ```
 POST /dev/accounts/checking/{account_id}/charge   { "amount": 100000 }
+```
+
+### 인증번호 확인(개발용 문자함)과 관리자 명령
+
+회원가입·휴대폰 번호 변경·비밀번호 찾기·계좌 비밀번호 재설정의 **인증번호는 개발 모드에서 서버 로그(`[개발용 문자]`)와 화면의 '개발용 문자함'(`GET /dev/sms`)으로 확인**합니다. 실제 문자 발송은 아직 없고, `ENABLE_DEV_ENDPOINTS=true`가 필요합니다.
+
+데모 사용자·계좌는 서버를 띄운 뒤 `uv run python -m avengers_bank.seed_demo [login_id] [password]`로 만듭니다(기본 `admin123` / `Passw0rd!23`, 계좌 비밀번호 `1357`). 가입 인증번호도 개발용 문자함에서 읽어 처리하므로 역시 `ENABLE_DEV_ENDPOINTS=true`가 필요합니다.
+
+로그인을 5회 연속 틀리면 아이디가 잠깁니다(비밀번호 찾기로 해제). 스스로 복구할 수 없을 때는 관리자 명령을 씁니다.
+
+```bash
+uv run python -m avengers_bank.admin unlock <login_id>           # 로그인 잠금 해제
+uv run python -m avengers_bank.admin reset-password <login_id>   # 새 비밀번호 입력 → 잠금 해제, 모든 세션 폐기
 ```
 
 ### 모델을 바꿨을 때
@@ -94,9 +109,10 @@ uv run python scripts/pg_transfer_concurrency.py
 
 | 도메인 | 상태 |
 |---|---|
-| users | ✅ 회원가입, 로그인, 내 정보 조회·수정 |
+| users | ✅ 회원가입(휴대폰 인증), 로그인(5회 연속 실패 잠금)·토큰 갱신·로그아웃, 내 정보 조회·수정, 비밀번호 변경 |
+| verification · recovery | ✅ 휴대폰 인증번호(개발용 문자함), 아이디·비밀번호 찾기(계좌번호 + 계좌 비밀번호 + 휴대폰 인증) |
 | products | ✅ 계좌·카드 상품 목록/상세 조회, 상품 종류 검증 메서드 |
-| accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정 |
-| transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입, 예금 입금 |
+| accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정, 계좌 비밀번호(숫자 4자리, 5회 잠금) |
+| transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입 (예금은 가입 시 입출금 계좌에서 가입 금액 이체) |
 | cards | ✅ 신용·체크카드 발급, 조회, 결제(사용), 신용카드 청구서 생성·납부 |
 | agent | ✅ AI 금융 비서(Tool Calling): 자산 요약·거래내역·카드값 조회, 이체 초안 → 화면 확인 후 실행 ([docs/AGENT.md](docs/AGENT.md)) |

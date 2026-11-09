@@ -20,12 +20,13 @@ from avengers_bank.domains.agent.model_client import (
     get_model_client,
 )
 from avengers_bank.domains.agent.models import AgentMessage, TransferDraft
-from avengers_bank.domains.agent.service import LIMIT_TEXT, MAX_MODEL_CALLS
+from avengers_bank.domains.agent.graph import LIMIT_TEXT, MAX_MODEL_CALLS
 from avengers_bank.domains.agent.tools import run_tool
 from avengers_bank.domains.cards.models import CreditCardHistory
 from avengers_bank.domains.products.models import CardProduct
 from avengers_bank.domains.users.schemas import UserResponse
 from avengers_bank.main import app
+from tests.helpers import open_deposit
 
 pytestmark = pytest.mark.anyio
 
@@ -42,8 +43,10 @@ class FakeClient:
     def __init__(self, *steps):
         self.steps = list(steps)
         self.calls = []
+        self.systems = []
 
     async def respond(self, system, turns, tools):
+        self.systems.append(system)
         self.calls.append(list(turns))
         step = self.steps.pop(0) if self.steps else ModelReply("끝")
         if isinstance(step, Exception):
@@ -155,8 +158,11 @@ async def test_user_id_cannot_be_injected_and_other_accounts_are_hidden(client, 
     outcome = await run_tool("get_transaction_history", {"account_type": "checking", "account_id": 2}, tony)
     assert not outcome.ok and json.loads(outcome.content)["error"]["code"] == "ACCOUNT_NOT_FOUND"
 
-    outcome = await run_tool("prepare_transfer", {"from_account_id": 2, "to_account_num": world["a"]["account_num"], "amount": 1}, tony)
-    assert json.loads(outcome.content)["error"]["code"] == "FROM_ACCOUNT_NOT_FOUND"  # 출금 계좌 쪽 문제임을 구분
+    # 브루스의 계좌는 번호 끝자리로도 부를 수 없다 (내 계좌 안에서만 찾는다). 후보에는 내 계좌만 나온다
+    bruce_num = world["b"]["account_num"]
+    outcome = await run_tool("prepare_transfer", {"from_account": bruce_num[-4:], "to_account_num": world["a"]["account_num"], "amount": 1}, tony)
+    error = json.loads(outcome.content)["error"]
+    assert error["code"] == "FROM_ACCOUNT_NOT_FOUND" and "생활비 통장" in error["message"] and bruce_num not in error["message"]
 
     assert json.loads((await run_tool("execute_transfer", {}, tony)).content)["error"]["code"] == "UNKNOWN_TOOL"
 
@@ -174,8 +180,7 @@ async def add_credit_card(client, headers):
 
 async def test_financial_summary_is_computed_by_backend(client, world):
     tony = world["tony"]
-    dep = (await client.post("/accounts/deposit", json={"product_id": 2, "maturity_date": FUTURE}, headers=tony)).json()["data"]
-    await client.post("/transfers/deposit", json={"from_checking_account_id": 1, "deposit_account_id": dep["account_id"], "amount": 200_000}, headers=tony)
+    assert (await open_deposit(client, tony, 200_000, from_id=1)).status_code == 201
     card = await add_credit_card(client, tony)
     await client.post(f"/cards/credit/{card['card_id']}/payments", json={"place_of_use": "마트", "used_amount": 300_000}, headers=tony)
 
@@ -264,7 +269,7 @@ async def test_tool_loop_is_capped(client, world, fake):
 
 
 async def prepare(client, world, fake, amount=50_000):
-    f = fake(tool("prepare_transfer", from_account_id=1, to_account_num=world["b"]["account_num"], amount=amount),
+    f = fake(tool("prepare_transfer", from_account="생활비 통장", to_account_num=world["b"]["account_num"], amount=amount),
              ModelReply("아래 확인 카드에서 내용을 확인해 주세요."))
     response = await chat(client, world["tony"], f"김철수에게 {amount}원 보내줘")
     assert response.status_code == 200, response.text
@@ -275,6 +280,7 @@ async def test_prepare_transfer_only_creates_draft(client, world, fake):
     action, f = await prepare(client, world, fake)
     full = world["b"]["account_num"]
     assert action["type"] == "TRANSFER_CONFIRMATION"
+    assert action["from_account_id"] == 1  # 비밀번호 안내 링크용
     assert (action["from_account_name"], action["recipient_name"], action["amount"], action["expected_balance_after"]) == (
         "생활비 통장", "김철수", 50_000, 950_000)
     assert action["to_account_num_masked"] == f"{full[:3]}-***-**{full[-4:]}" and len(action["draft_id"]) >= 40
@@ -297,13 +303,73 @@ async def test_prepare_transfer_validation_errors(client, world, fake):
         ({"to_account_num": other, "amount": 0}, "INVALID_ARGUMENTS"),
     ]
     for args, code in cases:
-        outcome = await run_tool("prepare_transfer", {"from_account_id": 1, **args}, user)
+        outcome = await run_tool("prepare_transfer", {"from_account": "생활비", **args}, user)
         assert json.loads(outcome.content)["error"]["code"] == code
     await client.patch("/accounts/checking/1", json={"per_transfer_limit": 10_000}, headers=world["tony"])
-    outcome = await run_tool("prepare_transfer", {"from_account_id": 1, "to_account_num": other, "amount": 10_001}, user)
+    outcome = await run_tool("prepare_transfer", {"from_account": "생활비", "to_account_num": other, "amount": 10_001}, user)
     assert json.loads(outcome.content)["error"]["code"] == "PER_TRANSFER_LIMIT_EXCEEDED"
     async with SessionLocal() as db:
         assert list(await db.scalars(select(TransferDraft))) == []
+
+
+async def open_second(client, headers, nickname):
+    return (await client.post("/accounts/checking", json={"product_id": 1, "nickname": nickname}, headers=headers)).json()["data"]
+
+
+async def test_prepare_transfer_to_own_account_by_name(client, world, fake):
+    """'월급 → 생활비'처럼 본인 계좌끼리는 이름만으로 초안을 만든다. 모델은 id도 번호도 모른다 (C-100)."""
+    tony = world["tony"]
+    second = await open_second(client, tony, "월급 통장")
+    f = fake(tool("prepare_transfer", from_account="생활비 계좌", to_account="월급", amount=30_000),
+             ModelReply("아래 확인 카드에서 내용을 확인해 주세요."))
+    body = (await chat(client, tony, "생활비 계좌에서 월급 계좌로 3만원")).json()["data"]
+    full = second["account_num"]
+    assert body["action"]["from_account_name"] == "생활비 통장" and body["action"]["amount"] == 30_000
+    assert body["action"]["to_account_num_masked"] == f"{full[:3]}-***-**{full[-4:]}" and full not in json.dumps(body)
+    async with SessionLocal() as db:
+        assert (await db.scalars(select(TransferDraft))).one().to_account_num == full  # 서버가 번호를 찾아 넣는다
+    assert f.tool_result(1)[1] is False
+
+
+async def test_account_reference_forms(client, world):
+    """이름 표기가 달라도('월급 계좌'/'월급 통장'), 번호 끝 4자리로도 같은 계좌를 찾는다."""
+    user = world["users"]["tony"]
+    second = await open_second(client, world["tony"], "월급 통장")
+    for ref in ("월급 통장", "월급 계좌", "월급", "  월급통장 ", second["account_num"][-4:], second["account_num"][-6:]):
+        outcome = await run_tool("prepare_transfer", {"from_account": "생활비", "to_account": ref, "amount": 1}, user)
+        assert outcome.ok, (ref, outcome.content)
+        assert json.loads(outcome.content)["to_account_num_masked"].endswith(second["account_num"][-4:])
+
+
+async def test_account_reference_errors_list_candidates_without_ids(client, world):
+    user, tony = world["users"]["tony"], world["tony"]
+    await open_second(client, tony, "월급 모음")
+    await open_second(client, tony, "월급 저축")
+    cases = [  # (인자, 오류 코드, 메시지에 있어야 할 것)
+        ({"from_account": "여행", "to_account_num": world["b"]["account_num"]}, "FROM_ACCOUNT_NOT_FOUND", "생활비 통장"),
+        ({"from_account": "생활비", "to_account": "여행"}, "TO_ACCOUNT_NOT_FOUND", "월급 모음"),
+        ({"from_account": "생활비", "to_account": "월급"}, "ACCOUNT_AMBIGUOUS", "월급 저축"),  # 이름이 딱 맞는 계좌는 없고 둘 다 '월급' 포함
+        ({"from_account": "생활비", "to_account": "생활비"}, "SAME_ACCOUNT_TRANSFER", None),
+    ]
+    for args, code, expected in cases:
+        error = json.loads((await run_tool("prepare_transfer", {**args, "amount": 1}, user)).content)["error"]
+        assert error["code"] == code, (args, error)
+        if expected:
+            assert expected in error["message"] and "account_id" not in error["message"], error
+    for args in ({"from_account": "생활비", "amount": 1},  # 받는 계좌 없음
+                 {"from_account": "생활비", "to_account": "월급 통장", "to_account_num": world["b"]["account_num"], "amount": 1},  # 둘 다 줌
+                 {"from_account_id": 1, "to_account": "월급 통장", "amount": 1}):  # 옛 인자(id)는 거절
+        assert json.loads((await run_tool("prepare_transfer", args, user)).content)["error"]["code"] == "INVALID_ARGUMENTS", args
+    async with SessionLocal() as db:
+        assert list(await db.scalars(select(TransferDraft))) == []
+
+
+async def test_system_prompt_has_no_account_data(client, world, fake):
+    """계좌 정보는 이체 요청 때 서버가 찾는다. 프롬프트에는 별칭도 번호도 id도 없다 (C-100)."""
+    f = fake(ModelReply("답"))
+    await chat(client, world["tony"])
+    system = f.systems[0]
+    assert "생활비 통장" not in system and "account_id=" not in system and world["a"]["account_num"] not in system
 
 
 async def test_confirm_executes_once_and_records_history(client, world, fake):
@@ -398,7 +464,7 @@ async def test_gemini_client_converts_calls_and_results(monkeypatch):
     from google.genai import types
 
     from avengers_bank.domains.agent.model_client import AssistantTurn, GeminiModelClient, ToolResult
-    from avengers_bank.domains.agent.service import TOOL_SPECS
+    from avengers_bank.domains.agent.graph import TOOL_SPECS
 
     gemini = GeminiModelClient("test-key", "gemini-test", timeout=5)
     sent = {}

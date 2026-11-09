@@ -5,20 +5,12 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.database import SessionLocal
-from avengers_bank.core.exceptions import ApiException, ConflictException, NotFoundException
+from avengers_bank.core.exceptions import ConflictException, NotFoundException
 from avengers_bank.core.timezone import today_kst
-from avengers_bank.domains.agent.model_client import (
-    AssistantTurn,
-    ModelClient,
-    ModelError,
-    ModelReply,
-    ModelTimeout,
-    ToolResult,
-    ToolResultsTurn,
-    ToolSpec,
-    Turn,
-    UserTurn,
-)
+from avengers_bank.domains.accounts.kinds import KINDS as ACCOUNT_KINDS
+from avengers_bank.domains.accounts.password import check_account_password
+from avengers_bank.domains.agent.graph import EMPTY_TEXT, RECURSION_LIMIT, AgentContext, agent_graph
+from avengers_bank.domains.agent.model_client import AssistantTurn, ModelClient, ModelReply, Turn, UserTurn
 from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft
 from avengers_bank.domains.agent.prompts import build_system_prompt
 from avengers_bank.domains.agent.repository import agent_repository
@@ -31,27 +23,19 @@ from avengers_bank.domains.agent.schemas import (
     MessageItem,
     TransferAction,
 )
-from avengers_bank.domains.agent.tools import TOOLS, run_tool
 from avengers_bank.domains.agent.tools.common import as_utc, mask_num
 from avengers_bank.domains.agent.tools.terms import request_sources
 from avengers_bank.domains.terms.search import Passage
-from avengers_bank.domains.transfers.schemas import TransferCreate
+from avengers_bank.domains.transfers.schemas import TransferTarget
 from avengers_bank.domains.transfers.service import transfer_service
 from avengers_bank.domains.users.schemas import UserResponse
 
 logger = logging.getLogger(__name__)
 
-MAX_MODEL_CALLS = 6  # 질문 하나에 모델을 부르는 최대 횟수 (무한 반복 방지)
-MAX_TOOL_CALLS = 8  # 질문 하나에 실행하는 Tool 최대 개수
 HISTORY_MESSAGES = 10  # 모델에 넘기는 지난 대화 (사용자·AI 메시지 합계)
-
-LIMIT_TEXT = "질문을 처리하는 데 단계가 너무 많이 필요합니다. 조금 더 구체적으로 나눠서 물어봐 주세요."
-EMPTY_TEXT = "답변을 만들지 못했습니다. 다시 질문해 주세요."
 
 # 모델이 답변에 붙이는 인용 표시. 사용자에게는 지우고 citations로만 보여 준다
 CITATION_MARKER = re.compile(r"\s?\[\[src:([^\]\s]{1,120})\]\]")
-
-TOOL_SPECS = [ToolSpec(t.name, t.description, t.input_schema) for t in TOOLS.values()]
 
 
 class AgentService:
@@ -66,42 +50,15 @@ class AgentService:
 
     async def _chat(self, data: ChatRequest, user: UserResponse, client: ModelClient) -> ChatResponse:
         turns: list[Turn] = [*await self._history(data.conversation_id, user), UserTurn(data.message)]
-        system = build_system_prompt(today_kst())
-        tool_log: list[dict] = []
-        action: TransferAction | None = None
-        answer = LIMIT_TEXT
-
-        for _ in range(MAX_MODEL_CALLS):
-            reply = await self._respond(client, system, turns)
-            if not reply.tool_calls:
-                answer = reply.text.strip() or EMPTY_TEXT
-                break
-            if len(tool_log) + len(reply.tool_calls) > MAX_TOOL_CALLS:
-                logger.warning("agent tool 호출 상한 도달 (user_id=%s)", user.user_id)
-                break
-            turns.append(AssistantTurn(reply))
-            results = []
-            for call in reply.tool_calls:
-                outcome = await run_tool(call.name, call.arguments, user)
-                tool_log.append({"name": call.name if call.name in TOOLS else "unknown", "ok": outcome.ok})
-                if isinstance(outcome.result, TransferAction):
-                    action = outcome.result
-                results.append(ToolResult(call.id, outcome.content, not outcome.ok))
-            turns.append(ToolResultsTurn(results))
-        else:
-            logger.warning("agent 모델 호출 상한 도달 (user_id=%s)", user.user_id)
-
+        final = await agent_graph.ainvoke(
+            {"system": build_system_prompt(today_kst()), "turns": turns, "tool_log": [], "action": None, "model_calls": 0},
+            context=AgentContext(client=client, user=user),
+            config={"recursion_limit": RECURSION_LIMIT},
+        )
+        answer, action = final["answer"], final["action"]
         answer, citations = extract_citations(answer, request_sources.get())
-        conversation_id = await self._save(data, user, answer, tool_log, action, citations)
+        conversation_id = await self._save(data, user, answer, final["tool_log"], action, citations)
         return ChatResponse(conversation_id=conversation_id, answer=answer, action=action, citations=citations)
-
-    async def _respond(self, client: ModelClient, system: str, turns: list[Turn]) -> ModelReply:
-        try:
-            return await client.respond(system, turns, TOOL_SPECS)
-        except ModelTimeout:
-            raise ApiException(504, "AGENT_TIMEOUT", "AI 비서의 응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주세요.") from None
-        except ModelError:
-            raise ApiException(503, "AGENT_UNAVAILABLE", "AI 비서를 지금 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.") from None
 
     async def _history(self, conversation_id: int | None, user: UserResponse) -> list[Turn]:
         if conversation_id is None:
@@ -151,7 +108,9 @@ class AgentService:
 
     # ── 이체 초안 확인·취소 (사용자가 화면에서 직접 누른다. Tool로 등록하지 않는다) ──
 
-    async def confirm_draft(self, db: AsyncSession, draft_id: str, user: UserResponse) -> DraftConfirmResponse:
+    async def confirm_draft(
+        self, db: AsyncSession, draft_id: str, account_password: str, user: UserResponse
+    ) -> DraftConfirmResponse:
         now = datetime.now(timezone.utc)
         async with db.begin():
             draft = await self._pending_draft(db, draft_id, user)
@@ -161,6 +120,11 @@ class AgentService:
         if expired:
             raise ConflictException(code="DRAFT_EXPIRED", message="이체 확인 시간이 지났습니다. 다시 요청해 주세요.")
 
+        # 보내는 계좌 비밀번호는 초안이 아직 PENDING일 때만, 이체 트랜잭션 전에 따로 확인·커밋한다
+        # (틀린 횟수가 롤백되지 않게, password.py). 틀려도 초안은 PENDING으로 남아 다시 입력할 수 있다
+        await check_account_password(
+            db, ACCOUNT_KINDS["checking"], draft.from_checking_account_id, account_password, user
+        )
         async with db.begin():
             # PENDING → EXECUTED를 먼저 차지한 요청만 이체한다 (동시 클릭·재시도로 두 번 나가지 않게).
             # 같은 트랜잭션이라 아래 이체가 실패하면(잔액·한도 재검사) 상태도 PENDING으로 되돌아간다.
@@ -170,7 +134,7 @@ class AgentService:
                 raise ConflictException(code="DRAFT_NOT_PENDING", message="이미 처리되었거나 만료된 이체입니다.")
             result = await transfer_service.transfer_in_tx(
                 db,
-                TransferCreate(
+                TransferTarget(
                     from_checking_account_id=draft.from_checking_account_id,
                     to_account_num=draft.to_account_num, amount=draft.amount,
                 ),
