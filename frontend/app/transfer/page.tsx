@@ -248,7 +248,7 @@ function Transfer() {
         <h1 className="mt-6 text-2xl font-semibold">{pending ? "이체를 처리하고 있습니다" : failed ? "이체에 실패했습니다" : "이체됐습니다!"}</h1>
         <p className="mt-3 text-3xl font-semibold tabular-nums">{won(sent)}</p>
         <p className="mt-2 text-slate tabular-nums">
-          {target.shown}님 · {target.bank_name} {target.account}
+          {target.shown} 님 · {target.bank_name} {target.account}
         </p>
         {pending && <p className="mt-2 text-slate">결과는 거래내역에서 확인하세요.</p>}
         {failed && <p className="mt-2 text-slate">{inter?.fail_message ?? "보낸 금액은 환불됩니다."}</p>}
@@ -319,7 +319,7 @@ function Transfer() {
       <section className="mt-2">
         <Back onClick={() => setStep(1)} />
         <div className="mt-2 text-center">
-          <p className="text-xl font-semibold">{target.shown}님</p>
+          <p className="text-xl font-semibold">{target.shown} 님</p>
           <p className="text-sm text-slate tabular-nums">
             {target.bank_name} {target.account}
           </p>
@@ -327,20 +327,25 @@ function Transfer() {
           <p className={`mt-2 text-sm tabular-nums ${over ? "text-seal" : "text-slate"}`}>
             {over ? "출금 가능 금액을 넘었습니다. " : ""}출금가능금액 {won(balance)}
           </p>
-          {accounts && accounts.length > 1 && (
-            <select
-              aria-label="출금 계좌"
-              value={from ?? ""}
-              onChange={(e) => setFrom(Number(e.target.value))}
-              className="mt-3 rounded-lg border border-line bg-paper px-2 py-1.5 text-sm tabular-nums outline-none focus:border-coral"
-            >
-              {accounts.map((a) => (
-                <option key={a.account_id} value={a.account_id}>
-                  {a.nickname ?? a.account_num}
-                </option>
-              ))}
-            </select>
-          )}
+          <div className="mt-3 flex items-center justify-center gap-2 text-sm">
+            <span className="text-slate">출금할 계좌</span>
+            {accounts && accounts.length > 1 ? (
+              <select
+                aria-label="출금 계좌"
+                value={from ?? ""}
+                onChange={(e) => setFrom(Number(e.target.value))}
+                className="rounded-lg border border-line bg-paper px-2 py-1.5 tabular-nums outline-none focus:border-coral"
+              >
+                {accounts.map((a) => (
+                  <option key={a.account_id} value={a.account_id}>
+                    {a.nickname ?? a.account_num}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="font-medium tabular-nums">{accounts?.[0] ? (accounts[0].nickname ?? accounts[0].account_num) : ""}</span>
+            )}
+          </div>
         </div>
         <div className="mt-4 flex justify-center gap-2">
           {(
@@ -396,7 +401,7 @@ function Transfer() {
               {sheet === "confirm" ? (
                 <>
                   <h2 className="text-xl font-semibold tabular-nums">
-                    {target.shown}님께 {won(amount)}을 이체합니다.
+                    {target.shown} 님께 {won(amount)}을 이체합니다.
                   </h2>
                   <p className="mt-2 text-slate tabular-nums">
                     {target.bank_name} {target.account}
