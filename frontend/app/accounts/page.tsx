@@ -25,7 +25,7 @@ type CardSummary = {
 
 export default function AccountsPage() {
   return (
-    <Shell wide>
+    <Shell>
       <Home />
     </Shell>
   );

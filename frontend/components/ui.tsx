@@ -77,8 +77,8 @@ function Nav() {
 }
 
 // 로그인이 필요한 화면의 틀. 갱신 토큰이 없으면 로그인으로 보낸다.
-// wide: 홈처럼 카드 격자를 쓰는 화면은 PC에서 넓게, 입력 화면은 읽기 좋은 폭으로 둔다.
-export function Shell({ children, wide }: { children: React.ReactNode; wide?: boolean }) {
+// 모든 화면이 같은 폭(max-w-xl)으로 가운데에 놓인다. 화면마다 폭이 달라 UI가 흔들리던 것을 막기 위해 하나로 맞췄다.
+export function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
@@ -93,7 +93,7 @@ export function Shell({ children, wide }: { children: React.ReactNode; wide?: bo
   return (
     <>
       <div className="md:pl-60">
-        <div className={`mx-auto w-full px-4 pb-28 md:px-10 md:pt-10 md:pb-16 ${wide ? "max-w-xl md:max-w-5xl" : "max-w-xl"}`}>
+        <div className="mx-auto w-full max-w-xl px-4 pb-28 md:px-10 md:pt-10 md:pb-16">
           <header className="flex items-center justify-between gap-3 py-5 md:justify-end md:pt-0">
             <span className="md:hidden">
               <Brand />
