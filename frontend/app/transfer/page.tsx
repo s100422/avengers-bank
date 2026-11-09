@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
 import { Button, Shell } from "@/components/ui";
 import {
@@ -392,9 +393,12 @@ function Transfer() {
           </Button>
         </div>
 
-        {sheet && (
-          <div className="fixed inset-0 z-50 flex items-end bg-ink/40" role="dialog" aria-modal="true">
-            <div className="mx-auto w-full max-w-md rounded-t-2xl bg-paper p-5 pb-8">
+        {/* body에 직접 그린다: 화면 진입 애니메이션(transform)이 걸린 안쪽에서는 fixed가 화면이 아니라 그 영역 기준이 돼 위치가 어긋난다.
+            모바일은 아래에서 올라오는 시트, PC(md 이상)는 화면 가운데 창 */}
+        {sheet &&
+          createPortal(
+          <div className="fixed inset-0 z-50 flex items-end bg-ink/40 md:items-center md:justify-center md:p-4" role="dialog" aria-modal="true">
+            <div className="mx-auto w-full max-w-md rounded-t-2xl bg-paper p-5 pb-8 md:rounded-2xl">
               <div className="flex justify-end">
                 <button type="button" aria-label="닫기" onClick={() => setSheet(null)} className="-mr-2 flex size-11 items-center justify-center text-slate">
                   <svg viewBox="0 0 24 24" aria-hidden className="size-5 fill-none stroke-current stroke-2">
@@ -426,7 +430,8 @@ function Transfer() {
                 </form>
               )}
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
       </section>
     );
