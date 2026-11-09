@@ -189,6 +189,9 @@ export type History = {
 export const HISTORY_TYPE: Record<string, [string, boolean]> = {
   TRANSFER_OUT: ["이체 보냄", true],
   TRANSFER_IN: ["입금", false],
+  INTERBANK_OUT: ["타행 이체 보냄", true],
+  INTERBANK_IN: ["타행 이체 받음", false],
+  INTERBANK_REFUND: ["타행 이체 환불", false],
   TO_SAVINGS: ["적금 납입", true],
   TO_DEPOSIT: ["예금 입금", true],
   CLOSE_IN: ["해지금 입금", false],
@@ -197,6 +200,18 @@ export const HISTORY_TYPE: Record<string, [string, boolean]> = {
   CARD_PAYMENT: ["체크카드 결제", true],
   CARD_BILL_PAYMENT: ["카드대금 납부", true],
   DEV_CHARGE: ["충전(개발용)", false],
+};
+
+export type InterbankResult = {
+  transfer_id: number;
+  status: "COMPLETED" | "PENDING" | "FAILED";
+  to_bank: string;
+  to_bank_name: string;
+  to_account: string;
+  amount: number;
+  holder_name: string | null;
+  balance_after: number;
+  fail_message?: string | null;
 };
 
 export type Product = { product_id: number; name: string; description: string; interest_rate: string; min_amount?: number | null };

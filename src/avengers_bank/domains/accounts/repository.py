@@ -4,7 +4,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.timezone import kst_start_utc
-from avengers_bank.domains.accounts.kinds import TRANSFER_OUT, AccountKind
+from avengers_bank.domains.accounts.kinds import INTERBANK_OUT, TRANSFER_OUT, AccountKind
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
 from avengers_bank.domains.accounts.schemas import HistoryFilter
 
@@ -108,7 +108,7 @@ class AccountRepository:
         """
         stmt = select(func.coalesce(func.sum(CheckingAccountHistory.amount), 0)).where(
             CheckingAccountHistory.checking_account_id == checking_account_id,
-            CheckingAccountHistory.type == TRANSFER_OUT,
+            CheckingAccountHistory.type.in_([TRANSFER_OUT, INTERBANK_OUT]),  # 타행 이체도 1일 한도에 센다
             CheckingAccountHistory.date >= since,
         )
         return int(await db.scalar(stmt))  # PostgreSQL의 SUM(bigint)는 Decimal로 온다

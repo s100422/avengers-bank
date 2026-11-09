@@ -430,7 +430,7 @@ async def test_startup_warns_when_dev_endpoints_enabled(caplog, monkeypatch):
     assert any("ENABLE_DEV_ENDPOINTS" in r.message for r in caplog.records)
 
     caplog.clear()
-    monkeypatch.setattr(main_module, "get_settings", lambda: type("S", (), {"enable_dev_endpoints": False})())
+    monkeypatch.setattr(main_module, "get_settings", lambda: type("S", (), {"enable_dev_endpoints": False, "interbank_enabled": False})())
     await start()
     assert not any("ENABLE_DEV_ENDPOINTS" in r.message for r in caplog.records)
 

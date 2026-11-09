@@ -3,9 +3,9 @@
 다음 세션이 이 문서부터 읽고 이어서 작업한다. 끝난 작업의 상세는 [DESIGN_CHANGES.md](DESIGN_CHANGES.md)(C-0xx), 인증 구조는 [AUTH.md](AUTH.md), 계정 복구 조사는 [ACCOUNT_RECOVERY_RESEARCH.md](ACCOUNT_RECOVERY_RESEARCH.md).
 
 ## 1. 지금 상태
-- `main` 브랜치, C-082~C-096 모두 커밋하고 **GitHub(origin/main)에 푸시함**(2026-11-09, C-096 코드 커밋 + 문서 커밋).
-- 개발 DB(PostgreSQL 127.0.0.1:5435) 마이그레이션 head: `9e0f1a2b3c4d`(user_devices까지 적용됨).
-- 테스트: `453 passed, 3 skipped`. PostgreSQL 동시성 스크립트: 이번에 `device_channel`·`refresh`·`single_session`·`login_lock`·`deposit_open` 5개를 다시 돌려 통과(나머지 스크립트는 이번 변경과 무관해 다시 안 돌림).
+- 브랜치 `feature/ai-assistant`에 C-104까지 커밋했다(origin/feature/ai-assistant보다 3개 앞섬, **푸시하지 않음**). 이 브랜치의 `24deb16`은 origin/main에 이미 있는 C-076~C-096 변경을 다시 묶은 커밋이라 **두 이력이 갈라져 있다**(내용은 같다: origin/main과의 차이는 C-097~C-104 파일 30개뿐). main에 합치기 전에 이력을 정리해야 한다(예: origin/main에서 새 브랜치를 만들어 그 차이를 커밋). 커밋: `24deb16`(C-076~C-101), `60c5da4`(C-102·C-103), `ba7dc6b`(C-104). 저장소 루트에 커밋하지 않은 `SPEC.md`가 있다(이 세션에서 만든 것이 아니다).
+- 개발 DB(PostgreSQL 127.0.0.1:5435) 마이그레이션 head: `9e0f1a2b3c4d`(user_devices까지 적용됨. C-097~C-104는 스키마 변경 없음).
+- 테스트: `465 passed, 3 skipped`(전체, 2026-11-09, C-104 커밋 기준). PostgreSQL 동시성 스크립트는 C-096 때 5개를 돌린 뒤 다시 돌리지 않았다(C-097~C-104는 잠금 로직을 건드리지 않았고, 이체 한도 오류 문구만 바뀜).
 - PC를 다시 켜면 Docker Desktop(`%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe`)과 DB 컨테이너(`docker compose up -d --wait`)를 먼저 올려야 한다.
 
 ## 2. 끝난 작업
@@ -20,7 +20,18 @@
 - 설정(`core/config.py`): `cookie_secure`(기본 True), `refresh_cookie_path`(`/api/users`), `device_cookie_days`(365). 테스트는 `conftest.py`에서 `COOKIE_SECURE=false`, `REFRESH_COOKIE_PATH=/users`.
 - 브라우저로 확인한 것: 새 기기 인증 로그인, `document.cookie` 비어 있음, 새로고침 뒤 자동 갱신, 로그아웃 뒤 갱신 401, 같은 브라우저 재로그인은 인증번호 없이 통과, 기기 목록 표시.
 
+### AI 비서·계좌 상세 (C-097 ~ C-104) — 가장 최근
+- **구조:** 모델↔도구 반복은 `domains/agent/graph.py`(LangGraph `StateGraph`: call_model → tools → … → finish/limit). 대화 불러오기·인용·저장은 `service.py`에 남겼다. checkpointer 없음(대화는 `agent_messages`에만). `langchain-google-genai`는 `google-genai`를 3.x로 올려야 해서 쓰지 않았다(C-101).
+- **이체:** `prepare_transfer`는 계좌를 id가 아니라 **이름**(별칭·상품명·번호 끝 4자리)으로 받고 서버가 찾는다(`find_own_checking`). 없거나 여럿이면 후보(마스킹, id 없음)를 오류로 돌려 되묻게 한다(C-100). 한도 오류에는 한도 금액을 담는다(C-102).
+- **가입 준비 카드:** `prepare_open_account`(예금·적금)는 검증만 하고 `OPEN_ACCOUNT` 카드를 돌려준다. 프런트 카드가 `sessionStorage`의 `open-draft:{kind}`에 값을 넣고 `/open/{kind}/{상품 id}`를 연다. 약관 동의·계좌 비밀번호는 화면에서 직접(C-103). 가입 화면은 입력값을 바뀔 때마다 보관하고 계좌 비밀번호는 메모리에만 둔다(C-098).
+- **계좌 상세 화면(C-104):** 해지하기는 맨 아래 작은 링크, 비밀번호 재설정은 입력칸을 누를 때·미설정·잠김일 때만, 예·적금 이자 미리 보기(`GET /accounts/{type}/{id}/interest-preview`, 적금 만기는 매월 납입 계속 가정).
+- 새 기기 로그인의 개발용 문자함은 사용자가 번호를 직접 입력해 연다(가려진 번호로는 못 열었음, C-097).
+- **확인:** 새 테스트, 실제 Gemini·브라우저로 이체 카드·가입 카드·약관 인용·이자 미리 보기. 화면에서 **실제 가입·해지·비밀번호 재설정 완료는 누르지 않았다.**
+
 ## 3. 남은 일 · 결정 대기
+- **새 목록은 `NEXT_STEPS.md` 5단계(AI 비서·MCP)**: MCP 서버(원래 목표), 대화 보관 정책(은행 규제 vs 탈퇴 시 삭제 C-095), 스트리밍, 채팅 안 가입, 재설정 안내 확대 등.
+- **git 이력 정리:** 위 "지금 상태"의 갈라진 이력을 main에 합치기 전에 정리해야 한다.
+- **이번 세션에서 확인하지 못한 것:** `npm run build`(이전부터 실패하던 `/find-id`), 운영(AWS) 반영, Docker 이미지 재빌드(`uv.lock`에 `langgraph`와 의존 패키지가 추가됨. 빌드는 해 보지 않음).
 - **미확인:** 내 정보 화면의 기기 **해제 버튼 동작**(눌러 보지 않음), `npm run build` 실패(`/find-id` 프리렌더에서 `components/verify.tsx:35`의 `useState(Date.now)` → `blocking-prerender-current-time-client`. 이번에 건드린 파일이 아니고 이전부터인지 확인 못 함).
 - **사용자와 정할 것(C-096 논의 포인트):** 공용 PC용 "이 기기 등록 안 함" 선택, 기기 개수 상한·오래된 기기 정리(지금은 재등록할 때마다 행이 쌓임), "5회 이내 거래 중지"를 채널별로 적용한 해석이 규정 취지에 맞는지, Safari의 Secure 쿠키(http에서 저장 안 함 → 개발은 Chrome 또는 `COOKIE_SECURE=false`), 챌린지 JWT를 1회용(jti 저장)으로 할지.
 - 갱신 쿠키 `Path=/api/users`는 `/api/users/*` 전체에 붙는다(갱신·로그아웃만으로 좁히지 못함: 두 경로의 공통 접두사). 필요하면 쿠키를 둘로 나눈다.
@@ -50,4 +61,5 @@
 - 실제 문자 업체 연동(지금은 개발용 발송기), 가짜 복구 토큰 횟수·IP 한도는 프로세스 메모리(서버 여러 대면 공유 저장소).
 - AI 비서 도구의 입력 오류는 영어, 폐기·만료 토큰 행 정리, 세션 절대 만료 시간.
 - 브라우저에 남은 옛 `avengers_bank_session`(토큰 포함)은 따로 지우지 않는다(다음 로그인·로그아웃이 덮어씀).
+- 이 세션에서 브라우저 검증용으로 `uitest01`의 비밀번호를 새로 정했다(문서에 적지 않음. 필요하면 `uv run python -m avengers_bank.admin reset-password uitest01`). `test1109`에는 카드 2장·오늘 카드 결제 8건·월급 통장 충전을 넣어 두었다.
 - 로컬 DB에 테스트 계정이 남아 있다: `demo1`·`demo2`·`demo3`·`uitest01`·`recovery01`(비밀번호 `Passw0rd!23` 또는 `password1234`, recovery01은 `N3wPassw0rd!`). `demo1`에는 이번 검증으로 기기가 하나 등록됐다.

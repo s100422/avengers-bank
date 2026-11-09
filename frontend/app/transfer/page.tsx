@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
 import { Button, Field, MoneyField, Shell } from "@/components/ui";
-import { AccountSummary, History, api, won } from "@/lib/api";
+import { AccountSummary, History, InterbankResult, api, won } from "@/lib/api";
 
 type Result = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
 
@@ -15,6 +15,9 @@ export default function TransferPage() {
     </Shell>
   );
 }
+
+// 김철수 -> 김*수, 김수 -> 김*
+const mask = (n: string) => (n.length < 2 ? n : n[0] + "*".repeat(Math.max(1, n.length - 2)) + (n.length > 2 ? n.slice(-1) : ""));
 
 type Recent = { account: string; name: string | null; count: number; last: string };
 
@@ -44,6 +47,31 @@ function Transfer() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
+  const [banks, setBanks] = useState<{ bank_code: string; name: string }[]>([]);
+  const [bank, setBank] = useState(""); // "" = 우리 은행
+  const [holder, setHolder] = useState<string | null>(null); // 예금주 확인을 마친 이름
+  const [inter, setInter] = useState<InterbankResult | null>(null);
+  const other = bank !== "";
+
+  useEffect(() => {
+    api<{ bank_code: string; name: string }[]>("/interbank-transfers/banks").then(setBanks).catch(() => {});
+  }, []);
+
+  // 처리 중이면 5초마다 최대 1분까지 결과를 다시 묻는다
+  const pendingId = inter?.status === "PENDING" ? inter.transfer_id : null;
+  useEffect(() => {
+    if (pendingId === null) return;
+    let n = 0;
+    const t = setInterval(() => {
+      api<InterbankResult>(`/interbank-transfers/${pendingId}`)
+        .then((r) => {
+          if (r.status !== "PENDING") setInter(r);
+        })
+        .catch(() => {});
+      if (++n >= 12) clearInterval(t);
+    }, 5000);
+    return () => clearInterval(t);
+  }, [pendingId]);
 
   useEffect(() => {
     api<AccountSummary[]>("/accounts")
@@ -70,6 +98,25 @@ function Transfer() {
     setBusy(true);
     setError(null);
     try {
+      if (other) {
+        const acct = String(f.get("to")).trim();
+        if (!holder) {
+          const r = await api<{ holder_name: string }>("/interbank-transfers/inquiry", { to_bank: bank, to_account: acct });
+          setHolder(r.holder_name);
+        } else {
+          setInter(
+            await api<InterbankResult>("/interbank-transfers", {
+              from_checking_account_id: Number(f.get("from")),
+              to_bank: bank,
+              to_account: acct,
+              amount: Number(f.get("amount")),
+              account_password: f.get("account_password"),
+            }),
+          );
+        }
+        setBusy(false);
+        return;
+      }
       setResult(
         await api<Result>("/transfers", {
           from_checking_account_id: Number(f.get("from")),
@@ -98,6 +145,28 @@ function Transfer() {
     );
   }
 
+  if (inter) {
+    const pending = inter.status === "PENDING";
+    const failed = inter.status === "FAILED";
+    return (
+      <section className="mt-10 text-center">
+        <span className="seal stamp size-20 text-lg">{pending ? "처리 중" : failed ? "실패" : "완료"}</span>
+        <h1 className="mt-6 text-2xl font-semibold tabular-nums">
+          {pending ? `${won(inter.amount)} 이체를 처리하고 있습니다` : failed ? "이체에 실패했습니다" : `${won(inter.amount)}을 보냈습니다`}
+        </h1>
+        {pending && <p className="mt-2 text-slate">결과는 거래내역에서 확인하세요.</p>}
+        {failed && <p className="mt-2 text-slate">{inter.fail_message ?? "보낸 금액은 환불됩니다."}</p>}
+        <p className="mt-2 text-slate tabular-nums">
+          받는 계좌 {inter.to_bank_name} {inter.to_account}
+          {inter.holder_name && ` (${mask(inter.holder_name)})`}
+        </p>
+        <Link href="/accounts" className="mt-8 inline-block rounded-xl bg-coral px-6 py-3 font-medium text-paper">
+          내 계좌 보기
+        </Link>
+      </section>
+    );
+  }
+
   if (accounts && accounts.length === 0) {
     return (
       <p className="mt-10 text-center text-slate">
@@ -113,6 +182,24 @@ function Transfer() {
     <section className="mt-4">
       <h1 className="text-2xl font-semibold">이체하기</h1>
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
+        <label className="block">
+          <span className="mb-1 block text-sm text-slate">받는 은행</span>
+          <select
+            value={bank}
+            onChange={(e) => {
+              setBank(e.target.value);
+              setHolder(null);
+            }}
+            className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 outline-none focus:border-coral"
+          >
+            <option value="">우리 은행(SpiderBank)</option>
+            {banks.map((b) => (
+              <option key={b.bank_code} value={b.bank_code}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="block">
           <span className="mb-1 block text-sm text-slate">출금 계좌</span>
           <select
@@ -135,21 +222,25 @@ function Transfer() {
             name="to"
             inputMode="numeric"
             required
-            maxLength={20}
+            maxLength={other ? 50 : 20}
             value={to}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={(e) => {
+              setTo(e.target.value);
+              setHolder(null);
+            }}
           />
-          <AccountPicker
+          {other && holder && <p className="mt-2 text-sm text-slate">예금주 {mask(holder)}</p>}
+          {!other && <AccountPicker
             mine={myOthers.map((a) => ({ account: a.account_num, label: a.nickname ?? "입출금", note: won(a.balance) }))}
             frequent={recent.map((r) => ({ account: r.account, label: r.name ?? r.account, note: `${r.count}회` }))}
             onPick={setTo}
-          />
+          />}
         </div>
         <MoneyField label="금액 (원)" name="amount" min={1} required />
         <AccountPasswordField label="출금 계좌 비밀번호" resetHref={shownFrom ? `/accounts/checking/${shownFrom}` : undefined} />
         <MoneyErrorText error={error} accountHref={shownFrom ? `/accounts/checking/${shownFrom}` : undefined} />
         <Button busy={busy} disabled={!accounts}>
-          보내기
+          {other && !holder ? "예금주 확인" : "보내기"}
         </Button>
       </form>
     </section>

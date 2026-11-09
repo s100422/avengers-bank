@@ -14,6 +14,11 @@
 | [docs/AGENT.md](docs/AGENT.md) | AI 금융 비서: 실행 방법, 환경변수, Tool 목록, 이체 확인 흐름, 보안 |
 | [docs/ACCOUNT_RECOVERY_RESEARCH.md](docs/ACCOUNT_RECOVERY_RESEARCH.md) | 계정 복구 조사: 국내 은행·규정·NIST·OWASP |
 | [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) | 회고록(작성 중): 기술 선택과 이유(예: nginx 대신 Caddy), 배운 점 |
+| [docs/인수인계.md](docs/인수인계.md) | 프로젝트를 이어받거나 리뷰하는 사람용 요약: 현재 상태, 초기 설계에서 바뀐 것, 코드 규칙, 정해야 할 것 |
+| [docs/DESIGN_CHANGES.md](docs/DESIGN_CHANGES.md) | 설계 변경 기록(C-001~): 변경 전·후, 이유, 영향, 검증 |
+| [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) | 다음 할 일·정할 것(단계별 선택지·추천·상태) |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | 다음 세션이 이어서 작업하기 위한 메모: 현재 상태, 개발 환경, 일하는 방식 |
+| [docs/TERMS_RAG.md](docs/TERMS_RAG.md) · [docs/TERMS_EVAL.md](docs/TERMS_EVAL.md) | 약관 발행·색인·검색 운영, 검색 평가 |
 
 ## 시작하기
 
@@ -112,7 +117,9 @@ uv run python scripts/pg_transfer_concurrency.py
 | users | ✅ 회원가입(휴대폰 인증), 로그인(5회 연속 실패 잠금)·토큰 갱신·로그아웃, 내 정보 조회·수정, 비밀번호 변경 |
 | verification · recovery | ✅ 휴대폰 인증번호(개발용 문자함), 아이디·비밀번호 찾기(계좌번호 + 계좌 비밀번호 + 휴대폰 인증) |
 | products | ✅ 계좌·카드 상품 목록/상세 조회, 상품 종류 검증 메서드 |
-| accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정, 계좌 비밀번호(숫자 4자리, 5회 잠금) |
+| accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정, 계좌 비밀번호(숫자 4자리, 5회 잠금), 예·적금 해지, 예·적금 이자 미리 보기(오늘 해지하면 / 만기까지 두면) |
 | transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입 (예금은 가입 시 입출금 계좌에서 가입 금액 이체) |
 | cards | ✅ 신용·체크카드 발급, 조회, 결제(사용), 신용카드 청구서 생성·납부 |
-| agent | ✅ AI 금융 비서(Tool Calling): 자산 요약·거래내역·카드값 조회, 이체 초안 → 화면 확인 후 실행 ([docs/AGENT.md](docs/AGENT.md)) |
+| terms | ✅ 상품 약관 동의(가입 때 필수)와 약관 검색(RAG, 출처 링크) ([docs/TERMS_RAG.md](docs/TERMS_RAG.md)) |
+| agent | ✅ AI 금융 비서(Gemini, LangGraph로 모델↔도구 반복): 자산 요약·거래내역·카드값·약관 조회, 이체 초안 → 화면 확인 후 실행, 예·적금 가입 준비 카드 → 가입 화면에서 이어서 ([docs/AGENT.md](docs/AGENT.md)) |
+| frontend | ✅ Next.js(`frontend/`): 홈·계좌 상세·이체·상품·가입·카드·내 정보·찾기 화면과 AI 비서 패널 |

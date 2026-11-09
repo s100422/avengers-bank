@@ -1,14 +1,14 @@
 # 설계 변경 기록
 
 팀 초기 설계(docs/ERD.md, API_ENDPOINTS.md, PROJECT_STRUCTURE.md 및 원본 코드)를 바탕으로 **개인으로 작업하면서** 바꾼 것, 구현한 것, 앞으로 할 것을 모아 둔 문서다.
-팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-09, 변경 항목 C-001 ~ C-096)
+팀 회의 때 이 문서 하나로 "무엇을, 왜, 어떻게" 바꿨는지 공유하는 게 목적이다. (최종 갱신: 2026-11-09, 변경 항목 C-001 ~ C-105)
 
 | 알고 싶은 것 | 볼 곳 |
 |---|---|
 | 초기 설계에서 무엇이 달라졌나 | **1부** |
 | 지금 어디까지 구현됐고 어떻게 확인했나 | **2부** |
 | 앞으로 무엇을 만들고 무엇을 정해야 하나 | **3부**(요약)와 [NEXT_STEPS.md](NEXT_STEPS.md)(현재 목록) |
-| 하나하나의 이유·변경 전후·검증 | **4부** (C-001 ~ C-023) |
+| 하나하나의 이유·변경 전후·검증 | **4부** (C-001 ~ C-105) |
 | 처음 코드 리뷰 9개 항목은 어떻게 됐나 | 부록 A |
 | 시간순 전체 목록, 작성 규칙, 템플릿 | 부록 B, 작성 규칙 |
 
@@ -81,18 +81,19 @@
 |---|---|---|---|
 | users | 4 / 4 | ✅ 회원가입·로그인·내 정보 조회는 팀 원본, **내 정보 수정(`PATCH /users/me`)은 C-024에서 구현**. 소스에 남은 TODO 없음. 토큰 갱신·로그아웃(`POST /users/token/refresh`, `POST /users/logout`)은 C-083, 입력 규칙 C-084. **토큰 쿠키 전환 + 기기 등록(`/users/login/device*`, `/users/me/devices`)은 C-096** | C-024, C-083, C-084, C-096 |
 | products | 4 / 4 | ✅ 구현 | C-019 |
-| accounts | 7 / 7 | ✅ 구현 (예금은 개설 때 가입 금액을 필수로 입금 C-076·C-079, 상품별 최소 가입 금액 C-080) | C-020, C-076, C-079, C-080 |
+| accounts | 7 / 7 | ✅ 구현 (예금은 개설 때 가입 금액을 필수로 입금 C-076·C-079, 상품별 최소 가입 금액 C-080). 설계 외 추가: 해지 C-043, 계좌 비밀번호 C-092, **이자 미리 보기 `GET /accounts/{type}/{id}/interest-preview` C-104** | C-020, C-076, C-079, C-080, C-104 |
 | transfers | 2 / 2 | ✅ 구현 (`POST /transfers/deposit`는 C-079에서 삭제: 예금은 가입 후 추가 입금 불가) | C-022, C-079 |
 | cards | 10 / 10 | ✅ 구현 | C-023 |
 | dev (설계 외) | 1 | ✅ 구현 | C-021 |
 | terms (설계 외) | 3 + 가입 5종 동의 + Agent Tool 2개 | ✅ 구현. 예금 약관 4개는 1.1.0으로 개정·발행 (나머지 17개는 1.0.0) | C-075, C-081 |
+| agent (설계 외) | 4 (`/agent/chat`, 대화 조회, 이체 확인·취소) | ✅ 구현. Tool 8개(조회·이체 초안·**예·적금 가입 준비 카드**·약관 검색), 모델↔도구 반복은 **LangGraph**, 계좌는 이름으로 찾기, 한도 오류에 금액 | C-070, C-071, C-099 ~ C-103 |
 | 인프라 | 최초 마이그레이션, docker compose, 시드(상품 `seed.py`, 데모 사용자·계좌 `seed_demo.py`) | ✅ | C-014, C-015, C-019, C-078 |
 
 ### 검증 현황
 
 | 방법 | 범위 | 결과 |
 |---|---|---|
-| pytest (SQLite) | 전체 | 453개 통과, 3개 skip (C-096까지. skip은 PostgreSQL이 필요한 테스트로, 같은 경로는 `scripts/`의 PG 스크립트로 확인) |
+| pytest (SQLite) | 전체 | 465개 통과, 3개 skip (2026-11-09, C-104 커밋 기준. skip은 PostgreSQL이 필요한 테스트로, 같은 경로는 `scripts/`의 PG 스크립트로 확인). PG 동시성 스크립트는 C-097 이후 다시 돌리지 않았다(그 뒤 변경은 잠금 로직을 건드리지 않음) |
 | 실제 PostgreSQL: 마이그레이션 | upgrade → downgrade → upgrade, `alembic check` | 통과 (C-014) |
 | 실제 PostgreSQL: 동시성 | 충전(C-021), 이체·적금·예금(C-022), 카드 결제·청구서(C-023), 해지(C-043, C-079에서 적금 납입 경합으로 수정), 예금 가입 금액 입금(C-079), 토큰 동시 갱신(C-083), 동시 로그인·단일 세션(C-088) | 통과. 잠금을 뺀 대조군에서는 문제가 재현됨. **`scripts/`로 다시 실행 가능**(C-025), 로그인 잠금·인증번호 발송(C-090·C-091), 계좌 비밀번호(C-092). 회원 탈퇴 ↔ 입금(C-095). **스크립트 12개 모두 통과(2026-11-09)** |
 | 서버를 띄운 HTTP 확인 | 계좌, 충전, 이체, 카드, 청구서 | 통과 |
@@ -153,6 +154,15 @@
 | 배포 절차는 README가 아니라 `docs/DEPLOY.md`에 흐름 위주로, 개인 인프라 값은 자리 표시로 | 2026-11-06 | C-056 |
 | 프론트는 하단 탭(홈·이체·상품·내 정보)으로 오가고, 있는 API만 화면으로 꺼냄 | 2026-11-06 | C-057 |
 | 프론트 디자인은 시안 A(피치 카드형), 서체 Pretendard, 휴대폰은 하단 탭·PC는 왼쪽 메뉴, 라이트 모드만 | 2026-11-06 | C-058 |
+| 새 기기 로그인의 개발용 문자함은 가려진 번호가 아니라 사용자가 입력한 번호로 연다 | 2026-11-09 | C-097 |
+| 가입 화면의 입력값은 바뀔 때마다 보관해 약관 전문·다른 화면에 다녀와도 유지하고, 계좌 비밀번호는 메모리에만 둔다 | 2026-11-09 | C-098 |
+| AI 비서는 계좌를 id가 아니라 사용자가 말한 이름으로 가리키고 서버가 찾는다(없음·여럿이면 후보를 돌려 되묻기) | 2026-11-09 | C-099, C-100 |
+| AI 비서의 모델↔도구 반복은 LangGraph(`langgraph`만 사용, `langchain-google-genai`·checkpointer는 쓰지 않음). 대화는 `agent_messages` DB 저장 유지 | 2026-11-09 | C-101 |
+| 이체 한도 오류에 한도 금액을 담는다(모델이 한도를 지어내지 않게) | 2026-11-09 | C-102 |
+| AI 비서는 예·적금 가입을 하지 않고 가입 화면을 미리 채우는 카드까지만 만든다(약관 동의·계좌 비밀번호는 화면에서). 만기 날짜는 서버가 계산 | 2026-11-09 | C-103 |
+| 계좌 상세: 해지하기는 맨 아래 작은 링크, 비밀번호 재설정은 입력칸을 누를 때·미설정·잠김일 때만 표시. 예·적금 이자 미리 보기(적금 만기는 매월 납입 계속 가정) | 2026-11-09 | C-104 |
+
+> C-059 ~ C-096에서 정한 것은 이 표에 옮기지 못했다. 각 C-항목의 "결정"·"논의 포인트"와 [인수인계.md](인수인계.md) 5장을 본다.
 
 ---
 
@@ -4926,6 +4936,7 @@ START → call_model ─┬─ 도구 호출 없음 ─────────�
 | C-102 | 2026-11-09 | API | 이체 한도 오류 메시지에 한도 금액(1회·1일)과 오늘 보낸 금액을 넣음. AI가 한도를 지어내던 문제 | 적용 |
 | C-103 | 2026-11-09 | API | AI 비서 예·적금 가입 준비 카드(`prepare_open_account`): 서버가 상품·계좌 이름 찾기, 만기 날짜 계산, 검증 후 가입 화면을 미리 채워 이어 가기. 가입·약관 동의·비밀번호는 화면에서 | 적용 |
 | C-104 | 2026-11-09 | API | 계좌 상세 화면 정리(해지하기는 맨 아래 작은 링크, 비밀번호 재설정은 입력칸을 누를 때만) + 예·적금 이자 미리 보기 API(`interest-preview`: 오늘 해지하면 / 만기까지 두면) | 적용 |
+| C-105 | 2026-11-09 | 신규 기능 | ClearingHub 연동: 타행 이체 보내기(출금 → 허브 → 완료/환불, 결과 모르면 PENDING + 확인 작업)·받기(`/interbank/*`, Ed25519 서명 검증·응답 서명, 멱등 입금) | 적용 (실제 허브 등록 전) |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`
@@ -4974,3 +4985,49 @@ START → call_model ─┬─ 도구 호출 없음 ─────────�
 #### 팀 논의 포인트
 - 팀이 정해야 할 것, 대안
 ```
+
+### C-105. ClearingHub 연동: 타행 이체 보내기·받기
+
+- **날짜:** 2026-11-09
+- **분류:** 신규 기능 / DB 스키마 / 외부 연동
+- **상태:** 적용 (코드·시험 완료. 운영 허브 등록은 공개 HTTPS 주소가 정해진 뒤)
+- **바뀐 파일:**
+  - `src/avengers_bank/domains/interbank/` (새 도메인: `signing.py`, `hub_client.py`, `service.py`, `receiver.py`, `worker.py`, `router.py`, `schemas.py`, `models.py`)
+  - `src/avengers_bank/core/config.py` (허브 연동 설정), `src/avengers_bank/main.py` (라우터·미들웨어·확인 작업 연결)
+  - `src/avengers_bank/domains/accounts/{kinds,models,repository}.py` (거래내역 type 3개, 상대 계좌 50자, 1일 한도 합계)
+  - `alembic/versions/2026_11_09_1200-a0b1c2d3e4f5_add_interbank_transfers.py`, `alembic/env.py`
+  - `frontend/app/transfer/page.tsx`, `frontend/lib/api.ts`, `frontend/components/history-filter.tsx`
+  - `tests/test_interbank.py`, `tests/conftest.py`, `pyproject.toml` (`cryptography`, `httpx`)
+
+#### 변경 전
+- 이체는 같은 은행 입출금 계좌끼리(`transfer_service.transfer`)뿐이었다. 다른 은행으로 보내거나 받을 방법이 없었다.
+- `checking_account_histories.type`은 `TRANSFER_OUT … CLOSE_IN`까지였고 `counterpart_account`는 20자였다.
+
+#### 변경 후
+- **보내는 쪽 (SPEC 3·6절)**: 비밀번호 확인 → `[트랜잭션] 출금 + interbank_transfers(PENDING)` → 허브 `POST /v1/transfers` → 결과 반영.
+  출금을 되돌리는 것은 응답 본문 `status == "FAILED"`일 때뿐이다. 타임아웃·5xx·202·`status` 없는 4xx·**서명이 틀린 응답**은 모두 "모르는 상태"라 PENDING으로 두고, `worker.py`가 30초마다 `GET /v1/transfers/{id}`로 확인한다 (조회가 404면 되돌리지 않고 같은 `transfer_id`로 재전송).
+- **받는 쪽 (SPEC 4절)**: `/interbank/inquiry`, `/interbank/receive`, `/interbank/receive/{id}`. 허브 서명을 원본 바이트로 입금 전에 검증하고, 2xx·4xx 응답(서명 실패 401 포함)에 응답 서명을 붙이는 ASGI 미들웨어(`SignResponses`)를 둔다.
+  `transfer_id`가 `interbank_transfers`의 기본키라 같은 ID는 한 번만 입금된다. 동시에 온 같은 ID가 기본키에 걸리면(`IntegrityError`) **4xx로 답하지 않고** 저장된 결과를 읽어 200, 못 읽으면 503이다.
+- 사용자용 API: `GET /interbank-transfers/banks`(우리 은행 제외), `POST …/inquiry`, `POST /interbank-transfers`, `GET …/{id}`. 허브 응답이 `FAILED`면 환불 후 오류 응답(`ACCOUNT_NOT_FOUND` 404 등), PENDING이면 201 + `status: "PENDING"`.
+- 거래내역 type에 `INTERBANK_OUT`/`INTERBANK_IN`/`INTERBANK_REFUND`를 추가하고, 1일 이체 한도 합계(`sum_today_transfer_amount`)에 `INTERBANK_OUT`을 포함했다.
+- 설정: `HUB_URL`, `HUB_PUBLIC_KEY`, `BANK_CODE`, `BANK_NAME`(SpiderBank), `BANK_API_KEY`, `BANK_PRIVATE_KEY`. 하나라도 비면 기능이 꺼지고(`503 INTERBANK_DISABLED`) 확인 작업도 시작하지 않는다.
+
+#### 이유
+- 허브(ClearingHub)와 연동해 다른 은행으로 이체하려는 요구 (`SPEC.md`).
+- 재현 시나리오(되돌림 규칙): 허브가 입금을 끝냈는데 응답만 타임아웃이면, 이때 출금을 되돌리면 받은 쪽에도 돈이 있고 보낸 사람 계좌에도 돈이 있게 된다(이중 지급). 그래서 응답 서명이 틀린 경우까지 "모르는 상태"로 보고 확정 실패(`FAILED`)일 때만 환불한다.
+- 재현 시나리오(동시 중복): 허브가 타임아웃 뒤 같은 `transfer_id`를 다시 보냈는데 첫 요청이 아직 처리 중이면 둘이 겹친다. 하나가 기본키에 걸렸을 때 409 같은 4xx를 주면 허브가 "입금 안 됨"으로 `FAILED` 처리해 보내는 은행이 환불한다. 그래서 200/503만 쓴다.
+
+#### 영향 범위
+- 마이그레이션 `a0b1c2d3e4f5`: 새 표, `type` CHECK 교체, `counterpart_account` 20→50자(늘리기만 하므로 기존 값 유지). 내리기(downgrade)는 타행 내역이 있으면 실패한다.
+- `ENABLE_DEV_ENDPOINTS` 등 기존 설정·API는 그대로다. 키가 없는 환경(기존 개발·CI)에서는 새 기능만 꺼진다.
+- 에이전트(AI 비서)에는 연결하지 않았다. SPEC 6절은 허브 호출을 LLM 도구로 주지 말고 이체 서비스 안에서만 하라고 한다.
+- 운영 uvicorn 워커는 1개(Dockerfile)라 확인 작업이 프로세스 안 asyncio 태스크 하나로 돈다.
+
+#### 검증
+- `tests/test_interbank.py` 17개: SPEC 2.3·2.5 예시 서명 값 일치, 보내기(완료/확정 실패 환불/타임아웃·5xx·서명 틀림은 PENDING 유지), 확인 작업(완료·환불 1회·404 재전송), 받기(1회 입금, 응답 서명 검증, 서명 실패 401에도 서명, 없는 계좌 404 미기록, 본문 검증, 동시 같은 ID 5건에서 4xx 없음·입금 1건).
+- 허브는 `httpx.MockTransport`로 흉내 냈다. **실제 허브와의 연동(등록·`ping`·902 시험·셀프 시험)은 아직 하지 않았다.**
+
+#### 팀 논의 포인트
+- 확인 작업이 30분 뒤에도 30초 간격이다(SPEC은 10분으로 늦추라 함). 거래가 늘면 늦춤 규칙과 `FOR UPDATE SKIP LOCKED`를 더한다 (`worker.py`의 `shortcut:` 주석).
+- 환불 대상 계좌가 그사이 탈퇴(닫힘)했으면 닫힌 계좌에 돈이 돌아간다. 탈퇴의 "잔액 0 확인"은 PENDING 이체를 모른다 → 탈퇴 시 PENDING 타행 이체가 있으면 막는 것을 다음에 검토.
+- 정산·대사(SPEC 10절), 본인 계좌 조회(9절)는 이번 범위에서 뺐다.

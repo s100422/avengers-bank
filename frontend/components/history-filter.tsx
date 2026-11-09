@@ -16,9 +16,9 @@ export type Filter = {
 // 화면의 거래 유형 → 서버 거래 종류 코드
 const GROUPS = {
   all: { label: "전체", types: [] as string[] },
-  in: { label: "입금", types: ["TRANSFER_IN", "CLOSE_IN", "INTEREST", "DEV_CHARGE"] },
-  out: { label: "출금", types: ["TRANSFER_OUT", "TO_SAVINGS", "TO_DEPOSIT", "CARD_PAYMENT", "CARD_BILL_PAYMENT", "CLOSE_OUT"] },
-  transfer: { label: "이체", types: ["TRANSFER_OUT", "TRANSFER_IN"] },
+  in: { label: "입금", types: ["TRANSFER_IN", "INTERBANK_IN", "INTERBANK_REFUND", "CLOSE_IN", "INTEREST", "DEV_CHARGE"] },
+  out: { label: "출금", types: ["TRANSFER_OUT", "INTERBANK_OUT", "TO_SAVINGS", "TO_DEPOSIT", "CARD_PAYMENT", "CARD_BILL_PAYMENT", "CLOSE_OUT"] },
+  transfer: { label: "이체", types: ["TRANSFER_OUT", "TRANSFER_IN", "INTERBANK_OUT", "INTERBANK_IN", "INTERBANK_REFUND"] },
   card: { label: "카드", types: ["CARD_PAYMENT", "CARD_BILL_PAYMENT"] },
 };
 const PERIODS = { "1m": "1개월", "3m": "3개월", "6m": "6개월", custom: "직접입력" } as const;

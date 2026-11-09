@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     # 기대 조항 최저 0.622, 근거 없는 질문 최고 0.594. 모델·차원을 바꾸면 다시 잰다
     terms_min_score: float = Field(default=0.6, ge=-1, le=1)
 
+    # ClearingHub 연동 (docs/SPEC.md). 하나라도 비어 있으면 타행 이체 기능이 꺼진다(503 INTERBANK_DISABLED).
+    # 개인키·API 키는 .env에만 둔다(커밋 금지). 허브 주소·공개키는 공개 값이다
+    hub_url: str = "https://clearing-hub.ai-agent-develop.cloud"
+    hub_public_key: str | None = None
+    bank_code: str | None = None
+    bank_name: str = "SpiderBank"
+    bank_api_key: SecretStr | None = None
+    bank_private_key: SecretStr | None = None
+
+    @property
+    def interbank_enabled(self) -> bool:
+        return all([self.hub_public_key, self.bank_code, self.bank_api_key, self.bank_private_key])
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

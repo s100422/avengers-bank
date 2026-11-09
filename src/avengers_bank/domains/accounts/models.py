@@ -134,7 +134,7 @@ class CheckingAccountHistory(Base):
         CheckConstraint(
             "balance_after >= 0", name="ck_checking_account_histories_balance_after_non_negative"
         ),
-        CheckConstraint("type IN ('TRANSFER_OUT', 'TRANSFER_IN', 'TO_SAVINGS', 'TO_DEPOSIT', 'CARD_PAYMENT', 'CARD_BILL_PAYMENT', 'DEV_CHARGE', 'CLOSE_IN')", name="ck_checking_account_histories_type"),
+        CheckConstraint("type IN ('TRANSFER_OUT', 'TRANSFER_IN', 'TO_SAVINGS', 'TO_DEPOSIT', 'CARD_PAYMENT', 'CARD_BILL_PAYMENT', 'DEV_CHARGE', 'CLOSE_IN', 'INTERBANK_OUT', 'INTERBANK_IN', 'INTERBANK_REFUND')", name="ck_checking_account_histories_type"),
     )
 
     checking_account_history_id: Mapped[int] = mapped_column(
@@ -151,7 +151,7 @@ class CheckingAccountHistory(Base):
     balance_after: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 거래 후 잔액
     type: Mapped[str] = mapped_column(String(20), nullable=False)  # 입금/출금/이체/카드결제 등
     # 상대 계좌번호: 입금이면 보낸 계좌, 출금이면 받는 계좌
-    counterpart_account: Mapped[str | None] = mapped_column(String(20))
+    counterpart_account: Mapped[str | None] = mapped_column(String(50))  # 타행 계좌번호는 최대 50자 (SPEC 3.3)
     # 상대 이름: 체크카드 결제의 가맹점명 (C-035)
     counterpart_name: Mapped[str | None] = mapped_column(String(100))
 

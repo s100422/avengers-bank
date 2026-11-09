@@ -1,7 +1,7 @@
 # AI 금융 비서 (Tool Calling, C-070)
 
 로그인한 사용자가 채팅으로 자기 금융 상태를 물으면, AI가 필요한 **은행 Tool**을 골라 실제 데이터를 조회하고 자연어로 답합니다.
-이체 요청은 **초안만** 만들고, 사용자가 화면의 확인 카드에서 `이체하기`를 눌러야 실행됩니다.
+이체 요청은 **초안만** 만들고, 사용자가 화면의 확인 카드에서 `이체하기`를 눌러야 실행됩니다. 예·적금 가입 요청은 **가입 화면을 미리 채우는 카드**까지만 만들고, 약관 동의와 계좌 비밀번호는 사용자가 가입 화면에서 직접 합니다.
 
 > MCP 서버는 아직 없습니다. Tool의 비즈니스 로직은 AI 공급자와 분리된 평범한 Python 함수라서, 나중에 MCP Tool이 같은 함수를 그대로 부를 수 있습니다([아래](#mcp로-공개할-때)).
 
@@ -32,9 +32,9 @@
 ## 모델 공급자
 
 - **Google Gemini**(공식 Python SDK `google-genai`)를 씁니다(C-071). 처음에는 Anthropic Claude로 만들었다가 사용자 결정으로 바꿨습니다. 이유는 [RETROSPECTIVE.md](RETROSPECTIVE.md)의 기술 선택 기록에 적었습니다.
-- SDK의 자동 함수 실행(automatic function calling)은 끕니다. 함수 실행, 인자 재검증, 호출 상한은 우리 `service.py`가 맡습니다.
+- SDK의 자동 함수 실행(automatic function calling)은 끕니다. 함수 실행, 인자 재검증, 호출 상한은 우리 코드가 맡고, 모델↔도구 반복은 `graph.py`의 LangGraph(`StateGraph`)로 돌립니다(C-101).
 - 모델 응답 원본(`Content`)을 같은 요청 안의 다음 호출에 그대로 되돌려 보내서 생각 서명(thought signature)이 유지되게 합니다. 함수 결과는 `{"output": ...}`, 실패는 `{"error": ...}`로 보냅니다.
-- 공급자 코드는 `domains/agent/model_client.py` 한 파일에만 있습니다. `service.py`는 공급자 중립 타입(`ModelReply`, `ToolCall`, `UserTurn` …)과 `ModelClient` 인터페이스만 압니다.
+- 공급자 코드는 `domains/agent/model_client.py` 한 파일에만 있습니다. `graph.py`·`service.py`는 공급자 중립 타입(`ModelReply`, `ToolCall`, `UserTurn` …)과 `ModelClient` 인터페이스만 압니다.
 - **다른 공급자로 바꾸기:** `respond(system, turns, tools) -> ModelReply`를 구현한 클래스를 만들고 `get_model_client()`에서 그 클래스를 돌려주면 됩니다. Tool·서비스·테스트는 바꾸지 않습니다.
 - Gemini가 안전 필터로 답을 막으면(`SAFETY` 등) "도와드릴 수 없습니다"라고 답합니다.
 
@@ -70,6 +70,20 @@
       "expires_at": "2026-11-06T03:05:00Z"
     }
   }
+}
+```
+
+예·적금 가입 요청이면 가입하지 않고 **가입 준비 카드**(`OPEN_ACCOUNT`)를 돌려줍니다(C-103). `action`은 `type`으로 구분하는 두 종류(`TRANSFER_CONFIRMATION`, `OPEN_ACCOUNT`) 중 하나이거나 `null`입니다.
+```json
+{
+  "type": "OPEN_ACCOUNT",
+  "kind": "deposit",
+  "product_id": 6,
+  "product_name": "어벤져스 모바일 특판예금",
+  "interest_rate": "3.1",
+  "summary": [{ "label": "상품", "value": "어벤져스 모바일 특판예금" }, { "label": "가입 금액", "value": "1,000,000원" },
+              { "label": "만기일", "value": "2028-11-09" }, { "label": "출금 계좌", "value": "생활비 통장" }],
+  "fields": { "initial_amount": "1000000", "maturity_date": "2028-11-09", "checking_account_id": "104" }
 }
 ```
 

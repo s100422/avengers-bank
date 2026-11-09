@@ -9,6 +9,10 @@ os.environ["ENABLE_DEV_ENDPOINTS"] = "true"  # /dev/... 충전 API 테스트용
 # 테스트 클라이언트는 http://test로 부르고 경로에 /api 프록시가 없다: Secure 쿠키는 http로 안 가고 Path도 안 맞는다
 os.environ["COOKIE_SECURE"] = "false"
 os.environ["REFRESH_COOKIE_PATH"] = "/users"
+# ClearingHub 연동 시험용 키: docs/SPEC.md 2.3의 공개된 검증 전용 값 (운영 키 아님)
+BANK_KEY, BANK_PUB = "D7frsUqSl9ZuC+7EpHfY1+w6+dAlWqg8vuHVtZfdpg4=", "gxCDPKbN/rIXKDJgn4GZh5JY7I65Cwbk3A/mJjTtPzY="
+HUB_KEY, HUB_PUB = "cycR/h4ydSTPkBGuRFO340cDtdAdwrXQjKC4N1GPgtQ=", "yZdBWoR7swp/3CQvh4c58oahhbjxVeaxWWtqmqwDXdo="
+os.environ.update(BANK_CODE="903", BANK_API_KEY="chk_test", BANK_PRIVATE_KEY=BANK_KEY, HUB_PUBLIC_KEY=HUB_PUB)
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -17,6 +21,7 @@ import avengers_bank.domains.accounts.models  # noqa: F401  모든 테이블을 
 import avengers_bank.domains.agent.models  # noqa: F401
 import avengers_bank.domains.cards.models  # noqa: F401
 import avengers_bank.domains.products.models  # noqa: F401
+import avengers_bank.domains.interbank.models  # noqa: F401
 import avengers_bank.domains.terms.models  # noqa: F401
 from avengers_bank.core.database import Base, engine
 from avengers_bank.core.login_limiter import login_limiter, verification_ip_limiter
