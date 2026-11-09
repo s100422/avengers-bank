@@ -3,10 +3,23 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
-import { Button, Field, MoneyField, Shell } from "@/components/ui";
-import { AccountSummary, History, InterbankResult, api, won } from "@/lib/api";
+import { Button, Shell } from "@/components/ui";
+import {
+  AccountSummary,
+  FavoriteRecipient,
+  InterbankResult,
+  RecentRecipient,
+  Recipient,
+  api,
+  won,
+} from "@/lib/api";
 
-type Result = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
+type OwnResult = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
+type Bank = { bank_code: string; name: string };
+type Target = Recipient & { shown: string }; // shown = 화면에 보일 받는 분 이름 (이미 마스킹됨)
+
+const MAX = 100_000_000;
+const OWN_BANK = "SpiderBank";
 
 export default function TransferPage() {
   return (
@@ -19,42 +32,77 @@ export default function TransferPage() {
 // 김철수 -> 김*수, 김수 -> 김*
 const mask = (n: string) => (n.length < 2 ? n : n[0] + "*".repeat(Math.max(1, n.length - 2)) + (n.length > 2 ? n.slice(-1) : ""));
 
-type Recent = { account: string; name: string | null; count: number; last: string };
+const inputBox = "w-full rounded-xl border border-line bg-paper px-3 py-3 outline-none focus:border-coral";
 
-// 내 입출금 계좌들의 거래 내역에서 "이체 보냄"을 모아 많이 보낸 순으로 센다.
-// shortcut: 계좌마다 최근 100건만 본다. 거래가 많아지면 서버에 "자주 보낸 계좌" API를 만든다.
-async function loadRecent(checking: AccountSummary[]): Promise<Recent[]> {
-  const mine = new Set(checking.map((a) => a.account_num));
-  const lists = await Promise.all(
-    checking.map((a) => api<History[]>(`/accounts/checking/${a.account_id}/histories?limit=100`)),
+function Back({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="-ml-1 flex min-h-11 items-center gap-1 text-sm text-slate">
+      <svg viewBox="0 0 24 24" aria-hidden className="size-4 fill-none stroke-current stroke-2">
+        <path d="m15 6-6 6 6 6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      이전
+    </button>
   );
-  const byAccount = new Map<string, Recent>();
-  for (const h of lists.flat()) {
-    if (h.type !== "TRANSFER_OUT" || !h.counterpart_account || mine.has(h.counterpart_account)) continue;
-    const r = byAccount.get(h.counterpart_account) ?? { account: h.counterpart_account, name: h.counterpart_name, count: 0, last: h.date };
-    r.count += 1;
-    if (h.date > r.last) r.last = h.date;
-    byAccount.set(h.counterpart_account, r);
-  }
-  return [...byAccount.values()].sort((a, b) => b.count - a.count || b.last.localeCompare(a.last)).slice(0, 5);
+}
+
+function Star({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={on ? "자주 쓰는 계좌에서 빼기" : "자주 쓰는 계좌에 담기"}
+      aria-pressed={on}
+      onClick={onClick}
+      className="flex size-11 shrink-0 items-center justify-center text-coral"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden className={`size-6 stroke-current stroke-2 ${on ? "fill-current" : "fill-none"}`}>
+        <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
 }
 
 function Transfer() {
   const [accounts, setAccounts] = useState<AccountSummary[] | null>(null);
-  const [recent, setRecent] = useState<Recent[]>([]);
   const [from, setFrom] = useState<number | null>(null);
-  const [to, setTo] = useState("");
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [tab, setTab] = useState<"recent" | "fav" | "mine">("recent");
+  const [recent, setRecent] = useState<RecentRecipient[]>([]);
+  const [favs, setFavs] = useState<FavoriteRecipient[]>([]);
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [bank, setBank] = useState(""); // "" = 우리 은행
+  const [acct, setAcct] = useState("");
+  const [target, setTarget] = useState<Target | null>(null);
+  const [amount, setAmount] = useState(0);
+  const [sheet, setSheet] = useState<null | "confirm" | "password">(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Result | null>(null);
-  const [banks, setBanks] = useState<{ bank_code: string; name: string }[]>([]);
-  const [bank, setBank] = useState(""); // "" = 우리 은행
-  const [holder, setHolder] = useState<string | null>(null); // 예금주 확인을 마친 이름
+  const [own, setOwn] = useState<OwnResult | null>(null);
   const [inter, setInter] = useState<InterbankResult | null>(null);
-  const other = bank !== "";
 
   useEffect(() => {
-    api<{ bank_code: string; name: string }[]>("/interbank-transfers/banks").then(setBanks).catch(() => {});
+    api<RecentRecipient[]>("/transfers/recent").then(setRecent).catch(() => {});
+    api<FavoriteRecipient[]>("/transfers/favorites").then(setFavs).catch(() => {});
+    api<Bank[]>("/interbank-transfers/banks").then(setBanks).catch(() => {}); // 503이면 우리 은행만
+    api<AccountSummary[]>("/accounts")
+      .then(async (a) => {
+        const checking = a.filter((x) => x.account_type === "checking");
+        setAccounts(checking);
+        // 홈의 "최근 이체한 분"에서 오면 ?from=출금 계좌 id&to=받는 계좌번호가 붙어 있다 (C-068)
+        const q = new URLSearchParams(window.location.search);
+        const fromId = Number(q.get("from"));
+        setFrom(checking.some((x) => x.account_id === fromId) ? fromId : (checking[0]?.account_id ?? null));
+        const to = q.get("to")?.slice(0, 50);
+        if (to) {
+          try {
+            await inquire("", to);
+          } catch {
+            setAcct(to);
+            setStep(2);
+          }
+        }
+      })
+      .catch(setError);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 처음 한 번만 불러온다
   }, []);
 
   // 처리 중이면 5초마다 최대 1분까지 결과를 다시 묻는다
@@ -73,118 +121,104 @@ function Transfer() {
     return () => clearInterval(t);
   }, [pendingId]);
 
-  useEffect(() => {
-    api<AccountSummary[]>("/accounts")
-      .then((a) => {
-        const checking = a.filter((x) => x.account_type === "checking");
-        setAccounts(checking);
-        // 홈의 "최근 이체한 분"에서 오면 ?from=출금 계좌 id&to=받는 계좌번호가 붙어 있다 (C-068)
-        const q = new URLSearchParams(window.location.search);
-        const fromId = Number(q.get("from"));
-        setFrom(checking.some((x) => x.account_id === fromId) ? fromId : (checking[0]?.account_id ?? null));
-        setTo(q.get("to")?.slice(0, 20) ?? "");
-        return loadRecent(checking).then(setRecent);
-      })
-      .catch(setError);
-  }, []);
+  const bankName = (code: string) => (code === "" ? OWN_BANK : (banks.find((b) => b.bank_code === code)?.name ?? code));
 
-  // 출금 계좌로 고른 계좌는 받는 쪽 후보에서 뺀다
-  const myOthers = accounts?.filter((a) => a.account_id !== from) ?? [];
-  const shownFrom = from ?? accounts?.[0]?.account_id; // 아직 고르지 않았으면 화면에 첫 계좌가 선택돼 있다
+  // 예금주 조회 후 금액 입력(3단계)으로. 실패하면 던진다
+  async function inquire(bank_code: string, account: string) {
+    const r =
+      bank_code === ""
+        ? await api<{ holder_name: string }>("/transfers/inquiry", { to_account_num: account })
+        : await api<{ holder_name: string }>("/interbank-transfers/inquiry", { to_bank: bank_code, to_account: account });
+    setTarget({
+      bank_code,
+      bank_name: bankName(bank_code),
+      account,
+      name: r.holder_name,
+      shown: bank_code === "" ? r.holder_name : mask(r.holder_name), // 우리 은행은 서버가 이미 마스킹
+    });
+    setAmount(0);
+    setStep(3);
+  }
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
+  async function onDirect() {
     setBusy(true);
     setError(null);
     try {
-      if (other) {
-        const acct = String(f.get("to")).trim();
-        if (!holder) {
-          const r = await api<{ holder_name: string }>("/interbank-transfers/inquiry", { to_bank: bank, to_account: acct });
-          setHolder(r.holder_name);
-        } else {
-          setInter(
-            await api<InterbankResult>("/interbank-transfers", {
-              from_checking_account_id: Number(f.get("from")),
-              to_bank: bank,
-              to_account: acct,
-              amount: Number(f.get("amount")),
-              account_password: f.get("account_password"),
-            }),
-          );
-        }
-        setBusy(false);
-        return;
-      }
-      setResult(
-        await api<Result>("/transfers", {
-          from_checking_account_id: Number(f.get("from")),
-          to_account_num: String(f.get("to")).trim(),
-          amount: Number(f.get("amount")),
-          account_password: f.get("account_password"),
-        }),
-      );
-    } catch (err) {
-      setError(err);
+      await inquire(bank, acct.trim());
+    } catch (e) {
+      setError(e);
     }
     setBusy(false);
   }
 
-  if (result) {
-    return (
-      <section className="mt-10 text-center">
-        <span className="seal stamp size-20 text-lg">완료</span>
-        <h1 className="mt-6 text-2xl font-semibold tabular-nums">{won(result.amount)}을 보냈습니다</h1>
-        <p className="mt-2 text-slate tabular-nums">받는 계좌 {result.to_account_num}</p>
-        <p className="text-slate tabular-nums">남은 잔액 {won(result.balance_after)}</p>
-        <div className="mt-8 flex justify-center gap-3">
-          <Link href="/accounts" className="rounded-xl bg-coral px-6 py-3 font-medium text-paper">
-            내 계좌 보기
-          </Link>
-          {/* 같은 주소로는 화면이 새로 만들어지지 않으므로, 전체를 다시 불러 입력과 잔액을 처음 상태로 되돌린다 */}
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="rounded-xl border border-line px-6 py-3 font-medium"
-          >
-            또 이체하기
-          </button>
-        </div>
-      </section>
-    );
+  function pick(r: Recipient) {
+    setTarget({ ...r, shown: r.name ?? r.account });
+    setAmount(0);
+    setError(null);
+    setStep(3);
   }
 
-  if (inter) {
-    const pending = inter.status === "PENDING";
-    const failed = inter.status === "FAILED";
-    return (
-      <section className="mt-10 text-center">
-        <span className="seal stamp size-20 text-lg">{pending ? "처리 중" : failed ? "실패" : "완료"}</span>
-        <h1 className="mt-6 text-2xl font-semibold tabular-nums">
-          {pending ? `${won(inter.amount)} 이체를 처리하고 있습니다` : failed ? "이체에 실패했습니다" : `${won(inter.amount)}을 보냈습니다`}
-        </h1>
-        {pending && <p className="mt-2 text-slate">결과는 거래내역에서 확인하세요.</p>}
-        {failed && <p className="mt-2 text-slate">{inter.fail_message ?? "보낸 금액은 환불됩니다."}</p>}
-        <p className="mt-2 text-slate tabular-nums">
-          받는 계좌 {inter.to_bank_name} {inter.to_account}
-          {inter.holder_name && ` (${mask(inter.holder_name)})`}
-        </p>
-        <div className="mt-8 flex justify-center gap-3">
-          <Link href="/accounts" className="rounded-xl bg-coral px-6 py-3 font-medium text-paper">
-            내 계좌 보기
-          </Link>
-          {/* 같은 주소로는 화면이 새로 만들어지지 않으므로, 전체를 다시 불러 입력과 잔액을 처음 상태로 되돌린다 */}
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="rounded-xl border border-line px-6 py-3 font-medium"
-          >
-            또 이체하기
-          </button>
-        </div>
-      </section>
-    );
+  async function addFav(r: RecentRecipient) {
+    const key = (x: Recipient) => x.bank_code + "/" + x.account;
+    setRecent((l) => l.map((x) => (key(x) === key(r) ? { ...x, favorite_id: -1 } : x)));
+    try {
+      const f = await api<FavoriteRecipient>("/transfers/favorites", {
+        bank_code: r.bank_code,
+        bank_name: r.bank_name,
+        account: r.account,
+        name: r.name,
+      });
+      setRecent((l) => l.map((x) => (key(x) === key(r) ? { ...x, favorite_id: f.favorite_id } : x)));
+      setFavs((l) => (l.some((x) => x.favorite_id === f.favorite_id) ? l : [f, ...l]));
+    } catch {
+      setRecent((l) => l.map((x) => (key(x) === key(r) ? { ...x, favorite_id: null } : x)));
+    }
+  }
+
+  async function removeFav(id: number) {
+    const prevFavs = favs;
+    const prevRecent = recent;
+    setFavs((l) => l.filter((x) => x.favorite_id !== id));
+    setRecent((l) => l.map((x) => (x.favorite_id === id ? { ...x, favorite_id: null } : x)));
+    try {
+      await api<unknown>(`/transfers/favorites/${id}`, undefined, "DELETE");
+    } catch {
+      setFavs(prevFavs);
+      setRecent(prevRecent);
+    }
+  }
+
+  async function onPay(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!target || from === null) return;
+    const pw = new FormData(e.currentTarget).get("account_password");
+    setBusy(true);
+    setError(null);
+    try {
+      if (target.bank_code === "") {
+        setOwn(
+          await api<OwnResult>("/transfers", {
+            from_checking_account_id: from,
+            to_account_num: target.account,
+            amount,
+            account_password: pw,
+          }),
+        );
+      } else {
+        setInter(
+          await api<InterbankResult>("/interbank-transfers", {
+            from_checking_account_id: from,
+            to_bank: target.bank_code,
+            to_account: target.account,
+            amount,
+            account_password: pw,
+          }),
+        );
+      }
+    } catch (err) {
+      setError(err);
+    }
+    setBusy(false);
   }
 
   if (accounts && accounts.length === 0) {
@@ -198,137 +232,269 @@ function Transfer() {
     );
   }
 
+  const fromAcct = accounts?.find((a) => a.account_id === from);
+  const balance = fromAcct?.balance ?? 0;
+  const accountHref = from ? `/accounts/checking/${from}` : undefined;
+
+  // 4단계: 완료
+  if ((own || inter) && target) {
+    const pending = inter?.status === "PENDING";
+    const failed = inter?.status === "FAILED";
+    const sent = own?.amount ?? inter?.amount ?? 0;
+    const remain = own?.balance_after ?? inter?.balance_after ?? 0;
+    return (
+      <section className="mt-10 text-center">
+        <span className="seal stamp size-20 text-lg">{pending ? "처리 중" : failed ? "실패" : "완료"}</span>
+        <h1 className="mt-6 text-2xl font-semibold">{pending ? "이체를 처리하고 있습니다" : failed ? "이체에 실패했습니다" : "이체됐습니다!"}</h1>
+        <p className="mt-3 text-3xl font-semibold tabular-nums">{won(sent)}</p>
+        <p className="mt-2 text-slate tabular-nums">
+          {target.shown}님 · {target.bank_name} {target.account}
+        </p>
+        {pending && <p className="mt-2 text-slate">결과는 거래내역에서 확인하세요.</p>}
+        {failed && <p className="mt-2 text-slate">{inter?.fail_message ?? "보낸 금액은 환불됩니다."}</p>}
+        <p className="mt-1 text-slate tabular-nums">남은 잔액 {won(remain)}</p>
+        <div className="mt-8 flex justify-center gap-3">
+          <Link href="/accounts" className="rounded-xl bg-coral px-6 py-3 font-medium text-paper">
+            내 계좌 보기
+          </Link>
+          {/* 같은 주소로는 화면이 새로 만들어지지 않으므로, 전체를 다시 불러 처음 상태로 되돌린다 */}
+          <button type="button" onClick={() => window.location.reload()} className="rounded-xl border border-line px-6 py-3 font-medium">
+            또 이체하기
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  // 2단계: 계좌번호 직접 입력
+  if (step === 2) {
+    return (
+      <section className="mt-2">
+        <Back
+          onClick={() => {
+            setError(null);
+            setStep(1);
+          }}
+        />
+        <h1 className="mt-2 text-2xl font-semibold">누구에게 보낼까요?</h1>
+        <div className="mt-6 space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-sm text-slate">계좌번호</span>
+            <input
+              autoFocus
+              inputMode="numeric"
+              maxLength={50}
+              value={acct}
+              onChange={(e) => setAcct(e.target.value.replace(/[^\d-]/g, ""))}
+              className={`${inputBox} tabular-nums`}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm text-slate">은행/증권사</span>
+            <select value={bank} onChange={(e) => setBank(e.target.value)} className={inputBox}>
+              <option value="">SpiderBank(우리 은행)</option>
+              {banks.map((b) => (
+                <option key={b.bank_code} value={b.bank_code}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {error !== null && <p role="alert" className="text-sm text-seal">{(error as Error).message}</p>}
+          <Button type="button" busy={busy} disabled={!acct.trim()} onClick={onDirect}>
+            확인
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  // 3단계: 금액
+  if (step === 3 && target) {
+    const over = amount > balance;
+    const add = (n: number) => setAmount((a) => Math.min(MAX, a + n));
+    const key = (k: string) =>
+      setAmount((a) => (k === "<" ? Math.floor(a / 10) : Math.min(MAX, Number(String(a === 0 ? "" : a) + k))));
+    return (
+      <section className="mt-2">
+        <Back onClick={() => setStep(1)} />
+        <div className="mt-2 text-center">
+          <p className="text-xl font-semibold">{target.shown}님</p>
+          <p className="text-sm text-slate tabular-nums">
+            {target.bank_name} {target.account}
+          </p>
+          <p className={`mt-6 text-4xl font-semibold tabular-nums ${amount === 0 ? "text-slate" : ""}`}>{won(amount)}</p>
+          <p className={`mt-2 text-sm tabular-nums ${over ? "text-seal" : "text-slate"}`}>
+            {over ? "출금 가능 금액을 넘었습니다. " : ""}출금가능금액 {won(balance)}
+          </p>
+          {accounts && accounts.length > 1 && (
+            <select
+              aria-label="출금 계좌"
+              value={from ?? ""}
+              onChange={(e) => setFrom(Number(e.target.value))}
+              className="mt-3 rounded-lg border border-line bg-paper px-2 py-1.5 text-sm tabular-nums outline-none focus:border-coral"
+            >
+              {accounts.map((a) => (
+                <option key={a.account_id} value={a.account_id}>
+                  {a.nickname ?? a.account_num}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="mt-4 flex justify-center gap-2">
+          {(
+            [
+              ["전액", () => setAmount(Math.min(MAX, balance))],
+              ["100만", () => add(1_000_000)],
+              ["10만", () => add(100_000)],
+              ["5만", () => add(50_000)],
+              ["1만", () => add(10_000)],
+            ] as [string, () => void][]
+          ).map(([l, f]) => (
+            <button key={l} type="button" onClick={f} className="rounded-full border border-line px-3 py-1.5 text-sm">
+              {l}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-1">
+          {["1", "2", "3", "4", "5", "6", "7", "8", "9", "00", "0", "<"].map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-label={k === "<" ? "지우기" : k}
+              onClick={() => key(k)}
+              className="h-14 rounded-xl text-xl font-medium tabular-nums active:bg-coral-soft"
+            >
+              {k === "<" ? "⌫" : k}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3">
+          <Button
+            type="button"
+            disabled={amount === 0 || over}
+            onClick={() => {
+              setError(null);
+              setSheet("confirm");
+            }}
+          >
+            확인
+          </Button>
+        </div>
+
+        {sheet && (
+          <div className="fixed inset-0 z-50 flex items-end bg-ink/40" role="dialog" aria-modal="true">
+            <div className="mx-auto w-full max-w-md rounded-t-2xl bg-paper p-5 pb-8">
+              <div className="flex justify-end">
+                <button type="button" aria-label="닫기" onClick={() => setSheet(null)} className="-mr-2 flex size-11 items-center justify-center text-slate">
+                  <svg viewBox="0 0 24 24" aria-hidden className="size-5 fill-none stroke-current stroke-2">
+                    <path d="M6 6l12 12M18 6 6 18" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+              {sheet === "confirm" ? (
+                <>
+                  <h2 className="text-xl font-semibold tabular-nums">
+                    {target.shown}님께 {won(amount)}을 이체합니다.
+                  </h2>
+                  <p className="mt-2 text-slate tabular-nums">
+                    {target.bank_name} {target.account}
+                  </p>
+                  <p className="mt-1 text-sm text-slate">받는 분과 금액을 한 번 더 확인해 주세요</p>
+                  <div className="mt-6">
+                    <Button type="button" onClick={() => setSheet("password")}>
+                      이체
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <form onSubmit={onPay} className="space-y-4">
+                  <h2 className="text-xl font-semibold">계좌 비밀번호를 입력해 주세요</h2>
+                  <AccountPasswordField label="출금 계좌 비밀번호" resetHref={accountHref} autoFocus />
+                  <MoneyErrorText error={error} accountHref={accountHref} />
+                  <Button busy={busy}>이체</Button>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  // 1단계: 받는 사람 고르기
+  const tabs = [
+    ["recent", "최근"],
+    ["fav", "자주 쓰는"],
+    ["mine", "내 계좌"],
+  ] as const;
+  const row = "flex items-center gap-1 border-b border-line";
+  const pickBtn = "min-w-0 flex-1 py-3 text-left";
+  const recipientRow = (r: RecentRecipient | FavoriteRecipient, fav: boolean, onStar: () => void) => (
+    <li key={r.bank_code + "/" + r.account} className={row}>
+      <button type="button" onClick={() => pick(r)} className={pickBtn}>
+        <span className="block truncate font-medium">{r.name ?? r.account}</span>
+        <span className="block truncate text-sm text-slate tabular-nums">
+          {r.bank_name} {r.account}
+        </span>
+      </button>
+      <Star on={fav} onClick={onStar} />
+    </li>
+  );
+  const empty = (t: string) => <li className="py-10 text-center text-sm text-slate">{t}</li>;
+
   return (
     <section className="mt-4">
-      <h1 className="text-2xl font-semibold">이체하기</h1>
-      <form onSubmit={onSubmit} className="mt-6 space-y-4">
-        <label className="block">
-          <span className="mb-1 block text-sm text-slate">받는 은행</span>
-          <select
-            value={bank}
-            onChange={(e) => {
-              setBank(e.target.value);
-              setHolder(null);
-            }}
-            className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 outline-none focus:border-coral"
-          >
-            <option value="">우리 은행(SpiderBank)</option>
-            {banks.map((b) => (
-              <option key={b.bank_code} value={b.bank_code}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-sm text-slate">출금 계좌</span>
-          <select
-            name="from"
-            required
-            value={from ?? ""}
-            onChange={(e) => setFrom(Number(e.target.value))}
-            className="w-full rounded-xl border border-line bg-paper px-3 py-2.5 tabular-nums outline-none focus:border-coral"
-          >
-            {accounts?.map((a) => (
-              <option key={a.account_id} value={a.account_id}>
-                {a.nickname ?? a.account_num} ({won(a.balance)})
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          <Field
-            label="받는 계좌번호"
-            name="to"
-            inputMode="numeric"
-            required
-            maxLength={other ? 50 : 20}
-            value={to}
-            onChange={(e) => {
-              setTo(e.target.value);
-              setHolder(null);
-            }}
-          />
-          {other && holder && <p className="mt-2 text-sm text-slate">예금주 {mask(holder)}</p>}
-          {!other && <AccountPicker
-            mine={myOthers.map((a) => ({ account: a.account_num, label: a.nickname ?? "입출금", note: won(a.balance) }))}
-            frequent={recent.map((r) => ({ account: r.account, label: r.name ?? r.account, note: `${r.count}회` }))}
-            onPick={setTo}
-          />}
-        </div>
-        <MoneyField label="금액 (원)" name="amount" min={1} required />
-        <AccountPasswordField label="출금 계좌 비밀번호" resetHref={shownFrom ? `/accounts/checking/${shownFrom}` : undefined} />
-        <MoneyErrorText error={error} accountHref={shownFrom ? `/accounts/checking/${shownFrom}` : undefined} />
-        <Button busy={busy} disabled={!accounts}>
-          {other && !holder ? "예금주 확인" : "보내기"}
-        </Button>
-      </form>
-    </section>
-  );
-}
-
-type Suggestion = { account: string; label: string; note: string };
-
-// 입력칸 아래 접히는 버튼 하나. 펼치면 "내 계좌" 다음에 "자주 사용하는 계좌". 고르면 입력칸을 채우고 접힌다.
-function AccountPicker({
-  mine,
-  frequent,
-  onPick,
-}: {
-  mine: Suggestion[];
-  frequent: Suggestion[];
-  onPick: (account: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  if (mine.length === 0 && frequent.length === 0) return null;
-
-  const section = (title: string, items: Suggestion[]) =>
-    items.length > 0 && (
-      <div>
-        <p className="bg-porcelain px-4 py-2 text-xs font-medium text-slate">{title}</p>
-        <ul className="divide-y divide-line">
-          {items.map((s) => (
-            <li key={s.account}>
-              <button
-                type="button"
-                onClick={() => {
-                  onPick(s.account);
-                  setOpen(false);
-                }}
-                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-coral-soft"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{s.label}</span>
-                  {s.label !== s.account && <span className="block text-sm text-slate tabular-nums">{s.account}</span>}
-                </span>
-                <span className="shrink-0 text-sm text-slate tabular-nums">{s.note}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-
-  return (
-    <div className="mt-2">
+      <h1 className="text-2xl font-semibold">누구에게 보낼까요?</h1>
+      {error !== null && <p role="alert" className="mt-2 text-sm text-seal">{(error as Error).message}</p>}
       <button
         type="button"
-        aria-expanded={open}
-        aria-controls="account-picker"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 text-sm font-medium text-coral"
+        onClick={() => setStep(2)}
+        className="mt-6 flex w-full items-center rounded-xl border border-line bg-paper px-3 py-3 text-left text-slate"
       >
-        자주 사용하는 계좌
-        <svg viewBox="0 0 24 24" aria-hidden className={`size-4 fill-none stroke-current stroke-2 transition-transform ${open ? "rotate-180" : ""}`}>
-          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        계좌번호
       </button>
-      {open && (
-        <div id="account-picker" className="mt-2 overflow-hidden rounded-xl border border-line bg-paper">
-          {section("내 계좌", mine)}
-          {section("자주 사용하는 계좌", frequent)}
-        </div>
-      )}
-    </div>
+      <div role="tablist" className="mt-6 flex border-b border-line">
+        {tabs.map(([k, l]) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={tab === k}
+            onClick={() => setTab(k)}
+            className={`flex-1 py-2.5 text-sm font-medium ${tab === k ? "border-b-2 border-coral text-ink" : "text-slate"}`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+      <ul>
+        {tab === "recent" &&
+          (recent.length === 0
+            ? empty("최근 이체한 분이 없습니다.")
+            : recent.map((r) => recipientRow(r, r.favorite_id !== null, () => (r.favorite_id === null ? addFav(r) : removeFav(r.favorite_id)))))}
+        {tab === "fav" &&
+          (favs.length === 0 ? empty("자주 쓰는 계좌가 없습니다. 최근 목록에서 별을 눌러 담아 보세요.") : favs.map((f) => recipientRow(f, true, () => removeFav(f.favorite_id))))}
+        {tab === "mine" &&
+          (accounts?.length
+            ? accounts.map((a) => (
+                <li key={a.account_id} className={row}>
+                  <button
+                    type="button"
+                    onClick={() => pick({ bank_code: "", bank_name: OWN_BANK, account: a.account_num, name: a.nickname ?? "내 계좌" })}
+                    className={`${pickBtn} flex items-center justify-between gap-3`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{a.nickname ?? "입출금"}</span>
+                      <span className="block text-sm text-slate tabular-nums">{a.account_num}</span>
+                    </span>
+                    <span className="shrink-0 text-sm tabular-nums">{won(a.balance)}</span>
+                  </button>
+                </li>
+              ))
+            : empty("내 입출금 계좌가 없습니다."))}
+      </ul>
+    </section>
   );
 }

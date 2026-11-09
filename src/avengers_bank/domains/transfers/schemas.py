@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from avengers_bank.domains.accounts.schemas import AccountPassword, Amount
 
@@ -31,3 +31,29 @@ class TransferResponse(BaseModel):
     to_account_num: str
     amount: int
     balance_after: int  # 보낸 입출금 계좌의 거래 후 잔액
+
+
+class InquiryRequest(BaseModel):
+    to_account_num: str = Field(min_length=1, max_length=20)
+
+
+class InquiryResponse(BaseModel):
+    to_account_num: str
+    holder_name: str  # 서버가 이미 가린 이름 (홍*동)
+
+
+class FavoriteCreate(BaseModel):
+    bank_code: str = Field(default="", pattern=r"^(\d{3})?$")  # ""은 우리 은행
+    bank_name: str = Field(min_length=1, max_length=50)
+    account: str = Field(min_length=1, max_length=50)
+    name: str | None = Field(default=None, max_length=100)
+
+
+class FavoriteResponse(FavoriteCreate):
+    favorite_id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RecentContact(FavoriteCreate):
+    favorite_id: int | None = None  # 자주 쓰는 계좌면 그 id (별이 채워진 상태)

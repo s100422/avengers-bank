@@ -216,6 +216,11 @@ export type InterbankResult = {
 
 export type Product = { product_id: number; name: string; description: string; interest_rate: string; min_amount?: number | null };
 
+// 이체 받는 사람 (bank_code "" = 우리 은행). 최근·자주 쓰는 목록은 /transfers/recent, /transfers/favorites
+export type Recipient = { bank_code: string; bank_name: string; account: string; name: string | null };
+export type RecentRecipient = Recipient & { favorite_id: number | null };
+export type FavoriteRecipient = Recipient & { favorite_id: number };
+
 export const won = (n: number) => n.toLocaleString("ko-KR") + "원";
 
 // 예·적금 이자 미리 보기 (GET /accounts/{type}/{id}/interest-preview). 적금 만기 값은 매월 납입을 계속한다고 가정한 예상이다
