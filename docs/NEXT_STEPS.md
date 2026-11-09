@@ -143,12 +143,13 @@
 
 ## 6단계: 타행 이체(ClearingHub) 남은 일 (C-105)
 
-코드와 시험은 끝났고(허브는 MockTransport), **실제 허브 연동이 남았다.** 초대 코드는 2026-11-13 17:16 KST에 만료되며 한 번만 쓸 수 있다.
+운영 허브 등록(은행 코드 903), 서버 배포, 보내기·받기 시험까지 끝났다 (2026-11-09). 서버 주소 `https://3-105-205-183.sslip.io`, `base_url`은 `/interbank`. 남은 일:
 
-1. 운영 서버 공개 HTTPS 주소 확정 (`DOMAIN`, `base_url = https://도메인/interbank`) → `/interbank`가 Caddy에서 API로 바로 가는지 확인
-2. 키 쌍 생성 → `.env`(운영은 `.env.prod`)에 `BANK_PRIVATE_KEY`, 배포 후 `POST /v1/banks/register` → `BANK_CODE`·`BANK_API_KEY` 저장, `ping.ok` 확인, 응답 `hub_public_key`로 지문 직접 계산(`37021b33778cec72`과 비교)
-3. 가짜 은행 902로 보내기 시험(끝자리 0001~0006), 셀프 시험(`test-receive`)으로 받기 시험
-4. (선택) 정산·대사(SPEC 10절), 탈퇴 시 PENDING 타행 이체 막기, 확인 작업 늦춤 규칙
+1. (선택) 정산·대사(SPEC 10절), 본인 계좌 조회(SPEC 9절)
+2. 탈퇴 시 PENDING 타행 이체가 있으면 막기 (환불 대상 계좌가 닫혔을 때 문제)
+3. 확인 작업을 30분 뒤 10분 간격으로 늦추기, 워커를 늘리면 `SKIP LOCKED`
+4. 서버 `.env.prod`의 `CORS_ORIGIN`(오타로 보임, 코드는 `CORS_ORIGINS`) 확인, 운영 서버에 프론트 배포
+5. 시험용 사용자 `hubtest01`·`hubtest02`와 가짜 잔액(운영 DB) 정리
 
 ## 추천 순서
 

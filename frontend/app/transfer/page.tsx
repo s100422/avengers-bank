@@ -138,9 +138,19 @@ function Transfer() {
         <h1 className="mt-6 text-2xl font-semibold tabular-nums">{won(result.amount)}을 보냈습니다</h1>
         <p className="mt-2 text-slate tabular-nums">받는 계좌 {result.to_account_num}</p>
         <p className="text-slate tabular-nums">남은 잔액 {won(result.balance_after)}</p>
-        <Link href="/accounts" className="mt-8 inline-block rounded-xl bg-coral px-6 py-3 font-medium text-paper">
-          내 계좌 보기
-        </Link>
+        <div className="mt-8 flex justify-center gap-3">
+          <Link href="/accounts" className="rounded-xl bg-coral px-6 py-3 font-medium text-paper">
+            내 계좌 보기
+          </Link>
+          {/* 같은 주소로는 화면이 새로 만들어지지 않으므로, 전체를 다시 불러 입력과 잔액을 처음 상태로 되돌린다 */}
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-xl border border-line px-6 py-3 font-medium"
+          >
+            또 이체하기
+          </button>
+        </div>
       </section>
     );
   }
@@ -160,9 +170,19 @@ function Transfer() {
           받는 계좌 {inter.to_bank_name} {inter.to_account}
           {inter.holder_name && ` (${mask(inter.holder_name)})`}
         </p>
-        <Link href="/accounts" className="mt-8 inline-block rounded-xl bg-coral px-6 py-3 font-medium text-paper">
-          내 계좌 보기
-        </Link>
+        <div className="mt-8 flex justify-center gap-3">
+          <Link href="/accounts" className="rounded-xl bg-coral px-6 py-3 font-medium text-paper">
+            내 계좌 보기
+          </Link>
+          {/* 같은 주소로는 화면이 새로 만들어지지 않으므로, 전체를 다시 불러 입력과 잔액을 처음 상태로 되돌린다 */}
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-xl border border-line px-6 py-3 font-medium"
+          >
+            또 이체하기
+          </button>
+        </div>
       </section>
     );
   }
