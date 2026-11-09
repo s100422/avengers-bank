@@ -6,8 +6,14 @@ import { useState } from "react";
 import { Brand, Button, ErrorText, Field } from "@/components/ui";
 import { PHONE, PhoneVerify } from "@/components/verify";
 import { ApiError, LoginResult, api, session } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
+// 다른 화면에 갔다 돌아오면 입력값·인증 증표·오류를 비우고 처음부터 시작한다
 export default function SignupPage() {
+  return <Signup key={useFreshOnLeave()} />;
+}
+
+function Signup() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

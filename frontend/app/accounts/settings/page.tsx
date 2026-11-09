@@ -8,11 +8,12 @@ import { ConfirmModal } from "@/components/home/ConfirmModal";
 import { useHomeData } from "@/components/home/useHomeData";
 import { ErrorText, Shell } from "@/components/ui";
 import { toggle } from "@/lib/home-prefs";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 export default function AccountSettingsPage() {
   return (
     <Shell>
-      <Settings />
+      <Settings key={useFreshOnLeave()} />
     </Shell>
   );
 }

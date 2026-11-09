@@ -9,6 +9,7 @@ import { ACCOUNT_PASSWORD_RULE, AccountPasswordField, MoneyErrorText, accountPas
 import { Button, ErrorText, MoneyField, Shell } from "@/components/ui";
 import { PhoneVerify } from "@/components/verify";
 import { AccountSummary, HISTORY_TYPE, History, InterestPreview, KIND, TermsKind, User, api, won } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 type Account = {
   account_num: string;
@@ -310,7 +311,7 @@ function AccountPasswordSetup({
 export default function AccountDetailPage() {
   return (
     <Shell>
-      <AccountDetail />
+      <AccountDetail key={useFreshOnLeave()} />
     </Shell>
   );
 }

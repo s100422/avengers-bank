@@ -5,9 +5,15 @@ import { useRef, useState } from "react";
 import { Brand, Field } from "@/components/ui";
 import { CodeVerify, RECOVERY_SENT } from "@/components/verify";
 import { api } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 // 아이디 찾기: 입출금 계좌번호 + 계좌 비밀번호 → 등록된 휴대폰 인증번호 → 가린 아이디
+// 다른 화면에 갔다 돌아오면 입력값·인증 증표·오류를 비우고 처음부터 시작한다
 export default function FindIdPage() {
+  return <FindId key={useFreshOnLeave()} />;
+}
+
+function FindId() {
   const [accountNum, setAccountNum] = useState("");
   const [accountPassword, setAccountPassword] = useState(""); // 화면 상태에만 둔다(저장소에 넣지 않는다)
   const [masked, setMasked] = useState<string | null>(null);

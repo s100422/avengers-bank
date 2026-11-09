@@ -6,10 +6,16 @@ import { useRef, useState } from "react";
 import { Brand, Button, ErrorText, Field } from "@/components/ui";
 import { CodeVerify, RECOVERY_SENT } from "@/components/verify";
 import { ApiError, api } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 // 비밀번호 찾기: 아이디 + 입출금 계좌번호 + 계좌 비밀번호 → 등록된 휴대폰 인증번호 → 새 비밀번호.
 // 재설정하면 로그인 잠금도 풀린다. 자동 로그인은 하지 않는다.
+// 다른 화면에 갔다 돌아오면 입력값·인증 증표·오류를 비우고 처음부터 시작한다
 export default function ResetPasswordPage() {
+  return <ResetPassword key={useFreshOnLeave()} />;
+}
+
+function ResetPassword() {
   const router = useRouter();
   const [loginId, setLoginId] = useState("");
   const [accountNum, setAccountNum] = useState("");

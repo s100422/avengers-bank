@@ -1,3 +1,4 @@
+import { clearOpenDrafts } from "./open-draft";
 // FastAPI 호출 도우미. 성공은 { data }, 실패는 { error: { message, details } } 모양이다.
 // 같은 출처의 /api로 부르면 next.config.ts의 rewrites가 FastAPI로 넘긴다(갱신 토큰 쿠키가 자사 쿠키가 되도록).
 const BASE = "/api";
@@ -35,6 +36,7 @@ export const session = {
   clear: () => {
     accessToken = undefined;
     localStorage.removeItem(SESSION_KEY);
+    clearOpenDrafts();
   },
   expiresAt: () => {
     if (typeof window === "undefined") return 0;

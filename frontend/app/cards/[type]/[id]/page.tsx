@@ -7,6 +7,7 @@ import { ConsentRecord } from "@/components/terms/ConsentRecord";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
 import { Button, ErrorText, Shell } from "@/components/ui";
 import { TermsKind, api, won } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 type Card = {
   card_type: "credit" | "debit";
@@ -98,7 +99,7 @@ const when = (iso: string) =>
 export default function CardDetailPage() {
   return (
     <Shell>
-      <CardDetail />
+      <CardDetail key={useFreshOnLeave()} />
     </Shell>
   );
 }

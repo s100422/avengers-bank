@@ -6,11 +6,12 @@ import { useEffect, useState } from "react";
 import { Button, ErrorText, Field, Shell } from "@/components/ui";
 import { PHONE, PhoneVerify, digits } from "@/components/verify";
 import { ApiError, Device, Session, User, api, devices, logout, logoutAll, session } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 export default function MePage() {
   return (
     <Shell>
-      <Me />
+      <Me key={useFreshOnLeave()} />
     </Shell>
   );
 }

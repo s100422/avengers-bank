@@ -11,6 +11,7 @@ import { useHomeData } from "@/components/home/useHomeData";
 import { ErrorText, Shell } from "@/components/ui";
 import { AccountSummary, History, api, won } from "@/lib/api";
 import { accountKey, toggle } from "@/lib/home-prefs";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 type CardSummary = {
   card_type: "credit" | "debit";
@@ -26,7 +27,7 @@ type CardSummary = {
 export default function AccountsPage() {
   return (
     <Shell>
-      <Home />
+      <Home key={useFreshOnLeave()} />
     </Shell>
   );
 }

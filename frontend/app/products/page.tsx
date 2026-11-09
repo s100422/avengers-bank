@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useFreshOnLeave } from "@/lib/fresh";
 import { ErrorText, Shell } from "@/components/ui";
 import { User, api, won } from "@/lib/api";
 
@@ -71,7 +72,7 @@ const rateText = (p: Product) =>
 export default function ProductsPage() {
   return (
     <Shell>
-      <Products />
+      <Products key={useFreshOnLeave()} />
     </Shell>
   );
 }

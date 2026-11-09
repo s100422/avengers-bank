@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
 import { Button, Shell } from "@/components/ui";
@@ -15,6 +15,7 @@ import {
   api,
   won,
 } from "@/lib/api";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 type OwnResult = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
 type Bank = { bank_code: string; name: string };
@@ -24,13 +25,10 @@ const MAX = 100_000_000;
 const OWN_BANK = "SpiderBank";
 
 export default function TransferPage() {
-  // 다른 화면으로 가면 Next.js(cacheComponents)가 이 화면을 지우지 않고 숨겨 둔다. 상태가 남아 있으면 돌아왔을 때
-  // 지난 이체의 완료 화면이 그대로 보이므로, 숨겨질 때 key를 바꿔 다음 방문은 처음부터 시작하게 한다
-  const [visit, setVisit] = useState(0);
-  useLayoutEffect(() => () => setVisit((v) => v + 1), []);
+  // 숨겨졌다 돌아오면 지난 이체의 완료 화면이 보이던 문제 때문에 매 방문을 새로 시작한다 (lib/fresh.ts)
   return (
     <Shell>
-      <Transfer key={visit} />
+      <Transfer key={useFreshOnLeave()} />
     </Shell>
   );
 }

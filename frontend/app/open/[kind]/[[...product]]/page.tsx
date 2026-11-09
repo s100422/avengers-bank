@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { ACCOUNT_PASSWORD_RULE, AccountPasswordField, MoneyErrorText, accountPasswordProblem } from "@/components/account-password";
 import { Button, Field, MoneyField, Shell } from "@/components/ui";
 import { AccountSummary, ApiError, TermsSet, api, termsHref, won } from "@/lib/api";
-import { openDraftKey } from "@/lib/open-draft";
+import { heldSecrets, openDraftKey } from "@/lib/open-draft";
+import { useFreshOnLeave } from "@/lib/fresh";
 
 // 상품 가입(계좌 개설·카드 발급) 화면 하나로 다섯 종류를 처리한다. /open/{kind}/{상품 id(선택)}
 const KINDS = {
@@ -24,7 +25,6 @@ type Opened = { account_num?: string; card_num?: string };
 // 계좌 비밀번호는 저장소에 쓰지 않고 이 모듈 변수(메모리)에만 둔다 → 화면 이동(클라이언트 이동)에는 남고, 새로고침·탭 닫기면 사라진다
 type Draft = { productId: number | null; setHash?: string; agreed: Record<number, boolean>; fields: Record<string, string> };
 const SECRET_FIELDS = ["account_password", "account_password_confirm", "from_account_password"];
-const heldSecrets: Record<string, Record<string, string>> = {};
 
 // 날짜 입력칸 값(YYYY-MM-DD). 오늘에서 days일 뒤.
 const dayAfter = (days: number) => {
@@ -34,9 +34,11 @@ const dayAfter = (days: number) => {
 };
 
 export default function OpenPage() {
+  const fresh = useFreshOnLeave();
+  const { kind, product } = useParams<{ kind: string; product?: string[] }>();
   return (
     <Shell>
-      <Open />
+      <Open key={`${kind}/${product?.[0] ?? ""}/${fresh}`} />
     </Shell>
   );
 }
