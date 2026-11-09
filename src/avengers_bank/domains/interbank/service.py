@@ -86,7 +86,7 @@ class InterbankService:
             ))
             await account_repository.save_history(db, CheckingAccountHistory(
                 checking_account_id=sender.checking_account_id, amount=data.amount, balance_after=sender.balance,
-                type=INTERBANK_OUT, counterpart_account=data.to_account, counterpart_name=bank_name,
+                type=INTERBANK_OUT, counterpart_account=data.to_account,  # 받는 분 이름은 허브가 완료를 알릴 때 채운다 (apply)
             ))
         await self.deliver(db, transfer_id)
         row = await self._row(db, transfer_id)
@@ -134,13 +134,25 @@ class InterbankService:
             if outcome == "COMPLETED":
                 row.status = "COMPLETED"
                 row.peer_name = reply.body.get("holder_name") or row.peer_name
+                if row.peer_name:  # 거래내역에는 은행 이름이 아니라 받는 분 이름을 보인다. 같은 상대·금액의 이름 없는 보냄 내역을 채운다
+                    await db.execute(
+                        update(CheckingAccountHistory)
+                        .where(
+                            CheckingAccountHistory.checking_account_id == row.checking_account_id,
+                            CheckingAccountHistory.type == INTERBANK_OUT,
+                            CheckingAccountHistory.counterpart_account == row.peer_account,
+                            CheckingAccountHistory.amount == row.amount,
+                            CheckingAccountHistory.counterpart_name.is_(None),
+                        )
+                        .values(counterpart_name=row.peer_name)
+                    )
                 return
             # FAILED: 출금을 되돌린다. 계좌 잠금은 행 잠금 뒤 (입금 쪽도 계좌만 잠그므로 순환이 없다)
             (account,) = await account_repository.lock_checking_accounts(db, [row.checking_account_id])
             account.balance += row.amount
             await account_repository.save_history(db, CheckingAccountHistory(
                 checking_account_id=account.checking_account_id, amount=row.amount, balance_after=account.balance,
-                type=INTERBANK_REFUND, counterpart_account=row.peer_account, counterpart_name=row.peer_bank_name,
+                type=INTERBANK_REFUND, counterpart_account=row.peer_account, counterpart_name=row.peer_name,
             ))
             row.status = "FAILED"
             row.fail_code = (reply.body.get("error") or reply.body.get("fail_code") or "RECEIVER_ERROR")[:40]

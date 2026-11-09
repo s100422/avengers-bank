@@ -142,7 +142,6 @@ async def receive(request: Request, db: DbSession):
             if account.closed_at is not None:  # 잠근 뒤 확인: 방금 탈퇴했으면 없는 계좌와 같다
                 return error(404, "ACCOUNT_NOT_FOUND", "받는 계좌를 찾을 수 없습니다", transfer_id=tid)
             account.balance += data["amount"]
-            sender_label = f"{data['from_bank_name'] or data['from_bank']} {data['sender_name']}"[:100]
             # 입금 기록과 transfer_id 저장은 한 트랜잭션 (규칙 2). 같은 ID가 동시에 오면 PK에 걸려 롤백된다
             row = InterbankTransfer(
                 transfer_id=tid, direction="IN", checking_account_id=account.checking_account_id,
@@ -152,7 +151,7 @@ async def receive(request: Request, db: DbSession):
             db.add(row)
             await account_repository.save_history(db, CheckingAccountHistory(
                 checking_account_id=account.checking_account_id, amount=data["amount"], balance_after=account.balance,
-                type=INTERBANK_IN, counterpart_account=data["from_account"], counterpart_name=sender_label,
+                type=INTERBANK_IN, counterpart_account=data["from_account"], counterpart_name=data["sender_name"],  # 이름만(은행 이름은 넣지 않는다: 화면 표시를 통일하려는 결정, C-108)
             ))
             await db.flush()
             return await _completed(db, row)

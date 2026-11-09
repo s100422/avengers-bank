@@ -112,6 +112,13 @@ async def row(transfer_id):
         return await db.get(InterbankTransfer, transfer_id)
 
 
+async def history_names(account_id=1):
+    async with SessionLocal() as db:
+        rows = await db.execute(select(CheckingAccountHistory.type, CheckingAccountHistory.counterpart_name).where(
+            CheckingAccountHistory.checking_account_id == account_id).order_by(CheckingAccountHistory.checking_account_history_id))
+        return [tuple(r) for r in rows]
+
+
 async def history_types(account_id=1):
     async with SessionLocal() as db:
         rows = await db.scalars(select(CheckingAccountHistory.type).where(
@@ -140,6 +147,7 @@ async def test_send_completed(client, world, hub):
     assert await balance(client, world) == 950_000
     assert hub.posts[0]["sender_name"] and hub.posts[0]["from_account"] == world["a"]["account_num"]
     assert await history_types() == ["DEV_CHARGE", "INTERBANK_OUT"]
+    assert (await history_names())[-1] == ("INTERBANK_OUT", "김철수")  # 받는 분 이름(은행 이름 아님)
 
 
 async def test_send_failed_refunds(client, world, hub):
@@ -169,6 +177,7 @@ async def test_worker_completes_pending(client, world, hub):
     await worker.reconcile_once()
     assert (await row(tid)).status == "COMPLETED"
     assert await balance(client, world) == 950_000
+    assert (await history_names())[-1] == ("INTERBANK_OUT", "김철수")  # 처리 중이던 내역도 완료되면 이름이 채워진다
     status = (await client.get(f"/interbank-transfers/{tid}", headers=world["tony"])).json()["data"]
     assert status["status"] == "COMPLETED"
     assert (await client.get(f"/interbank-transfers/{tid}", headers=world["bruce"])).status_code == 404  # 남의 이체
@@ -237,7 +246,7 @@ async def test_receive_deposits_once_and_signs(client, world, hub):
     assert await history_types(2) == ["INTERBANK_IN"]
     async with SessionLocal() as db:
         hist = await db.scalar(select(CheckingAccountHistory).where(CheckingAccountHistory.checking_account_id == 2))
-    assert hist.counterpart_name == "SimBank 홍길동"
+    assert hist.counterpart_name == "홍길동"  # 거래내역에는 은행 이름 없이 사람 이름만 (C-108)
     sent = hub_request("POST", "/receive", receive_body(acct))
     res = await client.request(sent[0], sent[1], content=sent[2], headers=sent[3])
     assert_signed(res, sent[3]["X-Signature"])
