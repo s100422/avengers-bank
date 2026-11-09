@@ -4,7 +4,7 @@
 
 ## 1. 지금 상태
 - 현재 브랜치는 `main`이고 C-109까지 커밋했다(origin/main보다 7개 앞섬, **푸시하지 않음**). 예전 `feature/ai-assistant`의 갈라진 이력 문제는 main에 이어 작업하면서 정리됐다(C-105~C-109는 main 위에 쌓임). 저장소 루트에 커밋하지 않은 `SPEC.md`(ClearingHub 연동 명세)가 있다.
-- 마이그레이션 head(코드 기준): `c2d3e4f5a6b7`(C-105 `interbank_transfers` → C-107 `favorite_accounts` → C-108 타행 내역 이름 데이터 정리). 개발 DB·운영 DB에 어디까지 적용됐는지는 `uv run alembic current`로 확인한다(운영 서버는 C-108 시점에 배포 전이라 `alembic upgrade head` 필요).
+- 마이그레이션 head(코드 기준): `c2d3e4f5a6b7`(C-105 `interbank_transfers` → C-107 `favorite_accounts` → C-108 타행 내역 이름 데이터 정리). 개발 DB·운영 DB에 어디까지 적용됐는지는 `uv run alembic current`로 확인한다(운영 서버는 2026-11-10에 `main`(`fa7b4bd`)을 배포하며 `c2d3e4f5a6b7`(head)까지 적용했다).
 - 테스트: C-105~C-109로 `tests/test_interbank.py`(17개)·`tests/test_transfer_contacts.py`(6개)가 늘었다(C-104 시점은 `465 passed, 3 skipped`). 2026-11-09 전체 실행 결과는 `488 passed, 3 skipped`. PostgreSQL 동시성 스크립트는 C-096 때 5개를 돌린 뒤 다시 돌리지 않았다(타행 이체의 동시 같은 ID 입금은 SQLite 테스트로만 확인, PG 확인은 안 함).
 - PC를 다시 켜면 Docker Desktop(`%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe`)과 DB 컨테이너(`docker compose up -d --wait`)를 먼저 올려야 한다.
 

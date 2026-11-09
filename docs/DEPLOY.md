@@ -85,7 +85,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api alem
 
 `.env.prod`만 바꿨으면 `--build` 없이 `up -d`만 하면 된다.
 
-## 2026-11-09 배포 (타행 이체·AI 비서)
+## 2026-11-09~10 배포 (타행 이체·AI 비서·이체 화면)
 
 두 번째 배포다. 서버는 `main` 브랜치를 받는다(`git pull origin main`). 서버가 오래된 커밋(`49dfefa`)에 머물러 있어서 마이그레이션 10개가 한꺼번에 적용됐고, 모두 표·컬럼을 추가하는 변경이었다. **배포 전에 RDS 스냅샷**을 찍었다(스냅샷 이름은 영문자로 시작하고 영문·숫자·하이픈만 가능: 예 `before-interbank-20261109`).
 
@@ -97,6 +97,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod build
 docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api alembic upgrade head
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d api
 ```
+
+마지막 배포(2026-11-10)는 `main` `fa7b4bd`이고 `alembic current`가 `c2d3e4f5a6b7`(head)였다. 배포 뒤 `/health` 200, 새 API(`/transfers/recent` 등)와 `/interbank/inquiry`가 로그인·서명 없이 401을 주는 것으로 라우터가 올라온 것을 확인했다.
 
 ### `.env.prod`에 추가한 값
 
