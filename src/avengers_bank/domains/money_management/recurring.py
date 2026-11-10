@@ -92,6 +92,7 @@ def schedule(
             status="CONFIRMED",
             account_label=b.card_label,
             bill_id=b.bill_id,
+            card_id=b.credit_card_id,
         )
         # Bill은 미납 청구서만 들어온다. 이번 달이면 연체된 이전 청구서도 보여준다
         for b in bills

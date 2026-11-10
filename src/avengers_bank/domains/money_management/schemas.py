@@ -50,6 +50,7 @@ class ScheduledItem(BaseModel):
     account_label: str | None
     recurring_id: int | None = None
     bill_id: int | None = None
+    card_id: int | None = None  # CARD_BILL의 신용카드 (/cards/credit/{card_id})
 
 
 class Forecast(BaseModel):

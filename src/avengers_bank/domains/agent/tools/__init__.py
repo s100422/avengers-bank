@@ -17,6 +17,13 @@ from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.agent.tools.accounts import NoArgs, get_my_accounts
 from avengers_bank.domains.agent.tools.cards import get_card_payment_status
 from avengers_bank.domains.agent.tools.favorites import get_favorite_products
+from avengers_bank.domains.agent.tools.money import (
+    CategoryArgs,
+    MonthArgs,
+    get_category_spending,
+    get_recurring_and_schedule,
+    get_spending_analysis,
+)
 from avengers_bank.domains.agent.tools.open_account import PrepareOpenAccountArgs, prepare_open_account
 from avengers_bank.domains.agent.tools.summary import get_financial_summary
 from avengers_bank.domains.agent.tools.terms import SearchTermsArgs, SectionArgs, get_terms_section, search_product_terms
@@ -53,6 +60,15 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("get_favorite_products", "로그인한 사용자가 상품 화면에서 찜(하트)한 금융상품 목록: 상품 종류(CHECKING/DEPOSIT/SAVINGS/CREDIT/DEBIT), "
          "product_id, 이름, 설명, 금리(계좌 상품), 최소 가입 금액(예금), 신용 한도(신용카드). 최근에 찜한 것이 위. 조회만 하며 찜 추가·해제는 할 수 없다.",
          NoArgs, get_favorite_products),
+    Tool("get_spending_analysis", "돈 관리 화면의 월 소비 분석(카드 구매+남에게 이체, 카드대금 제외): 실제 소비(actual_to_date), 월말 예상"
+         "(projected_total=실제+남은 정기+남은 변동), 비교 기준(baseline.months=0 없음/1 지난달/2~3 평균), 평소 대비 페이스, "
+         "카테고리별 실제·평소 같은 시점·차이(diff)·예상, 남은 정기 지출, 일회성 지출. 모든 숫자는 서버가 계산한다.",
+         MonthArgs, get_spending_analysis),
+    Tool("get_category_spending", "한 카테고리의 월 소비 상세: 실제·평소 대비, 기준 기간 월별 합계, 사용처(가맹점)별 합계, 최근 거래 최대 20건.",
+         CategoryArgs, get_category_spending),
+    Tool("get_recurring_and_schedule", "등록된 정기 거래, 자동 탐지한 반복 결제 후보(pattern_confirmed=false면 후보일 뿐), "
+         "선택한 달의 남은 입출금 예정(CARD_BILL=확정 카드대금 청구, RECURRING=정기 거래 추정). 조회만 하며 설정 변경은 할 수 없다.",
+         MonthArgs, get_recurring_and_schedule),
     Tool("prepare_transfer", "이체 초안만 만든다(실제 이체 아님). 출금 계좌·수취 계좌·잔액·한도를 서버가 검증하고, "
          "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. 출금·받는 계좌는 사용자가 말한 이름(별칭·상품명)이나 번호 끝 4자리로 적고, 서버가 찾는다(id 불필요). "
          "받는 계좌가 본인 계좌면 to_account, 다른 사람 계좌면 to_account_num(전체 번호) 중 하나만 쓴다.",

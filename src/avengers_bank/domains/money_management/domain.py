@@ -110,3 +110,4 @@ class Bill:
     due_date: date
     total_amount: int
     card_label: str
+    credit_card_id: int | None = None  # 화면의 '청구 내역 보기' 링크용

@@ -99,7 +99,7 @@ class MoneyRepository:
             .join(CreditCard, CreditCard.credit_card_id == CreditCardBill.credit_card_id)
             .where(CreditCard.user_id == user_id, CreditCardBill.status == "UNPAID")
         )).all()
-        return [Bill(b.bill_id, b.due_date, b.total_amount, f"신용카드 ****{_last4(c.card_num)}") for b, c in rows]
+        return [Bill(b.bill_id, b.due_date, b.total_amount, f"신용카드 ****{_last4(c.card_num)}", c.credit_card_id) for b, c in rows]
 
     async def overrides(self, db: AsyncSession, user_id: int) -> dict[tuple[str, int], TransactionOverride]:
         rows = await db.scalars(select(TransactionOverride).where(TransactionOverride.user_id == user_id))

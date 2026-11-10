@@ -28,6 +28,7 @@ export type TxnItem = {
 export type ScheduledItem = {
   key: string; kind: "CARD_BILL" | "RECURRING"; name: string; date: string; amount: number; direction: Direction;
   status: "CONFIRMED" | "ESTIMATED"; account_label: string | null; recurring_id: number | null; bill_id: number | null;
+  card_id: number | null; // CARD_BILL의 신용카드 (/cards/credit/{card_id})
 };
 
 export type Forecast = {

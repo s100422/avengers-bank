@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ASSISTANT_ASK, AssistantAction, Citation, agent, session, termsHref } from "@/lib/api";
+import type { AssistantAsk } from "@/lib/ask-assistant";
 import { OpenAccountCard } from "./OpenAccountCard";
 import { RichText } from "./RichText";
 import { TransferCard } from "./TransferCard";
@@ -84,17 +85,6 @@ function Assistant() {
     } catch {}
   }
 
-  // 다른 화면(약관 전문)이 질문을 채워 비서를 열게 한다. 보내기는 사용자가 누른다
-  useEffect(() => {
-    const onAsk = (e: Event) => {
-      const text = (e as CustomEvent).detail;
-      if (typeof text === "string") setInput(text.slice(0, 1000));
-      setOpen(true);
-    };
-    window.addEventListener(ASSISTANT_ASK, onAsk);
-    return () => window.removeEventListener(ASSISTANT_ASK, onAsk);
-  }, []);
-
   // 처음 열 때 이 탭이 기억한 대화를 서버에서 불러온다 (근거 약관 포함)
   useEffect(() => {
     if (!open || restored.current) return;
@@ -171,6 +161,24 @@ function Assistant() {
       setSending(false);
     }
   }
+
+  // 다른 화면이 비서를 연다. 약관 전문은 문자열(입력창만 채우고 보내기는 사용자가 누른다),
+  // 돈 관리는 {text}(askAssistant: 바로 보낸다. 답을 기다리는 중이면 입력창에 넣어 둔다).
+  // 의존성 없이 매 렌더 다시 붙여서 최신 sending·conversationId로 보낸다
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const detail = (e as CustomEvent<string | AssistantAsk>).detail;
+      setOpen(true);
+      if (typeof detail === "string") setInput(detail.slice(0, 1000));
+      else if (typeof detail?.text === "string") {
+        const text = detail.text.slice(0, 1000);
+        if (sending) setInput(text);
+        else send(text);
+      }
+    };
+    window.addEventListener(ASSISTANT_ASK, onAsk);
+    return () => window.removeEventListener(ASSISTANT_ASK, onAsk);
+  });
 
   function reset() {
     setMessages([]);

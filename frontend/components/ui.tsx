@@ -186,7 +186,7 @@ function SessionTimer() {
           type="button"
           onClick={extend}
           disabled={busy}
-          className="rounded-full border border-line px-2.5 py-1 text-ink hover:border-coral disabled:opacity-50"
+          className="shrink-0 whitespace-nowrap rounded-full border border-line px-2.5 py-1 text-ink hover:border-coral disabled:opacity-50"
         >
           연장
         </button>
