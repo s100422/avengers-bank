@@ -97,6 +97,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api alem
 
 두 마이그레이션은 기존 행을 삭제하지 않고 컬럼·인덱스·알림 테이블을 추가하며 허용 목적·폐기 사유 제약을 확장한다. 배포에 실패하면 이전 API·웹 이미지를 다시 올릴 수 있지만, 운영 DB를 즉시 downgrade하지 말고 데이터와 마이그레이션 상태를 먼저 확인한다. Windows `next build`의 Turbopack 프로세스 오류는 Linux Docker 이미지 빌드에서는 재현되지 않았다.
 
+실행 결과(2026-11-10): 사용자가 수동 스냅샷 `before-transfer-notifications-20261110` 생성 완료를 확인했다. `main`의 코드 커밋 `86d85bf`로 API·웹 이미지를 빌드하고 운영 DB를 `e4f5a6b7c8d9`까지 올렸다. API를 먼저, 웹을 다음에 교체했고 둘 다 healthy다. 공개 HTTPS `/health` 200, `/login` 및 CSS 200, 인증 없는 새 알림·이체 상태 API 401을 확인했다. 기존 10,000원 타행 이체는 배포 뒤에도 1건 `PENDING`, 출금 내역 1건, 환불 내역 0건, 마지막 발송 시각 변경 없음이다. 이 거래의 완료·실패는 아직 확정되지 않았다.
+
 ## 2026-11-09~10 배포 (타행 이체·AI 비서·이체 화면)
 
 두 번째 배포다. 서버는 `main` 브랜치를 받는다(`git pull origin main`). 서버가 오래된 커밋(`49dfefa`)에 머물러 있어서 마이그레이션 10개가 한꺼번에 적용됐고, 모두 표·컬럼을 추가하는 변경이었다. **배포 전에 RDS 스냅샷**을 찍었다(스냅샷 이름은 영문자로 시작하고 영문·숫자·하이픈만 가능: 예 `before-interbank-20261109`).
