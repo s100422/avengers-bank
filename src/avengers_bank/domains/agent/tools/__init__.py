@@ -16,6 +16,7 @@ from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.exceptions import ApiException
 from avengers_bank.domains.agent.tools.accounts import NoArgs, get_my_accounts
 from avengers_bank.domains.agent.tools.cards import get_card_payment_status
+from avengers_bank.domains.agent.tools.favorites import get_favorite_products
 from avengers_bank.domains.agent.tools.open_account import PrepareOpenAccountArgs, prepare_open_account
 from avengers_bank.domains.agent.tools.summary import get_financial_summary
 from avengers_bank.domains.agent.tools.terms import SearchTermsArgs, SectionArgs, get_terms_section, search_product_terms
@@ -49,6 +50,9 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("get_card_payment_status", "로그인한 사용자의 카드 결제 상태: 미결제액, 미납 청구서, 결제 예정일, 결제계좌 잔액과 부족 금액. "
          "부족 금액은 서버가 계산한다.",
          NoArgs, get_card_payment_status),
+    Tool("get_favorite_products", "로그인한 사용자가 상품 화면에서 찜(하트)한 금융상품 목록: 상품 종류(CHECKING/DEPOSIT/SAVINGS/CREDIT/DEBIT), "
+         "product_id, 이름, 설명, 금리(계좌 상품), 최소 가입 금액(예금), 신용 한도(신용카드). 최근에 찜한 것이 위. 조회만 하며 찜 추가·해제는 할 수 없다.",
+         NoArgs, get_favorite_products),
     Tool("prepare_transfer", "이체 초안만 만든다(실제 이체 아님). 출금 계좌·수취 계좌·잔액·한도를 서버가 검증하고, "
          "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. 출금·받는 계좌는 사용자가 말한 이름(별칭·상품명)이나 번호 끝 4자리로 적고, 서버가 찾는다(id 불필요). "
          "받는 계좌가 본인 계좌면 to_account, 다른 사람 계좌면 to_account_num(전체 번호) 중 하나만 쓴다.",

@@ -336,6 +336,14 @@
 ```
 | ✅ | GET | `/products/cards?type=` | | 카드 상품 목록 (`type` = CREDIT·DEBIT, 생략하면 전체) |
 | ✅ | GET | `/products/cards/{product_id}` | | 카드 상품 상세 |
+| ✅ | GET | `/products/favorites` | 🔒 | 찜한 상품 목록, 최근 찜한 것이 위 (C-117) |
+| ✅ | PUT | `/products/favorites/{type}/{product_id}` | 🔒 | 찜하기. 이미 찜했으면 그대로 200 |
+| ✅ | DELETE | `/products/favorites/{type}/{product_id}` | 🔒 | 찜 해제. 찜하지 않은 상품도 200 |
+
+**찜한 상품** (`domains/products/favorites.py`, C-117): `{type}` = CHECKING·DEPOSIT·SAVINGS·CREDIT·DEBIT(그 밖은 `422`). 계좌·카드 상품은 id가 겹칠 수 있어 종류와 id로 가리킵니다. 찜할 때 없는 상품은 `404 ACCOUNT_PRODUCT_NOT_FOUND`/`CARD_PRODUCT_NOT_FOUND`, 종류가 다른 상품은 `400 PRODUCT_TYPE_MISMATCH`. 목록 응답은 상품 정보를 함께 줍니다(AI 비서 Tool `get_favorite_products`도 같은 모양).
+```json
+{ "product_type": "DEPOSIT", "product_id": 6, "name": "어벤져스 모바일 특판예금", "description": "…", "interest_rate": "3.10", "min_amount": 500000, "credit_limit": null }
+```
 
 ## accounts: 계좌 (`domains/accounts`)
 

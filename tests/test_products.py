@@ -75,3 +75,36 @@ async def test_require_product_type_mismatch(client, products):
             await product_service.require_card_product(db, 1, "DEBIT")  # 1번은 신용 상품
         with pytest.raises(NotFoundException):
             await product_service.require_card_product(db, 999, "CREDIT")
+
+
+# ── 찜한 상품 (C-117) ─────────────────────────────────────────────────────
+
+
+async def test_favorite_products_add_list_remove(client, products, make_user):
+    tony, bruce = await make_user("ironman"), await make_user("hulk")
+    assert (await client.get("/products/favorites")).status_code == 401
+    # 계좌 상품 1번(입출금)과 카드 상품 1번(신용)은 id가 같아도 다른 찜이다
+    for path in ["CHECKING/1", "CREDIT/1", "SAVINGS/2", "SAVINGS/2"]:  # 두 번 찜해도 한 건
+        assert (await client.put(f"/products/favorites/{path}", headers=tony)).status_code == 200
+    listed = (await client.get("/products/favorites", headers=tony)).json()["data"]
+    assert [(f["product_type"], f["product_id"]) for f in listed] == [("SAVINGS", 2), ("CREDIT", 1), ("CHECKING", 1)]
+    assert listed[0]["name"] == "적금" and listed[0]["interest_rate"] == "3.50" and listed[0]["credit_limit"] is None
+    assert listed[1]["credit_limit"] == 3_000_000 and listed[1]["interest_rate"] is None
+    assert (await client.get("/products/favorites", headers=bruce)).json()["data"] == []  # 남의 찜은 안 보인다
+
+    assert (await client.delete("/products/favorites/CREDIT/1", headers=bruce)).status_code == 200  # 남의 것은 지워지지 않는다
+    assert len((await client.get("/products/favorites", headers=tony)).json()["data"]) == 3
+    for _ in range(2):  # 이미 해제된 것도 성공
+        assert (await client.delete("/products/favorites/CREDIT/1", headers=tony)).status_code == 200
+    listed = (await client.get("/products/favorites", headers=tony)).json()["data"]
+    assert [(f["product_type"], f["product_id"]) for f in listed] == [("SAVINGS", 2), ("CHECKING", 1)]
+
+
+async def test_favorite_products_validation(client, products, make_user):
+    tony = await make_user("ironman")
+    res = await client.put("/products/favorites/CHECKING/99", headers=tony)
+    assert res.status_code == 404 and res.json()["error"]["code"] == "ACCOUNT_PRODUCT_NOT_FOUND"
+    res = await client.put("/products/favorites/DEPOSIT/1", headers=tony)  # 1번은 입출금 상품
+    assert res.status_code == 400 and res.json()["error"]["code"] == "PRODUCT_TYPE_MISMATCH"
+    assert (await client.put("/products/favorites/LOAN/1", headers=tony)).status_code == 422
+    assert (await client.get("/products/favorites", headers=tony)).json()["data"] == []

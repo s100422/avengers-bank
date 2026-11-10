@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useFreshOnLeave } from "@/lib/fresh";
 import { ErrorText, Shell } from "@/components/ui";
-import { User, api, won } from "@/lib/api";
+import { api, won } from "@/lib/api";
+import { Heart, favoriteKey, loadFavoriteProducts, setFavoriteProduct } from "@/components/FavoriteProducts";
 import { productDescription, productName } from "@/lib/product-display";
 
 type Product = {
@@ -101,14 +102,12 @@ function Products() {
   const [tab, setTab] = useState<Tab>("recommend");
   const [chip, setChip] = useState<Chip>("ALL");
   const [favs, setFavs] = useState<string[]>([]);
-  const [userId, setUserId] = useState<number | null>(null);
 
   useEffect(() => {
-    Promise.all([api<Product[]>("/products/accounts"), api<Product[]>("/products/cards"), api<User>("/users/me")])
-      .then(([a, c, u]) => {
+    Promise.all([api<Product[]>("/products/accounts"), api<Product[]>("/products/cards"), loadFavoriteProducts()])
+      .then(([a, c, f]) => {
         setProducts([...a, ...c]);
-        setUserId(u.user_id);
-        setFavs(loadFavs(u.user_id));
+        setFavs(f.map((x) => favoriteKey(x.product_type, x.product_id)));
       })
       .catch((e) => setError(e.message));
     // 다른 화면에서 /products?tab=savings 처럼 탭을 지정해 들어올 수 있다
@@ -124,11 +123,17 @@ function Products() {
     window.scrollTo({ top: 0 });
   }
 
-  function toggleFav(p: Product) {
-    const key = `${p.type}-${p.product_id}`;
-    const next = favs.includes(key) ? favs.filter((k) => k !== key) : [...favs, key];
-    setFavs(next);
-    if (userId) saveFavs(userId, next);
+  async function toggleFav(p: Product) {
+    const key = favoriteKey(p.type, p.product_id);
+    const on = !favs.includes(key);
+    setFavs((list) => (on ? [...list, key] : list.filter((k) => k !== key))); // 바로 바꾸고, 실패하면 되돌린다
+    setError(null);
+    try {
+      await setFavoriteProduct(p.type, p.product_id, on);
+    } catch (e) {
+      setFavs((list) => (on ? list.filter((k) => k !== key) : [...list, key]));
+      setError(e instanceof Error ? e.message : "찜을 저장하지 못했습니다.");
+    }
   }
 
   return (
@@ -417,7 +422,7 @@ function Catalog({
 
       <ul className="mt-3 grid grid-cols-1 gap-3">
         {shown.map((p) => {
-          const fav = favs.includes(`${p.type}-${p.product_id}`);
+          const fav = favs.includes(favoriteKey(p.type, p.product_id));
           return (
             <li key={`${p.type}-${p.product_id}`} className="relative">
               <Link href={href(p)} className="block h-full rounded-3xl border border-line bg-paper p-6 pr-16 hover:border-coral">
@@ -439,9 +444,7 @@ function Catalog({
                 aria-label={fav ? `${productName(p.type, p.name)} 찜 해제` : `${productName(p.type, p.name)} 찜하기`}
                 className="absolute top-4 right-4 inline-flex size-11 items-center justify-center rounded-full hover:bg-porcelain"
               >
-                <svg viewBox="0 0 24 24" aria-hidden className={`size-7 stroke-[1.6] ${fav ? "fill-coral stroke-coral" : "fill-none stroke-slate"}`}>
-                  <path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z" strokeLinejoin="round" />
-                </svg>
+                <Heart filled={fav} />
               </button>
             </li>
           );
@@ -554,22 +557,4 @@ function TypeTile({ type, big }: { type: Product["type"]; big?: boolean }) {
       </svg>
     </span>
   );
-}
-
-// 찜한 상품: 사용자별 브라우저 저장 (shortcut: 서버 API가 없어 localStorage. 기기 간 공유 안 됨)
-const favKey = (userId: number) => `avengers_bank_fav_products:${userId}`;
-function loadFavs(userId: number): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(favKey(userId)) ?? "[]");
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-function saveFavs(userId: number, favs: string[]) {
-  try {
-    localStorage.setItem(favKey(userId), JSON.stringify(favs));
-  } catch {
-    // 저장소를 못 쓰면 이번 화면에서만 유지
-  }
 }

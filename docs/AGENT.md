@@ -114,6 +114,7 @@
 | `get_financial_summary` | 없음 | 활성 계좌 수, 전체·입출금·예금·적금 잔액 합계, 신용카드 미결제액, 미납 청구서 합계, 가장 가까운 카드 결제 예정일, 예·적금 만기(남은 일수) |
 | `get_transaction_history` | 계좌 종류, `account_id`, 시작·종료일(KST), 거래 유형, 상대방 이름, 개수(기본 20, 최대 50) | 거래일, 계좌, 유형, 금액, 거래 후 잔액, 마스킹된 상대 계좌, 상대방 이름, 더 있는지(`has_more`) |
 | `get_card_payment_status` | 없음 | 카드별 종류·마스킹 번호·미결제액·미납 청구서·다음 결제일, 결제계좌별 이름·마스킹 번호·잔액·**부족 금액** |
+| `get_favorite_products` | 없음 | 상품 화면·홈에서 찜(하트)한 상품: 종류, `product_id`, 이름, 설명, 금리(계좌 상품), 최소 가입 금액(예금), 신용 한도(신용카드). 최근 찜한 것이 위. **조회만**, 찜 추가·해제는 화면에서만 (C-117) |
 | `prepare_transfer` | 출금 `from_account`(이름·별칭·번호 끝 4자리), 받는 계좌(본인 계좌면 `to_account` 이름, 다른 사람이면 `to_account_num` 전체 번호. 둘 중 하나), 금액. 서버가 이름으로 계좌를 찾고, 없거나 여럿이면 후보를 돌려줘 되묻는다(C-100) | 이체 초안(`draft_id`, 출금 계좌 이름·마스킹 번호, 받는 분 실명, 마스킹된 받는 계좌, 금액, 예상 잔액, 만료 시각) |
 | `prepare_open_account` | `kind`(deposit/savings), 상품 이름, 금액, 만기(`maturity_months` 몇 개월 뒤 또는 `maturity_date`), 적금 납입일, 예금 출금 계좌 이름, 별명. 서버가 상품·계좌를 이름으로 찾고 만기 날짜를 계산하며, 없거나 여럿이면 후보를 돌려줘 되묻는다(C-103) | 가입 준비 카드(`OPEN_ACCOUNT`: 상품, 표시용 요약, 가입 화면 입력칸 값). **가입하지 않는다** |
 
@@ -211,6 +212,7 @@ src/avengers_bank/domains/agent/
     ├── summary.py     # get_financial_summary
     ├── transactions.py# get_transaction_history
     ├── cards.py       # get_card_payment_status
+    ├── favorites.py   # get_favorite_products (찜한 상품 조회, C-117)
     ├── transfers.py   # prepare_transfer (계좌를 이름으로 찾는 find_own_checking 포함)
     └── open_account.py# prepare_open_account (가입 화면 미리 채우기)
 ```

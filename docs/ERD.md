@@ -247,6 +247,14 @@ erDiagram
         datetime created_at
     }
 
+    favorite_products {
+        int favorite_id PK
+        int user_id FK "index"
+        string product_type "CHECKING·DEPOSIT·SAVINGS·CREDIT·DEBIT, UK(user_id, product_type, product_id)"
+        int product_id "계좌 또는 카드 상품 id (FK 없음)"
+        datetime created_at
+    }
+
     agent_conversations {
         int conversation_id PK
         int user_id FK "index"
@@ -390,6 +398,7 @@ erDiagram
     checking_accounts ||--o{ agent_transfer_drafts : "출금 계좌"
     checking_accounts ||--o{ interbank_transfers : "타행 이체(보냄·받음)"
     users ||--o{ favorite_accounts : "자주 쓰는 계좌"
+    users ||--o{ favorite_products : "찜한 상품"
 
     terms_versions ||--o{ product_terms_items : "구성"
     product_terms_revisions ||--o{ product_terms_items : "약관 집합"
@@ -416,6 +425,7 @@ erDiagram
 | `account_notifications` | 신규 입출금 거래내역 1건당 사용자 전용 알림 1건. 거래내역 FK는 UNIQUE이고 `read_at`이 NULL이면 읽지 않음. 거래와 알림을 같은 트랜잭션으로 저장 | notifications |
 | `interbank_transfers` | 타행 이체 기록(C-105). 보낸 것(`OUT`)과 받은 것(`IN`)을 한 표에 둠. `transfer_id`(UUID)가 PK라 같은 ID는 한 번만 들어가고, 이것이 받는 쪽 멱등성(중복 입금 방지)의 근거. `OUT`의 `PENDING` 행은 돈이 이미 나갔고 허브 결과를 기다리는 상태. CHECK: `amount > 0`, `direction`(`OUT`/`IN`), `status`(`PENDING`/`COMPLETED`/`FAILED`), 인덱스 `status`·`checking_account_id`. `checking_account_id`는 FK, 상대 은행·계좌·이름은 FK 없는 문자열 | interbank |
 | `favorite_accounts` | 이체 화면의 자주 쓰는 계좌(C-107). UNIQUE `(user_id, bank_code, account)`. 우리 은행은 `bank_code = ''`(PostgreSQL 유니크가 NULL끼리 다르게 봐서 NULL 대신 빈 문자열). 이름·은행 이름은 추가할 때 값을 그대로 저장(표시용). 인덱스 `user_id` | transfers |
+| `favorite_products` | 상품 화면·홈의 찜(C-117). UNIQUE `(user_id, product_type, product_id)`, `product_type` CHECK 5종. 계좌·카드 상품이 다른 테이블이라 상품 FK 없이 종류와 id로 가리킨다(없어진 상품의 행은 목록에서 빠짐). 인덱스 `user_id` | products |
 | `credit_cards` / `debit_cards` | 신용카드 / 체크카드 | cards |
 | `*_card_histories` | 카드별 사용내역 | cards |
 | `credit_card_bills` | 신용카드 청구서. UNIQUE `(credit_card_id, period_start)`, `total_amount > 0`, `period_end >= period_start`, `status`와 `paid_at`이 맞아야 함(CHECK) | cards |

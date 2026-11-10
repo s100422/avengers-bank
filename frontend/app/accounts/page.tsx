@@ -9,6 +9,7 @@ import { AssetSummaryCard } from "@/components/home/AssetSummaryCard";
 import { Skeleton } from "@/components/home/bits";
 import { useHomeData } from "@/components/home/useHomeData";
 import { ErrorText, Shell } from "@/components/ui";
+import { FavoriteProductList } from "@/components/FavoriteProducts";
 import { SpiderMascot } from "@/components/SpiderMascot";
 import { AccountSummary, RecentRecipient, api, won } from "@/lib/api";
 import { accountKey, toggle } from "@/lib/home-prefs";
@@ -140,6 +141,9 @@ function Home() {
 
       {/* 5. 카드 목록 */}
       {cards.length > 0 && <CardList cards={cards} />}
+
+      {/* 6. 찜한 상품 (C-117) */}
+      <FavoriteProductList />
     </div>
   );
 }

@@ -75,7 +75,7 @@ function send(path: string, body: unknown, method: string | undefined) {
   });
 }
 
-export async function api<T>(path: string, body?: unknown, method?: "PATCH" | "POST" | "DELETE"): Promise<T> {
+export async function api<T>(path: string, body?: unknown, method?: "PATCH" | "POST" | "PUT" | "DELETE"): Promise<T> {
   let res = await send(path, body, method);
 
   // 액세스 토큰(5분)이 만료됐으면 한 번만 갱신하고 다시 보낸다. 401은 서버가 처리 전에 거절한 것이라 POST도 다시 보내도 된다

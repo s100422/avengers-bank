@@ -589,3 +589,13 @@ async def test_gemini_client_errors_and_blocking(monkeypatch):
 
     monkeypatch.setattr(gemini.client.aio.models, "generate_content", blocked)
     assert (await gemini.respond("s", [UserTurn("q")], [])).text == REFUSAL_TEXT
+
+
+async def test_favorite_products_tool_reads_only_own_favorites(client, world):
+    await client.put("/products/favorites/CHECKING/1", headers=world["tony"])
+    outcome = await run_tool("get_favorite_products", {}, world["users"]["tony"])
+    assert outcome.ok and [f.product_id for f in outcome.result.favorites] == [1]
+    assert (await run_tool("get_favorite_products", {}, world["users"]["bruce"])).result.favorites == []
+    # 사용자는 인자로 바꿀 수 없다
+    bad = await run_tool("get_favorite_products", {"user_id": world["users"]["tony"].user_id}, world["users"]["bruce"])
+    assert json.loads(bad.content)["error"]["code"] == "INVALID_ARGUMENTS"
