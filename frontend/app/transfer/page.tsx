@@ -89,7 +89,8 @@ function Transfer() {
     api<User>("/users/me").then((u) => setMyName(u.name)).catch(() => {});
     api<RecentRecipient[]>("/transfers/recent").then(setRecent).catch(() => {});
     api<FavoriteRecipient[]>("/transfers/favorites").then(setFavs).catch(() => {});
-    api<Bank[]>("/interbank-transfers/banks").then(setBanks).catch(() => {}); // 503이면 우리 은행만
+    const banksP = api<Bank[]>("/interbank-transfers/banks").catch(() => [] as Bank[]); // 503이면 우리 은행만
+    banksP.then(setBanks);
     api<AccountSummary[]>("/accounts")
       .then(async (a) => {
         const checking = a.filter((x) => x.account_type === "checking");
@@ -100,9 +101,15 @@ function Transfer() {
         setFrom(checking.some((x) => x.account_id === fromId) ? fromId : (checking[0]?.account_id ?? null));
         const to = q.get("to")?.slice(0, 50);
         if (to) {
+          // 홈의 최근 이체한 분에서 오면 ?bank=(타행 코드, 우리 은행은 빈 값)가 같이 온다
+          const known = await banksP;
+          const wanted = (q.get("bank") ?? "").replace(/\D/g, "").slice(0, 3);
+          // 은행 목록에 없는 코드(목록을 못 불러왔거나 없어진 은행)는 반영하지 않는다: 선택칸에 안 보이는 값으로 조회·이체가 나가지 않게
+          const toBank = known.some((b) => b.bank_code === wanted) ? wanted : "";
           try {
-            await inquire("", to);
+            await inquire(toBank, to, known.find((b) => b.bank_code === toBank)?.name);
           } catch {
+            setBank(toBank);
             setAcct(to);
             setStep(2);
           }
@@ -131,14 +138,14 @@ function Transfer() {
   const bankName = (code: string) => (code === "" ? OWN_BANK : (banks.find((b) => b.bank_code === code)?.name ?? code));
 
   // 예금주 조회 후 금액 입력(3단계)으로. 실패하면 던진다
-  async function inquire(bank_code: string, account: string) {
+  async function inquire(bank_code: string, account: string, knownBankName?: string) {
     const r =
       bank_code === ""
         ? await api<{ holder_name: string }>("/transfers/inquiry", { to_account_num: account })
         : await api<{ holder_name: string }>("/interbank-transfers/inquiry", { to_bank: bank_code, to_account: account });
     setTarget({
       bank_code,
-      bank_name: bankName(bank_code),
+      bank_name: knownBankName ?? bankName(bank_code),
       account,
       name: r.holder_name,
       shown: bank_code === "" ? r.holder_name : mask(r.holder_name), // 우리 은행은 서버가 이미 마스킹

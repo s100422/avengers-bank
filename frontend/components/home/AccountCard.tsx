@@ -4,8 +4,8 @@ import Link from "next/link";
 import { AccountSummary, KIND } from "@/lib/api";
 import { CopyButton, HideToggle, money } from "./bits";
 
-// undefined: 불러오는 중, "error": 못 불러옴, 배열: 최근 이체 상대 실명과 그때 보낸 계좌번호(최신순, 이름 중복 없음)
-export type Recent = { name: string; account: string }[] | "error" | undefined;
+// undefined: 불러오는 중, "error": 못 불러옴, 배열: 최근 이체 상대(최신순). bank_code ""는 우리 은행, 그 밖은 타행 코드
+export type Recent = { name: string; account: string; bank_code: string; bank_name: string }[] | "error" | undefined;
 
 export function AccountCard({
   account: a,
@@ -55,10 +55,10 @@ export function AccountCard({
         ) : (
           <ul className="mt-1.5 flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none]" aria-label="최근 이체한 분 목록">
             {recent.map((r) => (
-              <li key={r.name} className="shrink-0">
-                {/* 누르면 이 계좌에서 그 사람 계좌로 보내는 이체 화면 (C-068) */}
+              <li key={`${r.bank_code}:${r.account}`} className="shrink-0">
+                {/* 누르면 이 계좌에서 그 사람(은행·계좌)에게 보내는 이체 금액 화면 (C-068, 타행 포함 C-111) */}
                 <Link
-                  href={`/transfer?from=${a.account_id}&to=${encodeURIComponent(r.account)}`}
+                  href={`/transfer?from=${a.account_id}&bank=${encodeURIComponent(r.bank_code)}&to=${encodeURIComponent(r.account)}`}
                   aria-label={`${r.name}님께 이체`}
                   className="inline-flex min-h-11 items-center"
                 >

@@ -9,7 +9,7 @@ import { AssetSummaryCard } from "@/components/home/AssetSummaryCard";
 import { Skeleton } from "@/components/home/bits";
 import { useHomeData } from "@/components/home/useHomeData";
 import { ErrorText, Shell } from "@/components/ui";
-import { AccountSummary, History, api, won } from "@/lib/api";
+import { AccountSummary, RecentRecipient, api, won } from "@/lib/api";
 import { accountKey, toggle } from "@/lib/home-prefs";
 import { useFreshOnLeave } from "@/lib/fresh";
 
@@ -133,27 +133,18 @@ function Home() {
   );
 }
 
-// 계좌별 최근 이체 상대 실명. 계좌 하나가 실패해도 그 카드만 "불러오지 못함"으로 둔다.
+// 최근 이체한 분 (우리 은행 + 타행). 이체 화면의 '최근' 탭과 같은 서버 목록(/transfers/recent)을 쓰고, 입출금 카드마다 같은 목록을 보인다.
+// 못 불러오면 입출금 카드만 "불러오지 못함"으로 둔다.
 async function loadRecent(accounts: AccountSummary[]): Promise<Record<string, Recent>> {
-  const mine = new Set(accounts.map((a) => a.account_num));
-  const entries = await Promise.all(
-    accounts.map(async (a): Promise<[string, Recent]> => {
-      if (a.account_type !== "checking") return [accountKey(a), []]; // 예금·적금은 이체를 보내지 않는다
-      try {
-        const rows = await api<History[]>(`/accounts/checking/${a.account_id}/histories?types=TRANSFER_OUT&limit=50`);
-        const people = new Map<string, string>(); // 이름 → 가장 최근에 보낸 계좌번호 (최신순 유지, 이름 중복 제거)
-        for (const h of rows) {
-          // 실명 없는 것, 내 계좌로 보낸 것 제외
-          if (!h.counterpart_name || !h.counterpart_account || mine.has(h.counterpart_account)) continue;
-          if (!people.has(h.counterpart_name)) people.set(h.counterpart_name, h.counterpart_account);
-        }
-        return [accountKey(a), [...people].map(([name, account]) => ({ name, account }))];
-      } catch {
-        return [accountKey(a), "error"];
-      }
-    }),
-  );
-  return Object.fromEntries(entries);
+  let list: Recent;
+  try {
+    const rows = await api<RecentRecipient[]>("/transfers/recent");
+    list = rows.slice(0, 10).map((r) => ({ name: r.name ?? r.account, account: r.account, bank_code: r.bank_code, bank_name: r.bank_name }));
+  } catch {
+    list = "error";
+  }
+  // 예금·적금은 이체를 보내지 않는다
+  return Object.fromEntries(accounts.map((a) => [accountKey(a), a.account_type === "checking" ? list : []]));
 }
 
 async function loadCards(): Promise<CardSummary[]> {
