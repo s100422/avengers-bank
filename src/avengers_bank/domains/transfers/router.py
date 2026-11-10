@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +57,11 @@ async def inquiry(data: InquiryRequest, db: DbSession, _: CurrentUser):
     """우리 은행 계좌의 받는 분 이름(가림). 이체 화면의 '확인' 단계용."""
     account_num, name = await contact_service.inquiry(db, data.to_account_num)
     return SuccessResponse[InquiryResponse](data=InquiryResponse(to_account_num=account_num, holder_name=name))
+
+
+@router.get("/requests/{request_id}", response_model=SuccessResponse[TransferResponse], responses=error_responses(404))
+async def request_status(request_id: UUID, db: DbSession, user: CurrentUser):
+    return SuccessResponse[TransferResponse](data=await transfer_service.request_status(db, str(request_id), user))
 
 
 @router.get("/recent", response_model=SuccessResponse[list[RecentContact]])

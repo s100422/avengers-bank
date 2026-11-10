@@ -43,17 +43,21 @@ class UserUpdate(BaseModel):
 
     name: Name | None = None
     nick_name: NickName = None
-    phone: Phone | None = None
-    # phone을 바꿀 때만 필요하다 (purpose CHANGE_PHONE, 새 번호와 같은 번호). 다른 필드만 바꿀 때는 보내지 않는다
-    phone_verification_token: str | None = Field(default=None, min_length=1, max_length=2048, repr=False)
 
     @model_validator(mode="after")
     def _required_fields_not_null(self):
-        labels = {"name": "이름은", "phone": "휴대폰 번호는"}  # 가입 때 필수였던 값은 비울 수 없다
+        labels = {"name": "이름은"}  # 가입 때 필수였던 값은 비울 수 없다
         for field, label in labels.items():
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{label} 비울 수 없습니다.")
         return self
+
+
+class PhoneChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128, repr=False)
+    phone: Phone
+    old_phone_verification_token: str = Field(min_length=1, max_length=2048, repr=False)
+    new_phone_verification_token: str = Field(min_length=1, max_length=2048, repr=False)
 
 
 class PasswordChange(BaseModel):
@@ -116,7 +120,7 @@ class DeviceResponse(BaseModel):
 class WithdrawalBlocker(BaseModel):
     """탈퇴를 막는 사유 하나. 화면은 account_type·account_id·card_id로 해당 계좌·카드 화면 링크를 만든다."""
 
-    code: Literal["ACTIVE_DEPOSIT", "ACTIVE_SAVINGS", "CHECKING_BALANCE", "CARD_UNPAID"]
+    code: Literal["ACTIVE_DEPOSIT", "ACTIVE_SAVINGS", "INTERBANK_PENDING", "CHECKING_BALANCE", "CARD_UNPAID"]
     message: str
     account_type: Literal["checking", "deposit", "savings"] | None = None
     account_id: int | None = None

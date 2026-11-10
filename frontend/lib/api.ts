@@ -187,6 +187,15 @@ export type History = {
   counterpart_name: string | null;
 };
 
+export type AccountNotification = History & {
+  notification_id: number;
+  account_id: number;
+  account_num: string;
+  account_nickname: string | null;
+  history_id: number;
+  read_at: string | null;
+};
+
 // 거래 종류: [화면 이름, 나간 돈인지]
 export const HISTORY_TYPE: Record<string, [string, boolean]> = {
   TRANSFER_OUT: ["이체 보냄", true],
@@ -205,7 +214,7 @@ export const HISTORY_TYPE: Record<string, [string, boolean]> = {
 };
 
 export type InterbankResult = {
-  transfer_id: number;
+  transfer_id: string;
   status: "COMPLETED" | "PENDING" | "FAILED";
   to_bank: string;
   to_bank_name: string;

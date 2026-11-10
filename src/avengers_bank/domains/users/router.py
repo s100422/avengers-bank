@@ -24,6 +24,7 @@ from avengers_bank.domains.users.schemas import (
     DeviceResponse,
     LoginOk,
     PasswordChange,
+    PhoneChange,
     TokenResponse,
     UserCreate,
     UserLogin,
@@ -243,6 +244,22 @@ async def update_me(
 ):
     user = await user_service.update_me(db, current_user, data)
     return SuccessResponse[UserResponse](data=user, message="내 정보가 수정되었습니다.")
+
+
+@router.post(
+    "/me/phone-change", response_model=SuccessResponse[UserResponse], responses=error_responses(400, 401, 403, 429)
+)
+async def change_phone(
+    data: PhoneChange,
+    current_user: Annotated[UserResponse, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    request: Request,
+    response: Response,
+):
+    user = await user_service.change_phone(db, current_user, data, request.cookies.get(DEVICE_COOKIE))
+    clear_cookie(response, REFRESH_COOKIE)
+    clear_cookie(response, DEVICE_COOKIE)
+    return SuccessResponse[UserResponse](data=user, message="휴대폰 번호가 변경되었습니다. 다시 로그인해 주세요.")
 
 
 @router.get(

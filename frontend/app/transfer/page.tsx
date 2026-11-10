@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
 import { Button, Shell } from "@/components/ui";
 import {
   AccountSummary,
+  ApiError,
   FavoriteRecipient,
   InterbankResult,
   RecentRecipient,
@@ -20,9 +21,22 @@ import { useFreshOnLeave } from "@/lib/fresh";
 type OwnResult = { from_account_num: string; to_account_num: string; amount: number; balance_after: number };
 type Bank = { bank_code: string; name: string };
 type Target = Recipient & { shown: string }; // shown = 화면에 보일 받는 분 이름 (이미 마스킹됨)
+type StoredTransferIntent = {
+  requestVersion?: 2;
+  user_id: number;
+  intent: string;
+  requestId: string;
+  from: number;
+  bank_code: string;
+  bank_name: string;
+  account: string;
+  shown: string;
+  amount: number;
+};
 
 const MAX = 100_000_000;
 const OWN_BANK = "SpiderBank";
+const TRANSFER_INTENT_KEY = "avengers_bank_pending_transfer";
 
 export default function TransferPage() {
   // 숨겨졌다 돌아오면 지난 이체의 완료 화면이 보이던 문제 때문에 매 방문을 새로 시작한다 (lib/fresh.ts)
@@ -73,6 +87,7 @@ function Transfer() {
   const [recent, setRecent] = useState<RecentRecipient[]>([]);
   const [favs, setFavs] = useState<FavoriteRecipient[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
+  const [banksUnavailable, setBanksUnavailable] = useState(false);
   const [bank, setBank] = useState(""); // "" = 우리 은행
   const [acct, setAcct] = useState("");
   const [target, setTarget] = useState<Target | null>(null);
@@ -82,40 +97,77 @@ function Transfer() {
   const [busy, setBusy] = useState(false);
   const [own, setOwn] = useState<OwnResult | null>(null);
   const [inter, setInter] = useState<InterbankResult | null>(null);
+  const [recoveringRequest, setRecoveringRequest] = useState(true);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [legacyRequest, setLegacyRequest] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
 
   const [myName, setMyName] = useState<string | null>(null); // 내 실명: 내 계좌로 보낼 때 받는 분 이름은 통장 별명이 아니라 이것이다
+  const requestRef = useRef<{ intent: string; requestId: string } | null>(null);
 
   useEffect(() => {
-    api<User>("/users/me").then((u) => setMyName(u.name)).catch(() => {});
+    const userP = api<User>("/users/me").then((u) => {
+      setMyName(u.name);
+      setCurrentUserId(u.user_id);
+      return u;
+    });
     api<RecentRecipient[]>("/transfers/recent").then(setRecent).catch(() => {});
     api<FavoriteRecipient[]>("/transfers/favorites").then(setFavs).catch(() => {});
-    const banksP = api<Bank[]>("/interbank-transfers/banks").catch(() => [] as Bank[]); // 503이면 우리 은행만
-    banksP.then(setBanks);
+    const banksP = api<Bank[]>("/interbank-transfers/banks")
+      .then((list) => {
+        setBanksUnavailable(false);
+        setBanks(list);
+        return list;
+      })
+      .catch(() => {
+        setBanksUnavailable(true);
+        return null;
+      });
     api<AccountSummary[]>("/accounts")
       .then(async (a) => {
+        let currentUser: User;
+        try {
+          currentUser = await userP;
+        } catch (e) {
+          sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+          requestRef.current = null;
+          setRecoveringRequest(false);
+          setError(e);
+          return;
+        }
         const checking = a.filter((x) => x.account_type === "checking");
         setAccounts(checking);
         // 홈의 "최근 이체한 분"에서 오면 ?from=출금 계좌 id&to=받는 계좌번호가 붙어 있다 (C-068)
         const q = new URLSearchParams(window.location.search);
         const fromId = Number(q.get("from"));
         setFrom(checking.some((x) => x.account_id === fromId) ? fromId : (checking[0]?.account_id ?? null));
+        if (await recoverPriorRequest(currentUser.user_id)) return;
         const to = q.get("to")?.slice(0, 50);
         if (to) {
           // 홈의 최근 이체한 분에서 오면 ?bank=(타행 코드, 우리 은행은 빈 값)가 같이 온다
-          const known = await banksP;
           const wanted = (q.get("bank") ?? "").replace(/\D/g, "").slice(0, 3);
-          // 은행 목록에 없는 코드(목록을 못 불러왔거나 없어진 은행)는 반영하지 않는다: 선택칸에 안 보이는 값으로 조회·이체가 나가지 않게
-          const toBank = known.some((b) => b.bank_code === wanted) ? wanted : "";
-          try {
-            await inquire(toBank, to, known.find((b) => b.bank_code === toBank)?.name);
-          } catch {
-            setBank(toBank);
+          const known = await banksP;
+          if (wanted && (!known || !known.some((b) => b.bank_code === wanted))) {
+            setBank(wanted);
             setAcct(to);
             setStep(2);
+            setError(new Error(known ? `은행 코드 ${wanted}를 찾을 수 없습니다. 은행 목록을 다시 불러오거나 은행을 직접 선택해 주세요.` : "은행 목록을 불러오지 못했습니다. 다시 시도해 주세요."));
+            return;
+          }
+          try {
+            await inquire(wanted, to, known?.find((b) => b.bank_code === wanted)?.name);
+          } catch (e) {
+            setBank(wanted);
+            setAcct(to);
+            setStep(2);
+            setError(e);
           }
         }
       })
-      .catch(setError);
+      .catch((e) => {
+        setRecoveringRequest(false);
+        setError(e);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 처음 한 번만 불러온다
   }, []);
 
@@ -127,7 +179,10 @@ function Transfer() {
     const t = setInterval(() => {
       api<InterbankResult>(`/interbank-transfers/${pendingId}`)
         .then((r) => {
-          if (r.status !== "PENDING") setInter(r);
+          if (r.status !== "PENDING") {
+            setInter(r);
+            clearStoredRequest();
+          }
         })
         .catch(() => {});
       if (++n >= 12) clearInterval(t);
@@ -136,6 +191,30 @@ function Transfer() {
   }, [pendingId]);
 
   const bankName = (code: string) => (code === "" ? OWN_BANK : (banks.find((b) => b.bank_code === code)?.name ?? code));
+
+  async function retryBanks() {
+    setBusy(true);
+    try {
+      const list = await api<Bank[]>("/interbank-transfers/banks");
+      setBanks(list);
+      setBanksUnavailable(false);
+      if (bank && acct.trim()) {
+        const match = list.find((b) => b.bank_code === bank);
+        if (!match) {
+          setError(new Error(`은행 코드 ${bank}를 찾을 수 없습니다. 은행을 직접 선택해 주세요.`));
+        } else {
+          await inquire(bank, acct.trim(), match.name);
+          setError(null);
+        }
+      } else {
+        setError(null);
+      }
+    } catch {
+      setBanksUnavailable(true);
+      setError(new Error("은행 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
+    }
+    setBusy(false);
+  }
 
   // 예금주 조회 후 금액 입력(3단계)으로. 실패하면 던진다
   async function inquire(bank_code: string, account: string, knownBankName?: string) {
@@ -154,7 +233,101 @@ function Transfer() {
     setStep(3);
   }
 
+  async function recoverPriorRequest(userId: number): Promise<boolean> {
+    setRecoveryError(null);
+    setLegacyRequest(false);
+    let saved: StoredTransferIntent | null = null;
+    try {
+      const raw = sessionStorage.getItem(TRANSFER_INTENT_KEY);
+      saved = raw ? (JSON.parse(raw) as StoredTransferIntent) : null;
+      if (!saved || !saved.requestId || !saved.intent || !saved.account || !saved.bank_code && saved.bank_code !== "") {
+        sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+        requestRef.current = null;
+        setRecoveringRequest(false);
+        return false;
+      }
+    } catch {
+      sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+      requestRef.current = null;
+      setRecoveringRequest(false);
+      return false;
+    }
+
+    if (saved.user_id !== userId) {
+      sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+      requestRef.current = null;
+      setRecoveringRequest(false);
+      setRecoveryError(null);
+      return false;
+    }
+
+    setFrom(saved.from);
+    setTarget({ bank_code: saved.bank_code, bank_name: saved.bank_name, account: saved.account, name: saved.shown, shown: saved.shown });
+    setAmount(saved.amount);
+    setStep(3);
+    if (saved.requestVersion !== 2) {
+      // 이전 API는 클라이언트 request_id를 거래 ID로 사용하지 않았다. 404를 재시도 허가로 해석하면 중복 송금될 수 있다.
+      requestRef.current = null;
+      setLegacyRequest(true);
+      setRecoveringRequest(true);
+      setRecoveryError("이전 서버에서 처리된 이체일 수 있습니다. 이체를 보낸 서버의 거래내역과 잔액을 확인한 뒤 새 이체를 시작해 주세요.");
+      return true;
+    }
+    requestRef.current = { intent: saved.intent, requestId: saved.requestId };
+    setRecoveringRequest(true);
+    try {
+      if (saved.bank_code === "") {
+        const result = await api<OwnResult>(`/transfers/requests/${saved.requestId}`);
+        setOwn(result);
+        sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+        requestRef.current = null;
+      } else {
+        const result = await api<InterbankResult>(`/interbank-transfers/${saved.requestId}`);
+        setInter(result);
+        if (result.status !== "PENDING") {
+          sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+          requestRef.current = null;
+        }
+      }
+      setRecoveringRequest(false);
+      return true;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        // 요청이 아직 기록되지 않았다면 같은 request_id로 다시 보내 안전하게 복구한다.
+        setRecoveryError("이체 결과를 아직 찾지 못했습니다. 다시 이체하면 같은 요청 ID로 확인합니다.");
+        setRecoveringRequest(false);
+        return true;
+      }
+      setRecoveryError("이전 이체 결과를 확인하지 못했습니다. 결과를 다시 확인해 주세요.");
+      setRecoveringRequest(true);
+      return true;
+    }
+  }
+
+  async function retryRecovery() {
+    if (currentUserId !== null) await recoverPriorRequest(currentUserId);
+  }
+
+  function clearStoredRequest() {
+    sessionStorage.removeItem(TRANSFER_INTENT_KEY);
+    requestRef.current = null;
+    setLegacyRequest(false);
+  }
+
+  function startAfterLegacyReview() {
+    clearStoredRequest();
+    setRecoveryError(null);
+    setRecoveringRequest(false);
+    setTarget(null);
+    setAmount(0);
+    setStep(1);
+  }
+
   async function onDirect() {
+    if (bank && (banksUnavailable || !banks.some((b) => b.bank_code === bank))) {
+      setError(new Error(banksUnavailable ? "은행 목록을 다시 불러와 타행 계좌를 확인해 주세요." : `은행 코드 ${bank}를 은행 목록에서 확인할 수 없습니다.`));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -205,7 +378,19 @@ function Transfer() {
   async function onPay(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!target || from === null) return;
+    if (currentUserId === null) return setError(new Error("사용자 정보를 확인한 뒤 다시 시도해 주세요."));
+    if (recoveringRequest || legacyRequest) return setRecoveryError("이전 이체의 거래내역과 잔액을 먼저 확인해 주세요.");
     const pw = new FormData(e.currentTarget).get("account_password");
+    const intent = JSON.stringify([from, target.bank_code, target.account, amount]);
+    if (requestRef.current?.intent !== intent) {
+      requestRef.current = { intent, requestId: crypto.randomUUID() };
+    }
+    const requestId = requestRef.current.requestId;
+    const stored: StoredTransferIntent = {
+      requestVersion: 2, user_id: currentUserId, intent, requestId, from, bank_code: target.bank_code, bank_name: target.bank_name,
+      account: target.account, shown: target.shown, amount,
+    };
+    sessionStorage.setItem(TRANSFER_INTENT_KEY, JSON.stringify(stored));
     setBusy(true);
     setError(null);
     try {
@@ -216,18 +401,21 @@ function Transfer() {
             to_account_num: target.account,
             amount,
             account_password: pw,
+            request_id: requestId,
           }),
         );
+        clearStoredRequest();
       } else {
-        setInter(
-          await api<InterbankResult>("/interbank-transfers", {
+        const result = await api<InterbankResult>("/interbank-transfers", {
             from_checking_account_id: from,
             to_bank: target.bank_code,
             to_account: target.account,
             amount,
             account_password: pw,
-          }),
-        );
+            request_id: requestId,
+          });
+        setInter(result);
+        if (result.status !== "PENDING") clearStoredRequest();
       }
     } catch (err) {
       setError(err);
@@ -307,6 +495,7 @@ function Transfer() {
             <span className="mb-1 block text-sm text-slate">은행/증권사</span>
             <select value={bank} onChange={(e) => setBank(e.target.value)} className={inputBox}>
               <option value="">SpiderBank(우리 은행)</option>
+              {bank && !banks.some((b) => b.bank_code === bank) && <option value={bank}>은행 코드 {bank} (확인 필요)</option>}
               {banks.map((b) => (
                 <option key={b.bank_code} value={b.bank_code}>
                   {b.name}
@@ -314,8 +503,10 @@ function Transfer() {
               ))}
             </select>
           </label>
+          {banksUnavailable && <p role="status" className="text-sm text-slate">은행 목록을 불러오지 못했습니다. 타행 계좌를 확인하려면 다시 불러와 주세요.</p>}
           {error !== null && <p role="alert" className="text-sm text-seal">{(error as Error).message}</p>}
-          <Button type="button" busy={busy} disabled={!acct.trim()} onClick={onDirect}>
+          {(banksUnavailable || (bank !== "" && !banks.some((b) => b.bank_code === bank))) && <Button type="button" busy={busy} onClick={retryBanks}>은행 목록 다시 불러오기</Button>}
+          <Button type="button" busy={busy} disabled={!acct.trim() || (bank !== "" && (banksUnavailable || !banks.some((b) => b.bank_code === bank)))} onClick={onDirect}>
             확인
           </Button>
         </div>
@@ -332,6 +523,8 @@ function Transfer() {
     return (
       <section className="mt-2">
         <Back onClick={() => setStep(1)} />
+        {recoveryError && <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-coral-soft p-3 text-sm"><span>{recoveryError}</span>{legacyRequest ? <button type="button" onClick={startAfterLegacyReview} className="shrink-0 underline">내역 확인 후 새 이체</button> : <button type="button" onClick={retryRecovery} className="shrink-0 underline">결과 다시 확인</button>}</div>}
+        {recoveringRequest && !legacyRequest && <p role="status" className="mt-3 text-sm text-slate">이전 이체 결과를 확인하고 있습니다…</p>}
         <div className="mt-2 text-center">
           <p className="text-xl font-semibold">{target.shown} 님</p>
           <p className="text-sm text-slate tabular-nums">
@@ -392,7 +585,7 @@ function Transfer() {
         <div className="mt-3">
           <Button
             type="button"
-            disabled={amount === 0 || over}
+            disabled={amount === 0 || over || recoveringRequest}
             onClick={() => {
               setError(null);
               setSheet("confirm");
@@ -435,7 +628,7 @@ function Transfer() {
                   <h2 className="text-xl font-semibold">계좌 비밀번호를 입력해 주세요</h2>
                   <AccountPasswordField label="출금 계좌 비밀번호" resetHref={accountHref} autoFocus />
                   <MoneyErrorText error={error} accountHref={accountHref} />
-                  <Button busy={busy}>이체</Button>
+                  <Button busy={busy} disabled={recoveringRequest}>이체</Button>
                 </form>
               )}
             </div>
@@ -478,6 +671,7 @@ function Transfer() {
       >
         계좌번호
       </button>
+      {banksUnavailable && <div className="mt-3 flex items-center gap-3 text-sm text-slate"><span>은행 목록을 불러오지 못했습니다.</span><button type="button" disabled={busy} onClick={retryBanks} className="underline">다시 시도</button></div>}
       <div role="tablist" className="mt-6 flex border-b border-line">
         {tabs.map(([k, l]) => (
           <button

@@ -33,6 +33,7 @@ def clear():
     execute("delete from terms_consents where user_id = :u", u=u)
     execute("delete from deposit_account_histories where deposit_account_id in (select deposit_account_id from deposit_accounts where user_id = :u)", u=u)
     execute("delete from deposit_accounts where user_id = :u", u=u)
+    execute("delete from account_notifications where checking_account_history_id in (select checking_account_history_id from checking_account_histories where checking_account_id = :c)", c=ids["checking"])
     execute("delete from checking_account_histories where checking_account_id = :c", c=ids["checking"])
     execute("update checking_accounts set balance = :b where checking_account_id = :c", b=START, c=ids["checking"])
 

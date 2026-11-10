@@ -28,10 +28,12 @@ from avengers_bank.core.security import (
     verify_password,
 )
 from avengers_bank.domains.users.models import RefreshToken, User, UserDevice
+from avengers_bank.domains.users.phone_change import change_phone as run_phone_change
 from avengers_bank.domains.users.repository import user_repository
 from avengers_bank.domains.users.schemas import (
     DeviceChallenge,
     PasswordChange,
+    PhoneChange,
     TokenResponse,
     UserCreate,
     UserLogin,
@@ -344,19 +346,14 @@ class UserService:
                 raise UnauthorizedException(
                     message="유효하지 않거나 만료된 토큰입니다.", code="INVALID_TOKEN"
                 )
-            changes = data.model_dump(exclude_unset=True)
-            token = changes.pop("phone_verification_token", None)
-            if "phone" in changes and changes["phone"] != user.phone:
-                # 휴대폰 번호는 본인 확인·알림·2단계 비밀번호 찾기에 쓰이므로 새 번호로 받은 인증번호를 확인해야 바꾼다
-                if token is None:
-                    raise BadRequestException(
-                        code="PHONE_VERIFICATION_REQUIRED", message="휴대폰 번호를 바꾸려면 새 번호로 인증해 주세요."
-                    )
-                await consume_verification(db, token, "CHANGE_PHONE", phone=changes["phone"], user_id=user.user_id)
-                user.phone_verified_at = datetime.now(timezone.utc)
-            for field, value in changes.items():
+            for field, value in data.model_dump(exclude_unset=True).items():
                 setattr(user, field, value)
         return user
+
+    async def change_phone(
+        self, db: AsyncSession, current_user: UserResponse, data: PhoneChange, raw_device_token: str | None = None
+    ) -> User:
+        return await run_phone_change(db, current_user, data, raw_device_token)
 
     async def unlock_login(self, db: AsyncSession, login_id: str) -> bool:
         """로그인 잠금 해제 + 실패 횟수 0 (새 기기·등록 기기 두 채널 모두). 개발용 API·관리자 명령이 쓴다. 없는 아이디면 False."""

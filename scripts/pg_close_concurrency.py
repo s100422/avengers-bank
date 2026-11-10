@@ -27,6 +27,7 @@ ids: dict[str, int] = {}
 
 
 def reset():
+    execute("delete from account_notifications where checking_account_history_id in (select checking_account_history_id from checking_account_histories where checking_account_id = :c)", c=ids["checking"])
     execute("delete from checking_account_histories where checking_account_id = :c", c=ids["checking"])
     execute("delete from deposit_account_histories where deposit_account_id = :d", d=ids["deposit"])
     execute("delete from savings_account_histories where savings_account_id = :s", s=ids["savings"])

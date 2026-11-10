@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 from avengers_bank.domains.accounts.schemas import AccountPassword, Amount
@@ -24,6 +26,7 @@ class InterbankSend(InquiryRequest):
     amount: Amount
     account_password: AccountPassword
     memo: str = Field(default="", max_length=100)
+    request_id: UUID | None = None  # 기존 클라이언트 호환. 새 클라이언트는 재시도에도 같은 ID를 보낸다.
 
 
 class InterbankResponse(BaseModel):

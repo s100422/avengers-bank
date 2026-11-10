@@ -19,6 +19,7 @@ from avengers_bank.domains.interbank.receiver import HubRequestError, SignRespon
 from avengers_bank.domains.interbank.receiver import router as interbank_receiver_router
 from avengers_bank.domains.interbank.router import router as interbank_router
 from avengers_bank.domains.interbank.worker import run_forever as interbank_worker
+from avengers_bank.domains.notifications.router import router as notification_router
 from avengers_bank.domains.products.router import router as product_router
 from avengers_bank.domains.recovery.router import router as recovery_router
 from avengers_bank.domains.terms.router import router as terms_router
@@ -61,6 +62,7 @@ app.include_router(account_router)
 app.include_router(transfer_router)
 app.include_router(interbank_router)
 app.include_router(interbank_receiver_router)
+app.include_router(notification_router)
 app.include_router(card_router)
 app.include_router(agent_router)
 app.include_router(terms_router)

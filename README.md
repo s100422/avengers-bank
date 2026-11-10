@@ -124,6 +124,7 @@ uv run python scripts/pg_transfer_concurrency.py
 | products | ✅ 계좌·카드 상품 목록/상세 조회, 상품 종류 검증 메서드 |
 | accounts | ✅ 입출금·예금·적금 개설, 내 계좌 조회, 상세, 거래내역 조회, 별칭·이체 한도 수정, 계좌 비밀번호(숫자 4자리, 5회 잠금), 예·적금 해지, 예·적금 이자 미리 보기(오늘 해지하면 / 만기까지 두면) |
 | transfers | ✅ 입출금 이체(잔액·1회·1일 한도 검사), 적금 납입 (예금은 가입 시 입출금 계좌에서 가입 금액 이체), 최근·자주 쓰는 계좌, 우리 은행 수취 조회 |
+| notifications | ✅ 신규 입출금 거래의 앱 안 알림함, 미확인 배지와 접속 중 화면 팝업. 브라우저 팝업은 사용자가 권한을 허용하면 표시(앱 종료 후 푸시는 미지원) |
 | interbank | ✅ ClearingHub 타행 이체 보내기·받기(서명·멱등 입금·PENDING 확인 작업). 정산·대사는 미구현 ([docs/INTERBANK.md](docs/INTERBANK.md)) |
 | cards | ✅ 신용·체크카드 발급, 조회, 결제(사용), 신용카드 청구서 생성·납부 |
 | terms | ✅ 상품 약관 동의(가입 때 필수)와 약관 검색(RAG, 출처 링크) ([docs/TERMS_RAG.md](docs/TERMS_RAG.md)) |

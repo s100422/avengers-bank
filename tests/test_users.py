@@ -6,7 +6,6 @@ import pytest
 from avengers_bank.core.config import get_settings
 from avengers_bank.core.security import DUMMY_HASH, password_hash
 from avengers_bank.domains.users import service as user_service_module
-from tests.verification_helpers import phone_token
 
 pytestmark = pytest.mark.anyio
 
@@ -63,19 +62,18 @@ async def test_signup_race_unique_violation_returns_409(client, monkeypatch):
 
 async def test_update_me_changes_only_sent_fields(client, make_user):
     headers = await make_user("ironman")
-    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", headers)  # 번호를 바꾸려면 새 번호로 인증
     response = await client.patch(
-        "/users/me", json={"name": "페퍼", "phone": "010-9999-8888", "phone_verification_token": token}, headers=headers
+        "/users/me", json={"name": "페퍼"}, headers=headers
     )
     assert response.status_code == 200
     data = response.json()["data"]
-    assert (data["name"], data["phone"], data["login_id"]) == ("페퍼", "010-9999-8888", "ironman")
+    assert (data["name"], data["phone"], data["login_id"]) == ("페퍼", SIGNUP["phone"], "ironman")
 
     again = await client.patch("/users/me", json={"nick_name": "아이언맨"}, headers=headers)
     assert (again.json()["data"]["nick_name"], again.json()["data"]["name"]) == ("아이언맨", "페퍼")  # 안 보낸 값은 그대로
 
     me = (await client.get("/users/me", headers=headers)).json()["data"]  # 실제로 저장됐는지
-    assert (me["name"], me["phone"], me["nick_name"]) == ("페퍼", "010-9999-8888", "아이언맨")
+    assert (me["name"], me["phone"], me["nick_name"]) == ("페퍼", SIGNUP["phone"], "아이언맨")
 
 
 async def test_update_me_can_clear_nickname_and_empty_body_is_noop(client, make_user):
@@ -492,16 +490,15 @@ async def test_password_allows_only_keyboard_characters(client, password):
 
 async def test_update_me_uses_same_rules(client, make_user):
     headers = await make_user("ironman")
-    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", headers)
     response = await client.patch(
         "/users/me",
-        json={"name": "  페퍼 ", "phone": "01099998888", "nick_name": "", "phone_verification_token": token},
+        json={"name": "  페퍼 ", "nick_name": ""},
         headers=headers,
     )
     data = response.json()["data"]
-    assert (data["name"], data["phone"], data["nick_name"]) == ("페퍼", "010-9999-8888", None)
+    assert (data["name"], data["phone"], data["nick_name"]) == ("페퍼", SIGNUP["phone"], None)
     bad = await client.patch("/users/me", json={"phone": "02-123-4567"}, headers=headers)
-    assert bad.json()["error"]["details"][0]["msg"] == "휴대폰 번호를 010-1234-5678 형식으로 입력해 주세요."
+    assert bad.status_code == 422
 
 
 async def test_old_weak_password_still_works_for_login_and_change(client):

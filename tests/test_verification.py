@@ -98,7 +98,7 @@ async def test_public_send_allows_only_signup_purpose(client, purpose):
 
 
 async def test_send_for_me_requires_login_and_change_phone_purpose(client, make_user):
-    body = {"phone": "010-9999-8888", "purpose": "CHANGE_PHONE"}
+    body = {"phone": "010-9999-8888", "purpose": "CHANGE_PHONE_NEW"}
     assert (await client.post("/verification/phone/send-for-me", json=body)).status_code == 401
     client.auto_phone_verification = True
     headers = await make_user()
@@ -107,7 +107,11 @@ async def test_send_for_me_requires_login_and_change_phone_purpose(client, make_
     sent = await client.post("/verification/phone/send-for-me", json=body, headers=headers)
     assert sent.status_code == 200
     saved = await row(sent.json()["data"]["verification_id"])
-    assert (saved.purpose, saved.phone, saved.user_id) == ("CHANGE_PHONE", "010-9999-8888", 1)  # 새 번호로, 그 사용자 것
+    assert (saved.purpose, saved.phone, saved.user_id) == ("CHANGE_PHONE_NEW", "010-9999-8888", 1)
+    old = await client.post("/verification/phone/send-for-me", json={"phone": "010-7777-6666", "purpose": "CHANGE_PHONE_OLD"}, headers=headers)
+    assert old.status_code == 200
+    old_row = await row(old.json()["data"]["verification_id"])
+    assert (old_row.purpose, old_row.phone, old_row.user_id) == ("CHANGE_PHONE_OLD", PHONE, 1)
 
 
 # ── 저장 방식 ────────────────────────────────────────────────────────
@@ -264,7 +268,7 @@ async def test_signup_token_must_match_phone_and_purpose(client, make_user):
     )
     client.auto_phone_verification = True
     headers = await make_user("hulk")
-    change = await phone_token(client, PHONE, "CHANGE_PHONE", headers, exempt=True)
+    change = await phone_token(client, "010-5555-4444", "CHANGE_PHONE_NEW", headers, exempt=True)
     wrong_purpose = await client.post("/users/signup", json={**SIGNUP, "phone_verification_token": change})
     assert error(wrong_purpose) == (400, "INVALID_VERIFICATION_TOKEN")
 
@@ -288,33 +292,63 @@ async def test_change_phone_requires_token_for_new_number(client, make_user):
     client.auto_phone_verification = True
     headers = await make_user()
     missing = await client.patch("/users/me", json={"phone": "010-9999-8888"}, headers=headers)
-    assert error(missing) == (400, "PHONE_VERIFICATION_REQUIRED")
+    assert error(missing) == (422, "VALIDATION_ERROR")
     assert (await client.patch("/users/me", json={"name": "페퍼"}, headers=headers)).status_code == 200  # 다른 필드는 불필요
-    assert (await client.patch("/users/me", json={"phone": PHONE}, headers=headers)).status_code == 200  # 같은 번호도 불필요
-
-    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", headers)
-    mismatch = await client.patch("/users/me", json={"phone": "010-7777-6666", "phone_verification_token": token}, headers=headers)
-    assert error(mismatch) == (400, "INVALID_VERIFICATION_TOKEN")
     async with SessionLocal() as db:
         before = (await db.scalar(select(User))).phone_verified_at
-    ok = await client.patch("/users/me", json={"phone": "010-9999-8888", "phone_verification_token": token}, headers=headers)
+    old_token = await phone_token(client, PHONE, "CHANGE_PHONE_OLD", headers)
+    new_token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE_NEW", headers)
+    ok = await client.post("/users/me/phone-change", json={"current_password": "Passw0rd!23", "phone": "010-9999-8888", "old_phone_verification_token": old_token, "new_phone_verification_token": new_token}, headers=headers)
     assert ok.status_code == 200 and ok.json()["data"]["phone"] == "010-9999-8888"
     async with SessionLocal() as db:
         assert (await db.scalar(select(User))).phone_verified_at > before
-    reuse = await client.patch("/users/me", json={"phone": PHONE, "phone_verification_token": token}, headers=headers)
-    assert error(reuse) == (400, "INVALID_VERIFICATION_TOKEN")
+    assert "refresh_token" in ok.headers.get("set-cookie", "") and "Max-Age=0" in ok.headers.get("set-cookie", "")
+    assert (await client.get("/users/me", headers=headers)).status_code == 401
+
+
+async def test_phone_change_requires_current_password_even_with_stolen_session_and_new_phone_token(client, make_user):
+    client.auto_phone_verification = True
+    headers = await make_user()
+    old_token = await phone_token(client, PHONE, "CHANGE_PHONE_OLD", headers, exempt=True)
+    new_token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE_NEW", headers, exempt=True)
+    response = await client.post("/users/me/phone-change", json={
+        "current_password": "WrongPass!23", "phone": "010-9999-8888",
+        "old_phone_verification_token": old_token, "new_phone_verification_token": new_token,
+    }, headers=headers)
+    assert error(response) == (400, "INVALID_CURRENT_PASSWORD")
+    async with SessionLocal() as db:
+        assert (await db.scalar(select(User))).phone == PHONE
+
+
+async def test_phone_change_rejects_wrong_number_and_wrong_purpose(client, make_user):
+    client.auto_phone_verification = True
+    headers = await make_user()
+    old_token = await phone_token(client, PHONE, "CHANGE_PHONE_OLD", headers, exempt=True)
+    signup_token = await phone_token(client, "010-9999-8888", exempt=True)
+    wrong_purpose = await client.post("/users/me/phone-change", json={
+        "current_password": "Passw0rd!23", "phone": "010-9999-8888",
+        "old_phone_verification_token": old_token, "new_phone_verification_token": signup_token,
+    }, headers=headers)
+    assert error(wrong_purpose) == (400, "INVALID_VERIFICATION_TOKEN")
+    new_token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE_NEW", headers, exempt=True)
+    wrong_number = await client.post("/users/me/phone-change", json={
+        "current_password": "Passw0rd!23", "phone": "010-7777-6666",
+        "old_phone_verification_token": old_token, "new_phone_verification_token": new_token,
+    }, headers=headers)
+    assert error(wrong_number) == (400, "INVALID_VERIFICATION_TOKEN")
+    async with SessionLocal() as db:
+        assert (await db.scalar(select(User))).phone == PHONE
 
 
 async def test_change_phone_token_of_another_user_is_rejected(client, make_user):
     client.auto_phone_verification = True
     tony, bruce = await make_user("ironman"), await make_user("hulk")
-    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", bruce)
-    stolen = await client.patch("/users/me", json={"phone": "010-9999-8888", "phone_verification_token": token}, headers=tony)
+    old_token = await phone_token(client, PHONE, "CHANGE_PHONE_OLD", tony)
+    new_token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE_NEW", bruce)
+    stolen = await client.post("/users/me/phone-change", json={"current_password": "Passw0rd!23", "phone": "010-9999-8888", "old_phone_verification_token": old_token, "new_phone_verification_token": new_token}, headers=tony)
     assert error(stolen) == (400, "INVALID_VERIFICATION_TOKEN")
     signup_token = await phone_token(client, "010-5555-4444", exempt=True)
-    wrong_purpose = await client.patch(
-        "/users/me", json={"phone": "010-5555-4444", "phone_verification_token": signup_token}, headers=tony
-    )
+    wrong_purpose = await client.post("/users/me/phone-change", json={"current_password": "Passw0rd!23", "phone": "010-5555-4444", "old_phone_verification_token": old_token, "new_phone_verification_token": signup_token}, headers=tony)
     assert error(wrong_purpose) == (400, "INVALID_VERIFICATION_TOKEN")
 
 
@@ -324,18 +358,18 @@ async def test_change_phone_token_of_another_user_is_rejected(client, make_user)
 async def test_consume_verification_checks_user_and_is_single_use(client, make_user):
     client.auto_phone_verification = True
     headers = await make_user()
-    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE", headers)
+    token = await phone_token(client, "010-9999-8888", "CHANGE_PHONE_NEW", headers)
     async with SessionLocal() as db:
         with pytest.raises(Exception) as caught:
             async with db.begin():
-                await consume_verification(db, token, "CHANGE_PHONE", user_id=2)
+                await consume_verification(db, token, "CHANGE_PHONE_NEW", user_id=2)
         assert caught.value.code == "INVALID_VERIFICATION_TOKEN"
         async with db.begin():
-            used = await consume_verification(db, token, "CHANGE_PHONE", phone="010-9999-8888", user_id=1)
+            used = await consume_verification(db, token, "CHANGE_PHONE_NEW", phone="010-9999-8888", user_id=1)
         assert used.consumed_at is not None
         with pytest.raises(Exception):
             async with db.begin():
-                await consume_verification(db, token, "CHANGE_PHONE")
+                await consume_verification(db, token, "CHANGE_PHONE_NEW")
 
 
 async def test_send_notice_and_sms_sender_setting():

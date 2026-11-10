@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { SESSION_KEY, expireSession, expiring, logout, refreshSession, session } from "@/lib/api";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export function Brand() {
   return (
@@ -98,7 +99,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <span className="md:hidden">
               <Brand />
             </span>
-            <SessionTimer />
+            <div className="flex items-center gap-1"><NotificationBell /><SessionTimer /></div>
           </header>
           {children}
         </div>

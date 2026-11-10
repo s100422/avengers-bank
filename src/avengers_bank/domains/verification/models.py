@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from avengers_bank.core.database import Base
 
 # 인증번호를 어디에 쓰나. CHECK 제약과 마이그레이션 8d9e0f1a2b3c·9e0f1a2b3c4d가 같은 목록을 쓴다
-PURPOSES = ("SIGNUP_PHONE", "CHANGE_PHONE", "PASSWORD_RESET", "FIND_LOGIN_ID", "ACCOUNT_PASSWORD_RESET", "WITHDRAWAL", "NEW_DEVICE")
+PURPOSES = ("SIGNUP_PHONE", "CHANGE_PHONE", "CHANGE_PHONE_OLD", "CHANGE_PHONE_NEW", "PASSWORD_RESET", "FIND_LOGIN_ID", "ACCOUNT_PASSWORD_RESET", "WITHDRAWAL", "NEW_DEVICE")
 
 
 class VerificationCode(Base):

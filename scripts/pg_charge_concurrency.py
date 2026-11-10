@@ -46,6 +46,7 @@ async def amain(user, account_id):
     print(f"   기대 잔액 {expected:,} / 실제 잔액 {balance:,} / 거래내역 {rows}건 / balance_after {distinct}종류")
     ok = check("한 건도 안 사라졌고 balance_after가 모두 다름", (balance, rows, distinct) == (expected, N, N))
 
+    execute("delete from account_notifications where checking_account_history_id in (select checking_account_history_id from checking_account_histories where checking_account_id = :a)", a=account_id)
     execute("delete from checking_account_histories where checking_account_id = :a", a=account_id)
     execute("update checking_accounts set balance = 0 where checking_account_id = :a", a=account_id)
     print("[대조군] 잠금 없이 같은 요청")

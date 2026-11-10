@@ -40,6 +40,7 @@ ids: dict[str, int] = {}
 
 def reset(password_hash: str) -> None:
     """탈퇴할 사람을 매 라운드 '탈퇴 전, 잔액 0' 상태로 되돌린다."""
+    execute("delete from account_notifications where checking_account_history_id in (select checking_account_history_id from checking_account_histories where checking_account_id in (:w, :s))", w=ids["W"], s=ids["S"])
     execute("delete from checking_account_histories where checking_account_id in (:w, :s)", w=ids["W"], s=ids["S"])
     execute("update checking_accounts set balance = 0, closed_at = null where checking_account_id = :w", w=ids["W"])
     execute("update checking_accounts set balance = 1000000 where checking_account_id = :s", s=ids["S"])

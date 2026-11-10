@@ -136,6 +136,16 @@ erDiagram
         string type "TRANSFER_OUT/…/CLOSE_IN, INTERBANK_OUT/INTERBANK_IN/INTERBANK_REFUND(C-105)"
         string counterpart_account "NULL, 상대 계좌번호(50자, 타행 계좌번호까지 담음)"
         string counterpart_name "NULL, 상대 이름(실명)·가맹점명(체크카드 결제). 타행은 사람 이름만(C-108)"
+        string transfer_id "NULL, 타행 송금 연결 ID(C-112)"
+        string request_id "NULL, 일반 이체 재시도 ID(C-112)"
+    }
+
+    account_notifications {
+        int notification_id PK
+        int user_id FK
+        int checking_account_history_id FK "UNIQUE"
+        datetime created_at
+        datetime read_at "NULL이면 읽지 않음"
     }
 
     deposit_account_histories {
@@ -364,6 +374,8 @@ erDiagram
     card_products ||--o{ debit_cards : "상품"
 
     checking_accounts ||--o{ checking_account_histories : "거래"
+    checking_account_histories ||--o| account_notifications : "알림"
+    users ||--o{ account_notifications : "수신"
     deposit_accounts ||--o{ deposit_account_histories : "거래"
     savings_accounts ||--o{ savings_account_histories : "거래"
 
@@ -401,6 +413,7 @@ erDiagram
 | `account_products` / `card_products` | 계좌 상품 / 카드 상품. `type` CHECK, `product_code` UNIQUE(NULL 가능, 약관 연결용), `account_products.min_amount`: NULL이면 제한 없음·값이 있으면 `> 0` CHECK, `card_products.credit_limit`: 신용은 필수 `> 0`·체크는 NULL(CHECK) | products |
 | `checking_accounts` / `deposit_accounts` / `savings_accounts` | 입출금 / 예금 / 적금 계좌. `balance >= 0` CHECK, 입출금은 `per_transfer_limit <= daily_transfer_limit` CHECK, 예금·적금은 `status`와 `closed_at`이 맞아야 함(CHECK), 적금 `monthly_deposit_date` 1~31 CHECK. 입출금의 `closed_at`은 회원 탈퇴로 닫힌 시각(예금·적금의 해지와 다름). 3종 모두 `password_hash`(NULL = 미설정, 돈이 나가지 않음)·`password_failed_count`·`password_locked_at`(5회 실패 잠금) | accounts |
 | `*_account_histories` | 계좌별 거래내역. `amount > 0`·`balance_after >= 0`·`type` 목록 CHECK(입출금: `TRANSFER_OUT`/`TRANSFER_IN`/`TO_SAVINGS`/`TO_DEPOSIT`/`CARD_PAYMENT`/`CARD_BILL_PAYMENT`/`DEV_CHARGE`/`CLOSE_IN`/`INTERBANK_OUT`/`INTERBANK_IN`/`INTERBANK_REFUND`, 예금·적금: `TRANSFER_IN`/`INTEREST`/`CLOSE_OUT`), 인덱스 `(계좌 ID, date)` | accounts |
+| `account_notifications` | 신규 입출금 거래내역 1건당 사용자 전용 알림 1건. 거래내역 FK는 UNIQUE이고 `read_at`이 NULL이면 읽지 않음. 거래와 알림을 같은 트랜잭션으로 저장 | notifications |
 | `interbank_transfers` | 타행 이체 기록(C-105). 보낸 것(`OUT`)과 받은 것(`IN`)을 한 표에 둠. `transfer_id`(UUID)가 PK라 같은 ID는 한 번만 들어가고, 이것이 받는 쪽 멱등성(중복 입금 방지)의 근거. `OUT`의 `PENDING` 행은 돈이 이미 나갔고 허브 결과를 기다리는 상태. CHECK: `amount > 0`, `direction`(`OUT`/`IN`), `status`(`PENDING`/`COMPLETED`/`FAILED`), 인덱스 `status`·`checking_account_id`. `checking_account_id`는 FK, 상대 은행·계좌·이름은 FK 없는 문자열 | interbank |
 | `favorite_accounts` | 이체 화면의 자주 쓰는 계좌(C-107). UNIQUE `(user_id, bank_code, account)`. 우리 은행은 `bank_code = ''`(PostgreSQL 유니크가 NULL끼리 다르게 봐서 NULL 대신 빈 문자열). 이름·은행 이름은 추가할 때 값을 그대로 저장(표시용). 인덱스 `user_id` | transfers |
 | `credit_cards` / `debit_cards` | 신용카드 / 체크카드 | cards |
@@ -431,7 +444,7 @@ DB 구조만으로는 막을 수 없는 부분이라 애플리케이션 코드�
    - 계좌 비밀번호 검증(`accounts/password.py` `check_account_password`)은 본 작업 전에 **그 계좌 행 하나만 잠그는 짧은 트랜잭션을 먼저 커밋**합니다(실패 횟수 증가가 롤백되지 않게). 행 하나만 잠그고 끝나므로 위 잠금 순서와 엮여 데드락이 생기지 않습니다.
    - 잠금 쿼리에는 `.execution_options(populate_existing=True)`를 붙여 세션에 남아 있는 예전 값을 최신 값으로 덮어씁니다.
    - 테스트 DB(SQLite)는 `FOR UPDATE`를 무시하므로 동시성 테스트는 PostgreSQL에서 해야 합니다.
-10. **타행 이체는 `transfer_id`로 한 번만, 환불은 확정 실패일 때만(C-105):** 받는 쪽은 입금과 `interbank_transfers` 저장을 한 트랜잭션에서 하고, 같은 `transfer_id`가 다시 오면(동시에 온 경우의 PK 충돌 포함) 입금하지 않고 저장된 결과를 돌려줍니다(4xx로 답하지 않음). 보내는 쪽은 출금과 `PENDING` 행 저장을 한 트랜잭션으로 하고, 허브 응답이 `FAILED`로 확정됐을 때만 환불(`INTERBANK_REFUND`)합니다. 타임아웃·5xx·서명이 틀린 응답은 `PENDING`으로 두고 확인 작업이 허브에 다시 물어봅니다(이중 지급 방지).
+10. **타행 이체는 `transfer_id`로 한 번만, 환불은 확정 실패일 때만(C-105, C-112):** 받는 쪽은 입금과 `interbank_transfers` 저장을 한 트랜잭션에서 하고, 같은 `transfer_id`가 다시 오면(동시에 온 경우의 PK 충돌 포함) 입금하지 않고 저장된 결과를 돌려줍니다(4xx로 답하지 않음). 보내는 쪽은 출금과 `PENDING` 행 저장을 한 트랜잭션으로 하고, 허브 응답이 `FAILED`로 확정됐을 때만 환불(`INTERBANK_REFUND`)합니다. 타임아웃·5xx·서명이 틀린 응답은 `PENDING`으로 두고 확인 작업이 허브에 다시 물어봅니다(이중 지급 방지). C-112부터 신규 출금·환불 내역에 `checking_account_histories.transfer_id`를 기록하고, 신규 일반 이체 출금 내역은 고유한 `request_id`를 기록한다. 기존 내역은 연결 ID를 NULL로 둔다.
 
 ## 팀에서 정해야 할 것
 

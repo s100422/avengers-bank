@@ -1,7 +1,9 @@
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from avengers_bank.core.exceptions import BadRequestException, NotFoundException
-from avengers_bank.core.timezone import today_kst, today_start_utc
+from avengers_bank.core.exceptions import ApiException, BadRequestException, NotFoundException
+from avengers_bank.core.timezone import today_kst
 from avengers_bank.domains.accounts.kinds import (
     KINDS,
     TO_DEPOSIT,
@@ -20,6 +22,7 @@ from avengers_bank.domains.transfers.schemas import (
     TransferResponse,
     TransferTarget,
 )
+from avengers_bank.domains.transfers.limits import check_transfer_limits
 from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.schemas import UserResponse
 
@@ -35,10 +38,46 @@ class TransferService:
 
     async def transfer(self, db: AsyncSession, data: TransferCreate, user: UserResponse) -> TransferResponse:
         """입출금 → 입출금 이체. 잔액, 1회 한도, 1일 한도를 검사한다."""
+        if data.request_id:
+            async with db.begin():
+                previous = await self._request_result(db, str(data.request_id), data, user)
+            if previous:
+                return previous
         # 보내는 계좌의 비밀번호를 먼저 따로 확인·커밋한다 (틀린 횟수가 롤백되지 않게, password.py)
         await check_account_password(db, KINDS["checking"], data.from_checking_account_id, data.account_password, user)
+        try:
+            async with db.begin():
+                return await self.transfer_in_tx(db, data, user)
+        except IntegrityError:
+            if not data.request_id:
+                raise
+            async with db.begin():
+                previous = await self._request_result(db, str(data.request_id), data, user)
+            if previous:
+                return previous
+            raise
+
+    async def _request_result(self, db: AsyncSession, request_id: str, data: TransferTarget,
+                              user: UserResponse) -> TransferResponse | None:
+        history = await db.scalar(select(CheckingAccountHistory).where(CheckingAccountHistory.request_id == request_id))
+        if history is None:
+            return None
+        sender = await account_service.get_owned(db, KINDS["checking"], history.checking_account_id, user)
+        if (history.type != TRANSFER_OUT or history.checking_account_id != data.from_checking_account_id
+                or history.counterpart_account != data.to_account_num or history.amount != data.amount):
+            raise ApiException(409, "REQUEST_ID_CONFLICT", "다른 이체에 사용한 요청 ID입니다.")
+        return TransferResponse(from_account_num=sender.account_num, to_account_num=history.counterpart_account,
+                                amount=history.amount, balance_after=history.balance_after)
+
+    async def request_status(self, db: AsyncSession, request_id: str, user: UserResponse) -> TransferResponse:
         async with db.begin():
-            return await self.transfer_in_tx(db, data, user)
+            history = await db.scalar(select(CheckingAccountHistory).where(
+                CheckingAccountHistory.request_id == request_id, CheckingAccountHistory.type == TRANSFER_OUT))
+            if history is None:
+                raise NotFoundException(code="TRANSFER_NOT_FOUND", message="이체를 찾을 수 없습니다.")
+            sender = await account_service.get_owned(db, KINDS["checking"], history.checking_account_id, user)
+            return TransferResponse(from_account_num=sender.account_num, to_account_num=history.counterpart_account,
+                                    amount=history.amount, balance_after=history.balance_after)
 
     async def transfer_in_tx(self, db: AsyncSession, data: TransferTarget, user: UserResponse) -> TransferResponse:
         """transfer와 같지만 호출한 쪽이 연 트랜잭션 안에서 실행한다 (AI 이체 초안 확인, C-070).
@@ -49,19 +88,25 @@ class TransferService:
         ids = [sender.checking_account_id, receiver.checking_account_id]
         locked = {a.checking_account_id: a for a in await account_repository.lock_checking_accounts(db, ids)}
         sender, receiver = locked[ids[0]], locked[ids[1]]
+        request_id = getattr(data, "request_id", None)
+        if request_id:
+            previous = await self._request_result(db, str(request_id), data, user)
+            if previous:
+                return previous
         # 잠근 뒤 확인: 받는 사람이 방금 탈퇴했으면 없는 계좌와 같은 404 (탈퇴의 '잔액 0 확인'과 이 입금이 한 줄로 선다)
         require_open(receiver, "받는 계좌를 찾을 수 없습니다.")
         require_open(sender)
 
         # 잠근 뒤에 검사한다. 1일 합계도 보내는 계좌를 잠근 뒤에 계산해야 동시 이체가 한도를 못 넘는다
-        await self._check_limits(db, sender, data.amount)
+        await check_transfer_limits(db, sender, data.amount)
 
         sender.balance -= data.amount
         receiver.balance += data.amount
         # 거래 내역에 상대 실명을 남긴다: 보낸 쪽에는 받는 분, 받은 쪽에는 보낸 분 (C-065)
         receiver_name = (await db.get(User, receiver.user_id)).name
         sender_name = (await db.get(User, sender.user_id)).name
-        await self._save_checking_history(db, sender, TRANSFER_OUT, data.amount, receiver.account_num, receiver_name)
+        await self._save_checking_history(db, sender, TRANSFER_OUT, data.amount, receiver.account_num, receiver_name,
+                                          request_id=str(request_id) if request_id else None)
         await self._save_checking_history(db, receiver, TRANSFER_IN, data.amount, sender.account_num, sender_name)
 
         return TransferResponse(
@@ -78,7 +123,7 @@ class TransferService:
         """
         async with db.begin():
             sender, receiver = await self._parties(db, data, user)
-            await self._check_limits(db, sender, data.amount)
+            await check_transfer_limits(db, sender, data.amount)
             receiver_name = (await db.get(User, receiver.user_id)).name
         return sender, receiver, receiver_name
 
@@ -95,22 +140,6 @@ class TransferService:
                 code="SAME_ACCOUNT_TRANSFER", message="같은 계좌로는 이체할 수 없습니다."
             )
         return sender, receiver
-
-    async def _check_limits(self, db: AsyncSession, sender: CheckingAccount, amount: int) -> None:
-        _require_funds(sender, amount)
-        if amount > sender.per_transfer_limit:
-            raise BadRequestException(
-                code="PER_TRANSFER_LIMIT_EXCEEDED",
-                message=f"1회 이체 한도({sender.per_transfer_limit:,}원)를 초과했습니다.",
-            )
-        used_today = await account_repository.sum_today_transfer_amount(
-            db, sender.checking_account_id, today_start_utc()
-        )
-        if used_today + amount > sender.daily_transfer_limit:
-            raise BadRequestException(
-                code="DAILY_LIMIT_EXCEEDED",
-                message=f"1일 이체 한도({sender.daily_transfer_limit:,}원)를 초과했습니다. 오늘 이미 {used_today:,}원을 보냈습니다.",
-            )
 
     async def pay_savings(self, db: AsyncSession, data: SavingsPaymentCreate, user: UserResponse) -> TransferResponse:
         """입출금 → 내 적금 납입."""
@@ -169,14 +198,14 @@ class TransferService:
 
     async def _save_checking_history(
         self, db: AsyncSession, account: CheckingAccount, type: str, amount: int, counterpart: str,
-        counterpart_name: str | None = None,
+        counterpart_name: str | None = None, request_id: str | None = None,
     ) -> None:
         await account_repository.save_history(
             db,
             CheckingAccountHistory(
                 checking_account_id=account.checking_account_id, amount=amount,
                 balance_after=account.balance, type=type, counterpart_account=counterpart,
-                counterpart_name=counterpart_name,
+                counterpart_name=counterpart_name, request_id=request_id,
             ),
         )
 

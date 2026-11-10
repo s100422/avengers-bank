@@ -44,7 +44,7 @@ class User(Base):
 
 
 # refresh_tokens.revoked_reason에 들어갈 수 있는 값 (CHECK 제약과 마이그레이션 8d9e0f1a2b3c가 같은 목록을 쓴다)
-REVOKED_REASONS = ("ROTATED", "LOGOUT", "LOGOUT_ALL", "PASSWORD_CHANGED", "REUSE_DETECTED", "LOGIN_ELSEWHERE", "WITHDRAWN")
+REVOKED_REASONS = ("ROTATED", "LOGOUT", "LOGOUT_ALL", "PASSWORD_CHANGED", "PHONE_CHANGED", "REUSE_DETECTED", "LOGIN_ELSEWHERE", "WITHDRAWN")
 
 
 class RefreshToken(Base):

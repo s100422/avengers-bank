@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.config import get_settings
@@ -27,7 +28,7 @@ from avengers_bank.domains.interbank.schemas import (
     InterbankResponse,
     InterbankSend,
 )
-from avengers_bank.domains.transfers.service import transfer_service
+from avengers_bank.domains.transfers.limits import check_transfer_limits
 from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.schemas import UserResponse
 
@@ -70,24 +71,40 @@ class InterbankService:
     async def send(self, db: AsyncSession, data: InterbankSend, user: UserResponse) -> InterbankResponse:
         require_enabled()
         self._reject_own_bank(data.to_bank)
+        transfer_id = str(data.request_id or uuid.uuid4())
+        if data.request_id:
+            existing = await self._row(db, transfer_id)
+            if existing:
+                return await self._existing_result(db, existing, data, user)
         await check_account_password(db, KINDS["checking"], data.from_checking_account_id, data.account_password, user)
         bank_name = await self._bank_name(data.to_bank)
-        transfer_id = str(uuid.uuid4())
-        async with db.begin():  # 출금과 PENDING 저장은 한 트랜잭션 (SPEC 6절 3)
-            await account_service.get_owned(db, KINDS["checking"], data.from_checking_account_id, user)
-            (sender,) = await account_repository.lock_checking_accounts(db, [data.from_checking_account_id])
-            require_open(sender)
-            await transfer_service._check_limits(db, sender, data.amount)  # 잔액·1회·1일 한도
-            sender.balance -= data.amount
-            db.add(InterbankTransfer(
-                transfer_id=transfer_id, direction="OUT", checking_account_id=sender.checking_account_id,
-                peer_bank=data.to_bank, peer_bank_name=bank_name, peer_account=data.to_account,
-                amount=data.amount, memo=data.memo, status="PENDING",
-            ))
-            await account_repository.save_history(db, CheckingAccountHistory(
-                checking_account_id=sender.checking_account_id, amount=data.amount, balance_after=sender.balance,
-                type=INTERBANK_OUT, counterpart_account=data.to_account,  # 받는 분 이름은 허브가 완료를 알릴 때 채운다 (apply)
-            ))
+        duplicate = None
+        try:
+            async with db.begin():  # 출금과 PENDING 저장은 한 트랜잭션
+                await account_service.get_owned(db, KINDS["checking"], data.from_checking_account_id, user)
+                (sender,) = await account_repository.lock_checking_accounts(db, [data.from_checking_account_id])
+                duplicate = await db.get(InterbankTransfer, transfer_id) if data.request_id else None
+                if duplicate is None:
+                    require_open(sender)
+                    await check_transfer_limits(db, sender, data.amount)
+                    sender.balance -= data.amount
+                    db.add(InterbankTransfer(
+                        transfer_id=transfer_id, direction="OUT", checking_account_id=sender.checking_account_id,
+                        peer_bank=data.to_bank, peer_bank_name=bank_name, peer_account=data.to_account,
+                        amount=data.amount, memo=data.memo, status="PENDING",
+                    ))
+                    await account_repository.save_history(db, CheckingAccountHistory(
+                        checking_account_id=sender.checking_account_id, amount=data.amount, balance_after=sender.balance,
+                        type=INTERBANK_OUT, counterpart_account=data.to_account, transfer_id=transfer_id,
+                    ))
+        except IntegrityError:
+            if not data.request_id:
+                raise
+            duplicate = await self._row(db, transfer_id)
+            if duplicate is None:
+                raise
+        if duplicate is not None:
+            return await self._existing_result(db, duplicate, data, user)
         await self.deliver(db, transfer_id)
         row = await self._row(db, transfer_id)
         if row.status == "FAILED":
@@ -125,8 +142,12 @@ class InterbankService:
         if outcome == "UNKNOWN":
             return
         async with db.begin():
+            prior = await db.get(InterbankTransfer, transfer_id)
+            # 계좌 → 이체 행 순서: 탈퇴의 계좌 잠금과 순환하지 않는다.
+            (account,) = await account_repository.lock_checking_accounts(db, [prior.checking_account_id])
             row = (await db.execute(
-                select(InterbankTransfer).where(InterbankTransfer.transfer_id == transfer_id).with_for_update()
+                select(InterbankTransfer).where(InterbankTransfer.transfer_id == transfer_id)
+                .with_for_update().execution_options(populate_existing=True)
             )).scalar_one()
             if row.status != "PENDING":
                 return
@@ -134,31 +155,41 @@ class InterbankService:
             if outcome == "COMPLETED":
                 row.status = "COMPLETED"
                 row.peer_name = reply.body.get("holder_name") or row.peer_name
-                if row.peer_name:  # 거래내역에는 은행 이름이 아니라 받는 분 이름을 보인다. 같은 상대·금액의 이름 없는 보냄 내역을 채운다
+                if row.peer_name:
                     await db.execute(
                         update(CheckingAccountHistory)
                         .where(
-                            CheckingAccountHistory.checking_account_id == row.checking_account_id,
+                            CheckingAccountHistory.transfer_id == transfer_id,
                             CheckingAccountHistory.type == INTERBANK_OUT,
-                            CheckingAccountHistory.counterpart_account == row.peer_account,
-                            CheckingAccountHistory.amount == row.amount,
-                            CheckingAccountHistory.counterpart_name.is_(None),
                         )
                         .values(counterpart_name=row.peer_name)
                     )
                 return
-            # FAILED: 출금을 되돌린다. 계좌 잠금은 행 잠금 뒤 (입금 쪽도 계좌만 잠그므로 순환이 없다)
-            (account,) = await account_repository.lock_checking_accounts(db, [row.checking_account_id])
+            # FAILED: 잠근 계좌에 한 번만 환불한다.
             account.balance += row.amount
             await account_repository.save_history(db, CheckingAccountHistory(
                 checking_account_id=account.checking_account_id, amount=row.amount, balance_after=account.balance,
                 type=INTERBANK_REFUND, counterpart_account=row.peer_account, counterpart_name=row.peer_name,
+                transfer_id=transfer_id,
             ))
             row.status = "FAILED"
             row.fail_code = (reply.body.get("error") or reply.body.get("fail_code") or "RECEIVER_ERROR")[:40]
             row.fail_message = (reply.body.get("message") or reply.body.get("fail_message") or "")[:200] or None
 
     # --- 내부 ---
+    async def _existing_result(self, db: AsyncSession, row: InterbankTransfer, data: InterbankSend,
+                               user: UserResponse) -> InterbankResponse:
+        async with db.begin():
+            await account_service.get_owned(db, KINDS["checking"], row.checking_account_id, user)
+        if (row.direction != "OUT" or row.checking_account_id != data.from_checking_account_id
+                or row.peer_bank != data.to_bank or row.peer_account != data.to_account
+                or row.amount != data.amount or row.memo != data.memo):
+            raise ApiException(409, "REQUEST_ID_CONFLICT", "다른 이체에 사용한 요청 ID입니다.")
+        if row.status == "FAILED":
+            code = row.fail_code or "RECEIVER_ERROR"
+            raise ApiException(404 if code == "ACCOUNT_NOT_FOUND" else 400, code, row.fail_message or "이체에 실패했습니다.")
+        return await self._response(db, row)
+
     def _reject_own_bank(self, to_bank: str) -> None:
         if to_bank == get_settings().bank_code:
             raise BadRequestException(code="SAME_BANK", message="같은 은행 계좌로는 일반 이체를 이용해 주세요.")

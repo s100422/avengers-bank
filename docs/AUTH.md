@@ -441,6 +441,8 @@ asyncio는 **스레드 하나**에서 돌고, 다른 요청으로 넘어가는 �
 
 ## 11. 직접 확인해 보기
 
+휴대폰 번호 변경(C-112)은 `POST /users/me/phone-change` 전용 경로를 사용한다. 현재 로그인 비밀번호와 등록 번호(`CHANGE_PHONE_OLD`)·새 번호(`CHANGE_PHONE_NEW`)의 인증 증표가 모두 필요하다. 성공하면 모든 세션과 등록 기기가 폐기되어 다시 로그인해야 한다. `PATCH /users/me`는 이름·닉네임만 수정한다.
+
 ```bash
 uv run pytest tests/test_auth_tokens.py tests/test_login_limiter_concurrency.py -q
 ```

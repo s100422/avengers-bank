@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     SmallInteger,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -130,6 +131,7 @@ class CheckingAccountHistory(Base):
     # 거래내역 조회(계좌별, 날짜순)와 1일 이체 한도 합계(계좌 + 오늘 날짜 범위)용
     __table_args__ = (
         Index("ix_checking_account_histories_account_date", "checking_account_id", "date"),
+        UniqueConstraint("request_id", name="uq_checking_account_histories_request_id"),
         CheckConstraint("amount > 0", name="ck_checking_account_histories_amount_positive"),
         CheckConstraint(
             "balance_after >= 0", name="ck_checking_account_histories_balance_after_non_negative"
@@ -154,6 +156,28 @@ class CheckingAccountHistory(Base):
     counterpart_account: Mapped[str | None] = mapped_column(String(50))  # 타행 계좌번호는 최대 50자 (SPEC 3.3)
     # 상대 이름: 체크카드 결제의 가맹점명 (C-035)
     counterpart_name: Mapped[str | None] = mapped_column(String(100))
+    # 신규 거래는 요청/허브 거래 ID로 정확히 연결한다. 기존 내역은 NULL로 보존한다.
+    transfer_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    request_id: Mapped[str | None] = mapped_column(String(36))
+
+
+class AccountNotification(Base):
+    """A committed checking-account movement creates one in-app notification."""
+
+    __tablename__ = "account_notifications"
+    __table_args__ = (
+        Index("ix_account_notifications_user_created", "user_id", "created_at"),
+        Index("ix_account_notifications_user_read", "user_id", "read_at"),
+        UniqueConstraint("checking_account_history_id", name="uq_account_notifications_history"),
+    )
+
+    notification_id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.user_id"), nullable=False)
+    checking_account_history_id: Mapped[int] = mapped_column(
+        ForeignKey("checking_account_histories.checking_account_history_id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DepositAccountHistory(Base):

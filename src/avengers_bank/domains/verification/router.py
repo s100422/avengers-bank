@@ -23,11 +23,11 @@ class SendForMeRequest(BaseModel):
     # CHANGE_PHONE: 바꿀 새 번호(필수). ACCOUNT_PASSWORD_RESET·WITHDRAWAL(회원 탈퇴): 보내지 않아도 되고,
     # 보내도 무시하고 등록된 번호로 보낸다
     phone: Phone | None = None
-    purpose: Literal["CHANGE_PHONE", "ACCOUNT_PASSWORD_RESET", "WITHDRAWAL"]
+    purpose: Literal["CHANGE_PHONE", "CHANGE_PHONE_OLD", "CHANGE_PHONE_NEW", "ACCOUNT_PASSWORD_RESET", "WITHDRAWAL"]
 
     @model_validator(mode="after")
     def _phone_for_change(self):
-        if self.purpose == "CHANGE_PHONE" and self.phone is None:
+        if self.purpose in {"CHANGE_PHONE", "CHANGE_PHONE_NEW"} and self.phone is None:
             raise ValueError("바꿀 휴대폰 번호를 입력해 주세요.")
         return self
 
@@ -67,11 +67,12 @@ async def send_for_me(
     current_user: Annotated[UserResponse, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    # CHANGE_PHONE: 바꿀 새 번호로 보낸다. 나머지(ACCOUNT_PASSWORD_RESET·WITHDRAWAL): 등록된 번호로만 보낸다(본문 phone 무시) —
+    # 새 번호 인증만 입력한 번호로 발송. 이전 번호는 현재 등록 번호에서만 발송한다 —
     # 훔친 세션으로 남의 번호를 넣어 계좌 비밀번호를 바꾸거나 탈퇴시키지 못하게
-    phone = data.phone if data.purpose == "CHANGE_PHONE" else current_user.phone
+    phone = data.phone if data.purpose in {"CHANGE_PHONE", "CHANGE_PHONE_NEW"} else current_user.phone
+    purpose = "CHANGE_PHONE_NEW" if data.purpose == "CHANGE_PHONE" else data.purpose
     verification_id = await start_verification(
-        db, purpose=data.purpose, phone=phone, user_id=current_user.user_id, ip=_ip(request)
+        db, purpose=purpose, phone=phone, user_id=current_user.user_id, ip=_ip(request)
     )
     return SuccessResponse[SendResponse](
         data=SendResponse(verification_id=verification_id, expires_in=int(CODE_TTL.total_seconds())),

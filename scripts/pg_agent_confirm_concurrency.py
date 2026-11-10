@@ -25,6 +25,7 @@ AMOUNT = 10_000
 
 def new_draft(user_id: int) -> str:
     """잔액·이력을 초기화하고 PENDING 초안 하나를 만든다."""
+    execute("delete from account_notifications where checking_account_history_id in (select checking_account_history_id from checking_account_histories where checking_account_id in (:a, :b))", a=ids["A"], b=ids["B"])
     execute("delete from checking_account_histories where checking_account_id in (:a, :b)", a=ids["A"], b=ids["B"])
     execute("update checking_accounts set balance = 1000000 where checking_account_id = :a", a=ids["A"])
     execute("update checking_accounts set balance = 0 where checking_account_id = :b", b=ids["B"])

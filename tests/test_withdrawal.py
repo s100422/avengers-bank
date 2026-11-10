@@ -11,6 +11,7 @@ from tests.cookie_helpers import cookie_header, session_of, set_cookies
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
 from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft
 from avengers_bank.domains.cards.models import CreditCard, DebitCard
+from avengers_bank.domains.interbank.models import InterbankTransfer
 from avengers_bank.domains.products.models import CardProduct
 from avengers_bank.domains.terms.models import TermsConsent
 from avengers_bank.domains.users.models import RefreshToken, User, UserDevice
@@ -139,6 +140,49 @@ async def test_correct_password_resets_count_even_if_token_is_bad(client, bank):
     await withdraw(client, tony, "x", password="Wrong!123")
     assert error(await withdraw(client, tony, "not-a-token")) == (400, "INVALID_VERIFICATION_TOKEN")
     assert (await user_row()).failed_login_count == 0
+
+
+async def test_pending_interbank_blocks_withdrawal_and_failed_refund_becomes_balance_block(client, bank):
+    tony = bank["tony"]["headers"]
+    async with SessionLocal() as db, db.begin():
+        db.add(InterbankTransfer(
+            transfer_id="11111111-1111-4111-8111-111111111111", direction="OUT",
+            checking_account_id=1, peer_bank="002", peer_account="123456", amount=25_000,
+            status="PENDING",
+        ))
+
+    status = (await client.get("/users/me/withdrawal", headers=tony)).json()["data"]
+    assert status["can_withdraw"] is False
+    assert status["blockers"] == [{
+        "code": "INTERBANK_PENDING", "message": "처리 중인 타행 이체가 있습니다: 25,000원",
+        "account_type": "checking", "account_id": 1, "card_id": None,
+    }]
+    assert error(await withdraw(client, tony, "unused", password="wrong")) == (400, "WITHDRAWAL_BLOCKED")
+    assert (await user_row()).failed_login_count == 0
+
+    # FAILED is written only after the service refunds the debit. Its refund restores the
+    # account balance, so the pending blocker disappears and the normal balance blocker takes over.
+    async with SessionLocal() as db, db.begin():
+        row = await db.get(InterbankTransfer, "11111111-1111-4111-8111-111111111111")
+        row.status = "FAILED"
+        account = await db.get(CheckingAccount, 1)
+        account.balance += 25_000
+    status = (await client.get("/users/me/withdrawal", headers=tony)).json()["data"]
+    assert [b["code"] for b in status["blockers"]] == ["CHECKING_BALANCE"]
+
+
+async def test_completed_interbank_does_not_block_withdrawal(client, bank):
+    tony = bank["tony"]["headers"]
+    async with SessionLocal() as db, db.begin():
+        db.add(InterbankTransfer(
+            transfer_id="22222222-2222-4222-8222-222222222222", direction="OUT",
+            checking_account_id=1, peer_bank="002", peer_account="123456", amount=25_000,
+            status="COMPLETED",
+        ))
+    status = (await client.get("/users/me/withdrawal", headers=tony)).json()["data"]
+    assert status == {"can_withdraw": True, "blockers": []}
+    done = await withdraw(client, tony, await withdrawal_token(client, tony))
+    assert done.status_code == 200
 
 
 async def test_rejects_missing_other_purpose_and_other_users_token(client, bank):

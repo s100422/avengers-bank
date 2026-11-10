@@ -25,9 +25,12 @@ class UserRepository:
         - 동시 로그인 A·B: 둘 다 "다른 세션 폐기"를 할 때 상대의 새 행은 아직 커밋 전이라 안 보인다 → 두 세션 모두 생존.
         - 기기 1 갱신(새 행 INSERT) 중에 다른 곳 로그인·비밀번호 변경·모든 기기 로그아웃: 폐기가 새 행을 못 봐 기기 1이 생존.
         아직 없는 행은 잠글 수 없으니, 그 사용자의 세션을 바꾸는 작업이 모두 같은 사용자 행을 먼저 잠가 한 줄로 세운다.
-        populate_existing: 기다리는 동안 바뀌었을 수 있는 값을 잠근 시점 값으로 다시 읽는다. SQLite는 FOR UPDATE를 무시한다.
+        NO KEY UPDATE도 같은 사용자에 대한 갱신을 직렬화한다. user_id는 바꾸지 않으므로 더 강한 FOR UPDATE는 필요 없다.
+        알림의 user_id 외래 키 검사가 얻는 KEY SHARE를 막지 않아, 입금이 계좌를 잠근 동안 탈퇴가 사용자를 잠그는
+        경로와 데드락을 만들지 않는다.
+        populate_existing: 기다리는 동안 바뀌었을 수 있는 값을 잠근 시점 값으로 다시 읽는다. SQLite는 행 잠금을 무시한다.
         """
-        stmt = select(User).where(User.user_id == user_id).with_for_update().execution_options(populate_existing=True)
+        stmt = select(User).where(User.user_id == user_id).with_for_update(key_share=True).execution_options(populate_existing=True)
         return await db.scalar(stmt)
 
     async def count_login_attempt(

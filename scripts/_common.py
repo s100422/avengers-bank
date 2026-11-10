@@ -107,6 +107,7 @@ def cleanup(login_id: str) -> None:
         f"delete from credit_card_bills where credit_card_id in {credit}",
         f"delete from credit_cards where user_id in {u}",
         f"delete from debit_cards where user_id in {u}",
+        f"delete from account_notifications where user_id in {u}",
         f"delete from checking_account_histories where checking_account_id in (select checking_account_id from checking_accounts where user_id in {u})",
         f"delete from deposit_account_histories where deposit_account_id in (select deposit_account_id from deposit_accounts where user_id in {u})",
         f"delete from savings_account_histories where savings_account_id in (select savings_account_id from savings_accounts where user_id in {u})",

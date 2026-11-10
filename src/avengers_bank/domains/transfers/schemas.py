@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from avengers_bank.domains.accounts.schemas import AccountPassword, Amount
@@ -15,6 +17,7 @@ class TransferCreate(TransferTarget):
     """POST /transfers — 입출금 → 입출금 이체"""
 
     account_password: AccountPassword  # 보내는 입출금 계좌의 비밀번호
+    request_id: UUID | None = None
 
 
 class SavingsPaymentCreate(BaseModel):

@@ -82,7 +82,8 @@
 | ✅ | GET | `/users/me/withdrawal` | 🔒 | 회원 탈퇴 가능 여부·막는 사유 |
 | ✅ | POST | `/users/me/withdrawal` | 🔒 | 회원 탈퇴 (비밀번호 + 휴대폰 인증) |
 | ✅ | GET | `/users/me` | 🔒 | 내 정보 조회 |
-| ✅ | PATCH | `/users/me` | 🔒 | 이름, 닉네임, 전화번호 수정 (번호를 바꿀 때만 휴대폰 인증 증표) |
+| ✅ | PATCH | `/users/me` | 🔒 | 이름, 닉네임 수정 |
+| ✅ | POST | `/users/me/phone-change` | 🔒 | 현재 비밀번호 + 기존·새 번호 인증 후 번호 변경, 전체 세션 폐기 |
 | ✅ | PATCH | `/users/me/password` | 🔒 | 비밀번호 변경 (모든 세션 폐기 후 이 기기에 새 토큰) |
 | ✅ | GET | `/users/me/devices` | 🔒 | 등록된 기기 목록 (이 기기 표시) |
 | ✅ | DELETE | `/users/me/devices/{device_id}` | 🔒 | 기기 등록 해제 (Origin 필수, 세션은 유지) |
@@ -179,7 +180,7 @@
 - 다른 기기의 액세스 토큰도 다음 요청부터 바로 `401`입니다.
 
 `GET /users/me/withdrawal` 🔒 → `200 { "data": { "can_withdraw": false, "blockers": [ { "code": "CHECKING_BALANCE", "message": "잔액이 남은 입출금 계좌가 있습니다: 110-…(12,000원)", "account_type": "checking", "account_id": 3 } ] } }`
-- 탈퇴를 막는 사유: `ACTIVE_DEPOSIT`·`ACTIVE_SAVINGS`(해지하지 않은 예금·적금), `CHECKING_BALANCE`(잔액이 남은 입출금 계좌), `CARD_UNPAID`(신용카드 미결제 `outstanding_amount > 0`). 화면은 이 목록으로 "무엇을 먼저 할지"를 보여 줍니다.
+- 탈퇴를 막는 사유: `ACTIVE_DEPOSIT`·`ACTIVE_SAVINGS`(해지하지 않은 예금·적금), `INTERBANK_PENDING`(처리 중인 타행 이체), `CHECKING_BALANCE`(잔액이 남은 입출금 계좌), `CARD_UNPAID`(신용카드 미결제 `outstanding_amount > 0`). 화면은 이 목록으로 "무엇을 먼저 할지"를 보여 줍니다.
 
 `POST /users/me/withdrawal` 🔒 (C-095)
 ```json
@@ -195,14 +196,16 @@
 
 `PATCH /users/me`: 보낸 필드만 바뀝니다. → `200`, 수정된 내 정보(`GET /users/me`와 같은 모양)
 ```json
-{ "name": "페퍼 포츠", "nick_name": "CEO", "phone": "010-9999-8888" }
+{ "name": "페퍼 포츠", "nick_name": "CEO" }
 ```
 - 입력 규칙은 가입과 같습니다(위 **입력 규칙**).
-- **휴대폰 번호를 바꿀 때만** `phone_verification_token`이 필요합니다: `POST /verification/phone/send-for-me`(purpose `CHANGE_PHONE`, **새 번호**) → `verify`로 받은 증표. 이 사용자가 그 새 번호로 받은 것만 통과하고 1회 사용됩니다. 번호가 바뀌는데 증표가 없으면 `400 PHONE_VERIFICATION_REQUIRED`, 증표가 틀리면 `400 INVALID_VERIFICATION_TOKEN`. 지금과 같은 번호를 보내거나 다른 필드만 바꿀 때는 필요 없습니다.
+- 휴대폰 번호 변경은 아래 전용 API에서 처리합니다. 프로필 PATCH에 `phone`을 보내면 `422`입니다.
+
+`POST /users/me/phone-change` 🔒: 현재 비밀번호와 등록 번호(`CHANGE_PHONE_OLD`)·새 번호(`CHANGE_PHONE_NEW`) 인증 증표가 모두 필요합니다. 성공하면 모든 세션·등록 기기가 해제되고 다시 로그인해야 합니다.
 ```json
-{ "phone": "010-9999-8888", "phone_verification_token": "eyJhbGciOi..." }
+{ "phone": "010-9999-8888", "current_password": "...", "old_phone_verification_token": "...", "new_phone_verification_token": "..." }
 ```
-- `nick_name`에 `null`이나 빈 문자열을 보내면 닉네임을 지웁니다. `name`·`phone`은 `null`로 비울 수 없습니다(`422`).
+- `nick_name`에 `null`이나 빈 문자열을 보내면 닉네임을 지웁니다. `name`은 `null`로 비울 수 없습니다(`422`).
 - **아이디·비밀번호 등 바꿀 수 없는 필드를 보내면 `422`**입니다(조용히 무시하지 않음). 빈 본문 `{}`은 아무것도 바꾸지 않고 `200`입니다.
 
 `PATCH /users/me/password` 🔒
@@ -235,7 +238,7 @@
 | 상태 | 메서드 | 경로 | 인증 | 설명 |
 |---|---|---|---|---|
 | ✅ | POST | `/verification/phone/send` | | 인증번호 발송 (purpose `SIGNUP_PHONE`만) |
-| ✅ | POST | `/verification/phone/send-for-me` | 🔒 | 로그인한 사용자의 인증번호 발송 (`CHANGE_PHONE`, `ACCOUNT_PASSWORD_RESET`, `WITHDRAWAL`) |
+| ✅ | POST | `/verification/phone/send-for-me` | 🔒 | 로그인한 사용자의 인증번호 발송 (`CHANGE_PHONE_OLD/NEW`, `ACCOUNT_PASSWORD_RESET`, `WITHDRAWAL`) |
 | ✅ | POST | `/verification/phone/verify` | | 인증번호 확인 → `verification_token` |
 
 <details>
@@ -250,9 +253,9 @@
 
 `POST /verification/phone/send-for-me` 🔒
 ```json
-{ "purpose": "CHANGE_PHONE", "phone": "010-9999-8888" }
+{ "purpose": "CHANGE_PHONE_NEW", "phone": "010-9999-8888" }
 ```
-- `CHANGE_PHONE`: 바꿀 **새 번호**로 보냅니다. `phone` 필수(없으면 `422`).
+- `CHANGE_PHONE_OLD`: 현재 등록 번호로만 보냅니다. `CHANGE_PHONE_NEW`: 바꿀 새 번호로 보내며 `phone` 필수입니다.
 - `ACCOUNT_PASSWORD_RESET`·`WITHDRAWAL`: **등록된 번호로만** 보냅니다. `phone`은 생략해도 되고, 보내도 무시합니다(훔친 세션으로 남의 번호를 넣어 계좌 비밀번호를 바꾸지 못하게). `{ "purpose": "ACCOUNT_PASSWORD_RESET" }`
 - 응답은 `/send`와 같은 모양.
 
@@ -451,6 +454,16 @@
 - 해지 계좌 거래내역에는 `INTEREST`(+이자), `CLOSE_OUT`(−원금+이자, 잔액 0)가, 입출금 계좌 거래내역에는 `CLOSE_IN`이 남습니다(잔액이 0이면 내역 없이 해지만 됩니다).
 - 해지하면 예금·적금의 `status`가 `CLOSED`, `closed_at`이 채워집니다(`GET /accounts` 목록에도 `status`가 보임, 입출금은 null). 해지한 계좌에는 입금할 수 없습니다(`400 ACCOUNT_CLOSED`). 조회와 거래내역 조회는 계속 됩니다.
 
+## notifications: 입출금 알림 (`domains/notifications`)
+
+입출금 계좌에 거래내역이 커밋되면 같은 트랜잭션에서 사용자 전용 알림 1건을 저장합니다. 실패하거나 롤백된 거래는 알림이 남지 않습니다. 기존 거래내역은 자동으로 알림함에 소급 등록하지 않습니다.
+
+- `GET /notifications?limit=30&offset=0` 🔒 → 최신순 목록. 각 항목에 `notification_id`, `account_id`, `account_num`, `account_nickname`, `type`, `amount`, `balance_after`, `counterpart_account`, `counterpart_name`, `date`, `read_at`이 있습니다. 다른 사용자의 알림은 보이지 않습니다. `limit`은 1~100입니다.
+- `GET /notifications/unread-count` 🔒 → `{ "data": { "unread_count": 2, "latest_notification_id": 15 } }`. 읽지 않은 알림이 없으면 최신 ID는 `null`입니다.
+- `POST /notifications/read-all` 🔒 `{ "through_id": 15 }` → 화면에 표시된 최신 알림 ID까지 읽음 처리하고 남은 개수를 반환합니다. 이와 동시에 도착한 더 새 알림은 읽지 않은 상태로 남습니다.
+
+앱이 열려 있을 때는 새 알림을 주기적으로 확인해 화면 팝업을 표시합니다. 사용자가 브라우저 권한을 허용하면 브라우저 알림도 표시합니다. 앱을 닫아도 알림함 기록은 남지만 브라우저 팝업은 앱에 접속해 있는 동안만 작동합니다.
+
 ## transfers: 돈 이동 (`domains/transfers`)
 
 | 상태 | 메서드 | 경로 | 인증 | 설명 |
@@ -638,6 +651,8 @@ AI·임베딩을 쓰지 않아서 AI 장애 중에도 동작합니다. `{kind}` 
 다른 은행으로 돈을 보내거나 받는 기능입니다. 중계 서버(ClearingHub, 이하 허브)를 거치며, 설정(`HUB_URL`, `HUB_PUBLIC_KEY`, `BANK_CODE`, `BANK_NAME`, `BANK_API_KEY`, `BANK_PRIVATE_KEY`) 중 하나라도 비어 있으면 기능이 꺼져 모든 API가 `503 INTERBANK_DISABLED`를 돌려줍니다. 두 종류의 API가 있습니다.
 
 ### 사용자용 API (로그인한 사용자, 위 **공통 응답 형식**)
+
+송금 재시도(C-112): `POST /transfers`와 `POST /interbank-transfers`는 선택적 UUID `request_id`를 받습니다. 같은 ID·내용이면 기존 거래 결과를 돌려주고, 내용이 달라지면 `409 REQUEST_ID_CONFLICT`입니다. 새 화면은 항상 ID를 보냅니다. `GET /transfers/requests/{request_id}`는 본인 명의 일반 이체 결과를 조회합니다. 타행 상태는 기존 `GET /interbank-transfers/{transfer_id}`에서 조회하며, 클라이언트가 준 ID가 허브 거래 ID가 됩니다.
 
 | 상태 | 메서드 | 경로 | 인증 | 설명 |
 |---|---|---|---|---|

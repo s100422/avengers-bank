@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.timezone import kst_start_utc
 from avengers_bank.domains.accounts.kinds import INTERBANK_OUT, TRANSFER_OUT, AccountKind
-from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
+from avengers_bank.domains.accounts.models import AccountNotification, CheckingAccount, CheckingAccountHistory
 from avengers_bank.domains.accounts.schemas import HistoryFilter
 
 
@@ -62,6 +62,12 @@ class AccountRepository:
     async def save_history(self, db: AsyncSession, history):
         db.add(history)
         await db.flush()
+        if isinstance(history, CheckingAccountHistory):
+            account = await db.get(CheckingAccount, history.checking_account_id)
+            db.add(AccountNotification(
+                user_id=account.user_id,
+                checking_account_history_id=history.checking_account_history_id,
+            ))
         return history
 
     async def lock_checking_accounts(self, db: AsyncSession, ids: list[int]) -> list[CheckingAccount]:

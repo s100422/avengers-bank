@@ -23,6 +23,7 @@ ids: dict[str, int] = {}
 
 
 def reset(bal_a, bal_b, per, daily):
+    execute("delete from account_notifications where checking_account_history_id in (select checking_account_history_id from checking_account_histories where checking_account_id in (:a, :b))", a=ids["A"], b=ids["B"])
     execute("delete from checking_account_histories where checking_account_id in (:a, :b)", a=ids["A"], b=ids["B"])
     for key, balance in (("A", bal_a), ("B", bal_b)):
         execute(

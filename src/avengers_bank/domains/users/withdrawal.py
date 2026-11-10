@@ -31,6 +31,7 @@ from avengers_bank.domains.accounts.kinds import KINDS as ACCOUNT_KINDS
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft
 from avengers_bank.domains.cards.kinds import KINDS as CARD_KINDS
+from avengers_bank.domains.interbank.models import InterbankTransfer
 from avengers_bank.domains.users.models import User
 from avengers_bank.domains.users.repository import user_repository
 from avengers_bank.domains.users.schemas import UserResponse, WithdrawalBlocker
@@ -87,6 +88,14 @@ def _blockers(rows: dict[str, list]) -> list[WithdrawalBlocker]:
         ]
     out += [
         WithdrawalBlocker(
+            code="INTERBANK_PENDING",
+            message=f"처리 중인 타행 이체가 있습니다: {t.amount:,}원",
+            account_type="checking", account_id=t.checking_account_id,
+        )
+        for t in rows.get("interbank_pending", [])
+    ]
+    out += [
+        WithdrawalBlocker(
             code="CHECKING_BALANCE", message=f"잔액이 남은 입출금 계좌가 있습니다: {a.account_num}({a.balance:,}원)",
             account_type="checking", account_id=a.checking_account_id,
         )
@@ -111,7 +120,26 @@ def _blocked(blockers: list[WithdrawalBlocker]) -> BadRequestException:
 async def get_blockers(db: AsyncSession, user: UserResponse) -> list[WithdrawalBlocker]:
     """탈퇴 가능 여부 미리 보기 (잠그지 않는다 — 실제 탈퇴는 잠근 뒤 다시 검사한다)."""
     async with db.begin():
-        return _blockers(await _load(db, user.user_id, lock=False))
+        rows = await _load(db, user.user_id, lock=False)
+        rows["interbank_pending"] = await _pending_interbank(db, rows["checking"])
+        return _blockers(rows)
+
+
+async def _pending_interbank(db: AsyncSession, checking: list) -> list[InterbankTransfer]:
+    """Read pending outgoing transfers only after the caller has locked accounts when applicable.
+
+    This is deliberately a plain MVCC read: interbank completion/refund owns the transfer row
+    lock and account lock in account-then-transfer order, so taking transfer row locks here
+    would add no protection and could reintroduce a lock-order cycle.
+    """
+    ids = [a.checking_account_id for a in checking]
+    if not ids:
+        return []
+    return list(await db.scalars(select(InterbankTransfer).where(
+        InterbankTransfer.checking_account_id.in_(ids),
+        InterbankTransfer.direction == "OUT",
+        InterbankTransfer.status == "PENDING",
+    ).order_by(InterbankTransfer.transfer_id)))
 
 
 async def _erase(db: AsyncSession, user: User, rows: dict[str, list]) -> None:
@@ -157,7 +185,9 @@ async def withdraw(
     uid = current_user.user_id
     # 0) 막는 사유가 있으면 비밀번호를 세기 전에 알린다(잠그지 않은 미리 보기). 잠근 뒤 아래에서 다시 검사한다
     async with db.begin():
-        blockers = _blockers(await _load(db, uid, lock=False))
+        rows = await _load(db, uid, lock=False)
+        rows["interbank_pending"] = await _pending_interbank(db, rows["checking"])
+        blockers = _blockers(rows)
     if blockers:
         raise _blocked(blockers)
     # 1) 비밀번호 틀림은 로그인과 같은 DB 카운터로 센다(users/service.py change_password와 같은 선증가, 먼저 커밋).
@@ -186,6 +216,7 @@ async def withdraw(
         else:
             user.reset_login_failures(device)  # 비밀번호는 맞았다: 아래가 막혀도 이것은 커밋한다
             rows = await _load(db, uid, lock=True)  # 잠근 뒤 검사 (규칙 9)
+            rows["interbank_pending"] = await _pending_interbank(db, rows["checking"])
             if blockers := _blockers(rows):
                 error = _blocked(blockers)  # 미리 보기와 잠금 사이에 입금 등이 끼어들었다
             else:
