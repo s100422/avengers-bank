@@ -8,7 +8,7 @@ import asyncio
 import selectors
 import sys
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
+from sqlalchemy.engine import make_url
 
 from sqlalchemy import create_engine, text
 
@@ -28,7 +28,7 @@ def connect(allowed_host: str | None = None):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")  # sys.exit(메시지)는 표준 오류로 나간다
     url = get_settings().database_url
-    host = urlsplit(url).hostname
+    host = make_url(url).host  # urlsplit은 비밀번호에 /·?·# 가 있으면 사용자 이름을 호스트로 잘못 읽는다
     if not url.startswith("postgresql") or host not in ("127.0.0.1", "localhost", "::1", *(h for h in [allowed_host] if h)):
         sys.exit(f"개발용 PostgreSQL(127.0.0.1)에서만 실행한다. 지금 DATABASE_URL의 호스트: {host}")
     _engine = create_engine(url)

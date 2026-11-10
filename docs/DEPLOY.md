@@ -101,6 +101,29 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm api alem
 
 시연용 새 기기 인증 보완(2026-11-10): 코드 커밋 `5097daa`로 API·웹을 다시 빌드·교체했다. 서버의 `.env.prod`에만 `hubtest02`와 등록 번호, 담당자가 정한 6자리 코드, `2026-11-12T00:00:00+09:00` 만료를 설정했다(코드 원문은 문서·저장소에 기록하지 않음). 두 컨테이너가 healthy이고 공개 `/health`·로그인 화면·CSS 200, 잘못된 새 기기 챌린지 401을 확인했다. 실제 계정 로그인은 수행하지 않았다. 이 설정은 새 기기 인증에만 적용되며 종료 후 서버 환경변수 네 개를 제거한다.
 
+## 2026-11-11 배포 (돈 관리 탭, C-116~C-120)
+
+서버를 `main` `c567979`로 올렸다. 이전 서버는 `2d7e65c`, DB는 `e4f5a6b7c8d9`였다. 미배포였던 C-116(상품 화면)·C-117(찜)도 같이 올라갔다. **이번에는 RDS 스냅샷을 찍지 않았다**(마이그레이션 3개가 모두 표·컬럼 추가뿐이라 진행했다. 다음 배포부터는 다시 찍는다).
+
+1. 서버에서 `git pull origin main` → `build api`, `build web`(둘 다 통과).
+2. `alembic upgrade head`: `f5a6b7c8d9e0`(찜) → `a6b7c8d9e0f1`(돈 관리) → `b7c8d9e0f1a2`(분류 지침 버전).
+3. `up -d api` → healthy 확인 → `up -d web`.
+4. 확인: `/health`·`/login`·`/money` 200, 로그인 없는 `/api/money/summary` 401, `/interbank/inquiry` 서명 붙은 401.
+
+### 운영 시연 계정에 돈 관리 시연 데이터 넣기
+
+시연 계정(`hubtest02`)에 입출금 계좌·신용카드·**체크카드**가 있어야 한다(체크카드는 사용자가 앱에서 발급했다). 도커 이미지에는 `scripts/`가 없어서 볼륨으로 붙인다. 시드 스크립트는 로컬 DB가 아니면 거부하므로, 운영 DB 호스트를 `--target-host`로 정확히 적어야 통과한다(호스트는 컨테이너 안에서 읽는다. 비밀번호가 든 URL을 화면에 찍지 않는다).
+
+```bash
+C="docker compose -f docker-compose.prod.yml --env-file .env.prod"
+H=$($C run --rm -T api python -c "from sqlalchemy.engine import make_url; from avengers_bank.core.config import get_settings; print(make_url(get_settings().database_url).host)" | tail -1)
+$C run --rm -T -v $PWD/scripts:/app/scripts:ro api python scripts/seed_money_demo.py hubtest02 --target-host "$H"
+# 다시 넣을 때: 같은 명령에 --reset (스크립트가 넣은 행만 지우고 다시 넣는다)
+```
+
+- 호스트는 반드시 `make_url`로 읽는다. 운영 DB 비밀번호에 URL 특수문자가 있어서 `urllib.parse.urlsplit`은 사용자 이름(`bankadmin`)을 호스트로 읽는다(C-120에서 발견·수정).
+- 결과(2026-11-11): 2026-08~11의 카드 내역 280행·계좌 내역 131행, 청구서 3개(10월분 1,061,980원 미납, 11월 20일 납부 예정). 입출금 잔액은 바뀌지 않는다. 계좌 상세의 "거래 후 잔액"은 시드 행끼리만 이어지고, 이 계정의 실제 타행 이체 시험 기록과는 이어지지 않는다.
+
 ## 2026-11-09~10 배포 (타행 이체·AI 비서·이체 화면)
 
 두 번째 배포다. 서버는 `main` 브랜치를 받는다(`git pull origin main`). 서버가 오래된 커밋(`49dfefa`)에 머물러 있어서 마이그레이션 10개가 한꺼번에 적용됐고, 모두 표·컬럼을 추가하는 변경이었다. **배포 전에 RDS 스냅샷**을 찍었다(스냅샷 이름은 영문자로 시작하고 영문·숫자·하이픈만 가능: 예 `before-interbank-20261109`).
