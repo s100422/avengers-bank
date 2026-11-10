@@ -19,14 +19,17 @@ from avengers_bank.domains.users.schemas import UserResponse
 _engine = None
 
 
-def connect():
-    """개발용 PostgreSQL에만 연결한다. 시드 상품이 없으면 안내하고 끝낸다."""
+def connect(allowed_host: str | None = None):
+    """개발용 PostgreSQL에만 연결한다. 시드 상품이 없으면 안내하고 끝낸다.
+
+    allowed_host: 운영 시연 계정 시드처럼 로컬이 아닌 DB에 일부러 쓸 때, 실행하는 사람이 DB 호스트를 정확히 적는다.
+    """
     global _engine
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")  # sys.exit(메시지)는 표준 오류로 나간다
     url = get_settings().database_url
     host = urlsplit(url).hostname
-    if not url.startswith("postgresql") or host not in ("127.0.0.1", "localhost", "::1"):
+    if not url.startswith("postgresql") or host not in ("127.0.0.1", "localhost", "::1", *(h for h in [allowed_host] if h)):
         sys.exit(f"개발용 PostgreSQL(127.0.0.1)에서만 실행한다. 지금 DATABASE_URL의 호스트: {host}")
     _engine = create_engine(url)
     for table in ("account_products", "card_products"):

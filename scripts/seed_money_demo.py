@@ -143,7 +143,9 @@ def build_plan(today: date, now: datetime, owner_name: str) -> list[Ev]:
         for month_index, who, day, amount in FRIENDS:
             if month_index == i:
                 events.append(Ev(_at(date(y, m, day), 19, 30), "checking", who, amount, "TRANSFER_OUT", None))
-    return sorted((e for e in events if e.time < now), key=lambda e: e.time)
+    # 오늘 날짜 이체는 넣지 않는다: 1일 이체 한도에 같이 세어져 시연 중 이체 한도가 줄어든다
+    out_today = lambda e: e.type in ("TRANSFER_OUT", "INTERBANK_OUT") and e.time.astimezone(KST).date() == today  # noqa: E731
+    return sorted((e for e in events if e.time < now and not out_today(e)), key=lambda e: e.time)
 
 
 def _seeded_card_rows(rows) -> list:
@@ -377,14 +379,17 @@ def seed(session: Session, login_id: str, reset: bool = False, now: datetime | N
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="돈 관리 탭 시연 데이터 채우기 (로컬 PostgreSQL 전용)")
+    parser = argparse.ArgumentParser(description="돈 관리 탭 시연 데이터 채우기 (기본은 로컬 PostgreSQL 전용)")
     parser.add_argument("login_id")
     parser.add_argument("--reset", action="store_true", help="이 스크립트가 넣은 데이터만 지우고 다시 넣는다")
+    parser.add_argument(
+        "--target-host", help="로컬이 아닌 DB(운영 시연 계정)에 쓸 때만. DATABASE_URL의 호스트를 정확히 적어야 통과한다"
+    )
     args = parser.parse_args()
 
-    import _common  # 로컬 PostgreSQL 확인 (아니면 여기서 끝난다)
+    import _common  # DB 호스트 확인 (아니면 여기서 끝난다)
 
-    _common.connect()
+    _common.connect(allowed_host=args.target_host)
     try:
         with Session(_common._engine) as session, session.begin():
             summary = seed(session, args.login_id, args.reset)
