@@ -51,7 +51,8 @@ INCOME_CHECKING_TYPES = {"TRANSFER_IN", "INTERBANK_IN"}
 
 Source = Literal["credit", "debit", "checking"]
 Direction = Literal["IN", "OUT"]
-CategorySource = Literal["OVERRIDE", "RULE", "CACHE", "LLM", "TYPE", "NONE"]
+# OVERRIDE=거래 한 건 수정, RULE=사용자 규칙, LLM=가맹점 분류(저장된 LLM 결과 포함), TYPE=거래 type(이체), NONE=분류 없음
+CategorySource = Literal["OVERRIDE", "RULE", "LLM", "TYPE", "NONE"]
 
 
 @dataclass

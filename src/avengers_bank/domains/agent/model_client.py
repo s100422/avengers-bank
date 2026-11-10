@@ -77,6 +77,8 @@ class ModelTimeout(ModelError):
 class ModelClient(Protocol):
     async def respond(self, system: str, turns: list[Turn], tools: list[ToolSpec]) -> ModelReply: ...
 
+    async def generate_json(self, system: str, prompt: str, schema: dict) -> Any: ...
+
 
 REFUSAL_TEXT = "죄송하지만 이 요청은 도와드릴 수 없습니다."
 _BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
@@ -156,6 +158,31 @@ class GeminiModelClient:
             for i, p in enumerate(parts) if p.function_call
         ]
         return ModelReply(text=text, tool_calls=calls, raw=candidate.content)
+
+    async def generate_json(self, system: str, prompt: str, schema: dict) -> Any:
+        """도구 없는 한 번의 호출. 응답을 schema(JSON Schema)로 제한하고 파싱한 값을 돌려준다."""
+        config = types.GenerateContentConfig(
+            system_instruction=system, response_mime_type="application/json", response_json_schema=schema
+        )
+        try:
+            async with asyncio.timeout(self.timeout):
+                response = await self.client.aio.models.generate_content(
+                    model=self.model, contents=prompt, config=config
+                )
+        except TimeoutError as e:
+            raise ModelTimeout() from e
+        except (errors.APIError, httpx.HTTPError) as e:
+            logger.warning("Gemini API 오류: %s", type(e).__name__)
+            raise ModelError() from e
+
+        candidate = response.candidates[0] if response.candidates else None
+        if candidate is None or _name(candidate.finish_reason) in _BLOCKED | {"MAX_TOKENS"}:
+            raise ModelError()
+        parts = (candidate.content.parts if candidate.content else None) or []
+        try:
+            return json.loads("".join(p.text for p in parts if p.text and not p.thought))
+        except ValueError as e:
+            raise ModelError() from e
 
 
 @lru_cache

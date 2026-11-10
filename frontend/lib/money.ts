@@ -13,7 +13,7 @@ export const CATEGORY_LABELS: Record<Category, string> = {
 
 export type Source = "credit" | "debit" | "checking";
 export type Direction = "IN" | "OUT";
-export type CategorySource = "OVERRIDE" | "RULE" | "CACHE" | "LLM" | "TYPE" | "NONE";
+export type CategorySource = "OVERRIDE" | "RULE" | "LLM" | "TYPE" | "NONE";
 export type PaceStatus = "HIGHER" | "NORMAL" | "LOWER" | "UNKNOWN";
 
 // months: 0 = 비교 데이터 없음, 1 = "지난달 기준", 2~3 = "최근 N개월 평균"

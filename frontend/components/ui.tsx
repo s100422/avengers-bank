@@ -29,14 +29,14 @@ const TABS = [
     svg: <path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />,
   },
   {
+    href: "/money",
+    label: "돈 관리",
+    svg: <path d="M12 4a8 8 0 1 0 8 8h-8zM15 3.5A8 8 0 0 1 20.5 9H15z" strokeLinejoin="round" />,
+  },
+  {
     href: "/products",
     label: "상품",
     svg: <path d="M4 7h16v12H4zM9 7V5h6v2M4 12h16" strokeLinejoin="round" />,
-  },
-  {
-    href: "/me",
-    label: "내 정보",
-    svg: <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0" strokeLinecap="round" />,
   },
 ];
 
@@ -100,7 +100,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <span className="md:hidden">
               <Brand />
             </span>
-            <div className="flex items-center gap-1"><NotificationBell /><SessionTimer /></div>
+            <div className="flex items-center gap-1"><NotificationBell />
+              <Link href="/me" aria-label="내 정보" className="flex size-11 items-center justify-center rounded-full hover:bg-coral-soft">
+                <svg viewBox="0 0 24 24" aria-hidden className="size-6 fill-none stroke-current stroke-[1.7]">
+                  <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0" strokeLinecap="round" />
+                </svg>
+              </Link>
+              <SessionTimer /></div>
           </header>
           {children}
         </div>
