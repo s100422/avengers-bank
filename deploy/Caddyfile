@@ -2,5 +2,20 @@
 # DOMAIN=localhost 이면 로컬 시험용 인증서를 쓴다.
 {$DOMAIN} {
 	encode gzip
-	reverse_proxy api:8000
+
+	# 허브(ClearingHub)가 부르는 타행 이체 API, 서버 확인, API 문서는 API로 바로 보낸다
+	@api path /interbank/* /health /docs /openapi.json /redoc
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	# 브라우저의 /api/...는 앞의 /api를 떼고 API로 보낸다. 화면과 같은 출처라 갱신 토큰 쿠키가 자사 쿠키가 된다
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	# 그 밖의 주소는 화면(Next.js)
+	handle {
+		reverse_proxy web:3000
+	}
 }

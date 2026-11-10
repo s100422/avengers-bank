@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // 운영 도커 이미지용: 실행에 필요한 파일만 .next/standalone에 모은다 (frontend/Dockerfile)
+  output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
   // 갱신 토큰 쿠키(httpOnly, SameSite=Strict)가 자사 쿠키가 되도록 브라우저는 같은 출처의 /api로만 부르고,
