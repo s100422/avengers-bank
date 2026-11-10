@@ -18,6 +18,7 @@ function Login() {
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const idRef = useRef(0); // 인증번호 발송 id
   const [reason, setReason] = useState<string | null>(null);
   // 새 기기 인증 중이면 서버가 준 챌린지. 상태에만 두고 저장하지 않는다(새로고침하면 처음부터)
@@ -37,6 +38,7 @@ function Login() {
   // 챌린지가 만료·실패했으면 비밀번호 입력부터 다시 한다
   function restart(message: string) {
     setChallenge(null);
+    setDemoMode(false);
     setError(message);
   }
 
@@ -46,6 +48,7 @@ function Login() {
     setBusy(true);
     setError(null);
     setLocked(false);
+    setDemoMode(false);
     try {
       const res = await api<LoginResult>("/users/login", {
         login_id: f.get("login_id"),
@@ -95,12 +98,14 @@ function Login() {
           <p className="text-sm text-slate">처음 사용하는 기기입니다. 등록된 휴대폰 {challenge.phone}(으)로 인증번호를 보내 본인을 확인합니다.</p>
           {/* 가려진 번호(010-****-9999)라 devPhone으로 못 넘긴다. 문자함에서 번호를 직접 입력 */}
           <CodeVerify
+            sentText={demoMode ? "시연 계정입니다. 담당자가 설정한 6자리 시연용 인증번호를 입력해 주세요. 실제 문자는 발송되지 않습니다." : undefined}
             send={async () => {
               try {
-                const r = await api<{ verification_id: number; expires_in: number }>("/users/login/device/send", {
+                const r = await api<{ verification_id: number; expires_in: number; delivery?: "demo" }>("/users/login/device/send", {
                   challenge_token: challenge.token,
                 });
                 idRef.current = r.verification_id;
+                setDemoMode(r.delivery === "demo");
                 return r.expires_in;
               } catch (e) {
                 if (e instanceof ApiError && e.status === 401) restart("인증 시간이 지났습니다. 다시 로그인해 주세요.");

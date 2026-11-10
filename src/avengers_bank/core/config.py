@@ -1,7 +1,9 @@
+import re
+from datetime import datetime
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +28,24 @@ class Settings(BaseSettings):
     # 문자 발송기 (domains/verification/sms.py). 지금은 "dev"(서버 로그 + 메모리 문자함)뿐이다.
     # Literal이라 다른 값이면 서버가 시작되지 않는다: 실제 발송기 없이 운영에 나가 인증번호가 아무에게도 안 가는 일을 막는다
     sms_sender: Literal["dev"] = "dev"
+    # 시연용 새 기기 인증: 정확히 한 계정/등록 번호에만 적용하고 종료 시각 뒤에는 자동으로 꺼진다.
+    # 코드는 서버 환경변수에만 보관하며 API 응답이나 저장소에 넣지 않는다.
+    demo_device_login_id: str | None = None
+    demo_device_phone: str | None = None
+    demo_device_code: SecretStr | None = None
+    demo_device_until: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_demo_device(self):
+        values = (self.demo_device_login_id, self.demo_device_phone, self.demo_device_code, self.demo_device_until)
+        if any(value is not None for value in values):
+            if any(value is None for value in values):
+                raise ValueError("시연용 새 기기 인증 설정은 계정·번호·코드·종료 시각을 모두 지정해야 합니다.")
+            if not re.fullmatch(r"\d{6}", self.demo_device_code.get_secret_value()):
+                raise ValueError("시연용 새 기기 인증 코드는 숫자 6자리여야 합니다.")
+            if self.demo_device_until.tzinfo is None or self.demo_device_until.utcoffset() is None:
+                raise ValueError("시연용 새 기기 인증 종료 시각에는 시간대를 지정해야 합니다.")
+        return self
     # CORS로 허용할 프론트 주소 (쉼표로 구분, C-047)
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
     # AI 금융 비서 (C-070). 키가 없으면 /agent/chat은 503을 돌려준다

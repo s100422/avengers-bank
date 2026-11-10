@@ -227,7 +227,7 @@ class UserService:
 
     async def login_device_send(
         self, db: AsyncSession, challenge_token: str, ip: str | None
-    ) -> int:
+    ) -> tuple[int, bool]:
         """새 기기 인증번호를 *등록된* 번호로 보낸다(요청에 번호를 받지 않는다: 남의 번호로 보내게 할 수 없다).
 
         인증은 challenge_token(비밀번호가 맞았다는 증명)뿐이다. 발송 제한은 start_verification의 번호당·IP당 한도 그대로.
@@ -238,7 +238,19 @@ class UserService:
             if user is None or user.deleted_at is not None:
                 raise UnauthorizedException(message="기기 확인이 만료되었습니다. 다시 로그인해 주세요.", code="INVALID_DEVICE_CHALLENGE")
             phone = user.phone
-        return await start_verification(db, purpose="NEW_DEVICE", phone=phone, user_id=user_id, ip=ip)
+            settings = get_settings()
+            demo = bool(
+                settings.demo_device_code is not None
+                and settings.demo_device_login_id == user.login_id
+                and settings.demo_device_phone == phone
+                and settings.demo_device_until is not None
+                and datetime.now(timezone.utc) < settings.demo_device_until
+            )
+            demo_code = settings.demo_device_code.get_secret_value() if demo else None
+        verification_id = await start_verification(
+            db, purpose="NEW_DEVICE", phone=phone, user_id=user_id, ip=ip, demo_code=demo_code
+        )
+        return verification_id, demo
 
     async def login_device(
         self, db: AsyncSession, challenge_token: str, phone_verification_token: str, user_agent: str | None

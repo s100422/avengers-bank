@@ -104,6 +104,12 @@ class DeviceChallengeSend(BaseModel):
     challenge_token: str = Field(min_length=1, max_length=2048, repr=False)
 
 
+class DeviceCodeSendResponse(BaseModel):
+    verification_id: int
+    expires_in: int
+    delivery: Literal["demo"] | None = None  # 설정된 시연 계정만; 인증번호 자체는 보내지 않는다
+
+
 class DeviceLogin(DeviceChallengeSend):
     # POST /users/login/device/send로 받은 인증번호를 POST /verification/phone/verify로 확인해 받은 증표 (purpose NEW_DEVICE)
     phone_verification_token: str = Field(min_length=1, max_length=2048, repr=False)

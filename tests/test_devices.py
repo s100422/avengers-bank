@@ -11,13 +11,16 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import select, update
 
+from avengers_bank.core.config import get_settings
 from avengers_bank.core.database import SessionLocal
 from avengers_bank.core.security import hash_refresh_token
 from avengers_bank.domains.users.models import RefreshToken, User, UserDevice
 from avengers_bank.domains.users.service import device_label, mask_phone
 from avengers_bank.domains.verification.models import VerificationCode
+from avengers_bank.domains.verification.sms import dev_inbox
 from tests.cookie_helpers import cookie_header, cookie_value, set_cookies
 from tests.test_auth_tokens import LOGIN_ID, NEW_PASSWORD, PASSWORD, bearer, error_of, signup
 from tests.verification_helpers import auto_device_login, exempt_from_send_limits, read_code
@@ -174,6 +177,55 @@ async def test_send_goes_to_registered_phone_and_has_send_for_me_shape(client):
     assert (await client.post("/users/login/device/send", json={"challenge_token": "garbage"})).status_code == 401
     forged = jwt.encode({"typ": "verification", "sub": "1", "exp": datetime.now(timezone.utc) + timedelta(minutes=5)}, "x" * 40, "HS256")
     assert error_of(await client.post("/users/login/device/send", json={"challenge_token": forged})) == (401, "INVALID_DEVICE_CHALLENGE")
+
+
+async def test_demo_device_code_is_bound_to_configured_account_and_existing_verification_flow(client, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "demo_device_login_id", LOGIN_ID)
+    monkeypatch.setattr(settings, "demo_device_phone", PHONE)
+    monkeypatch.setattr(settings, "demo_device_code", SecretStr("483926"))
+    monkeypatch.setattr(settings, "demo_device_until", datetime.now(timezone.utc) + timedelta(hours=1))
+    await signup(client)
+    dev_inbox.clear()
+
+    challenge = (await login_raw(client)).json()["data"]["challenge_token"]
+    response = await client.post("/users/login/device/send", json={"challenge_token": challenge})
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["delivery"] == "demo" and data["expires_in"] == 600
+    assert "483926" not in response.text and response.headers["cache-control"] == "no-store"
+    assert not dev_inbox  # 시연 코드는 문자 로그/문자함에도 남기지 않는다
+    bad = await client.post("/verification/phone/verify", json={"verification_id": data["verification_id"], "code": "000000"})
+    assert error_of(bad) == (400, "INVALID_VERIFICATION_CODE")
+    verified = await client.post("/verification/phone/verify", json={"verification_id": data["verification_id"], "code": "483926"})
+    assert verified.status_code == 200
+    token = verified.json()["data"]["verification_token"]
+    registered = await client.post("/users/login/device", json={"challenge_token": challenge, "phone_verification_token": token})
+    assert registered.status_code == 200 and registered.json()["data"]["status"] == "OK"
+
+    other_phone = "010-9999-0000"
+    assert (await client.post("/users/signup", json={
+        "login_id": "otheruser", "password": PASSWORD, "name": "스티브", "phone": other_phone,
+    })).status_code == 201
+    dev_inbox.clear()
+    other_challenge = (await login_raw(client, login_id="otheruser")).json()["data"]["challenge_token"]
+    other_send = await client.post("/users/login/device/send", json={"challenge_token": other_challenge})
+    assert other_send.status_code == 200 and "delivery" not in other_send.json()["data"]
+    assert len(dev_inbox) == 1 and dev_inbox[0][0] == other_phone
+
+
+async def test_demo_device_code_is_not_used_after_expiry(client, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "demo_device_login_id", LOGIN_ID)
+    monkeypatch.setattr(settings, "demo_device_phone", PHONE)
+    monkeypatch.setattr(settings, "demo_device_code", SecretStr("483926"))
+    monkeypatch.setattr(settings, "demo_device_until", datetime.now(timezone.utc) - timedelta(seconds=1))
+    await signup(client)
+    dev_inbox.clear()
+    challenge = (await login_raw(client)).json()["data"]["challenge_token"]
+    response = await client.post("/users/login/device/send", json={"challenge_token": challenge})
+    assert response.status_code == 200 and "delivery" not in response.json()["data"]
+    assert len(dev_inbox) == 1  # 시연 기간이 끝나면 원래 발송 경로를 쓴다
 
 
 async def test_send_respects_existing_send_limit(client):

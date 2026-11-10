@@ -453,3 +453,7 @@ uv run python scripts/pg_refresh_concurrency.py
 
 - 브라우저(C-096 이후): 로그인한 뒤 개발자 도구 콘솔에서 `document.cookie`를 보면 `refresh_token`이 **보이지 않는다**(`HttpOnly`). Application 탭의 쿠키 목록에는 있다. 새로고침해도 로그인이 유지되면 쿠키로 조용히 갱신된 것이다. `localStorage`에는 `session_expires_at`만 있다. 키 이름은 `avengers_bank_session`.
 - `session_expires_at`을 100초 뒤로 바꾸면 만료 예고 창이 뜬다.
+
+## 2026-11-10 시연용 새 기기 인증
+
+실제 SMS 업체가 아직 연결되지 않은 시연 배포에서만 `DEMO_DEVICE_LOGIN_ID`, `DEMO_DEVICE_PHONE`, `DEMO_DEVICE_CODE`, `DEMO_DEVICE_UNTIL`을 서버 환경변수로 함께 지정할 수 있다. 해당 계정에서 비밀번호 확인을 거친 새 기기 챌린지로 인증번호를 요청하면, 문자 대신 담당자가 사전에 정한 6자리 코드를 입력한다. 코드는 API 응답·개발용 문자함·서버 로그에 출력되지 않는다. 기존 인증번호의 10분 만료, 5회 실패 제한, 사용자·번호·목적 결합과 1회 사용 규칙을 그대로 적용한다. 다른 계정·번호와 만료된 설정은 일반 문자 발송 경로를 따른다. 시연 뒤 서버 환경변수 네 개를 제거한다.

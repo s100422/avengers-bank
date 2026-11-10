@@ -6,6 +6,7 @@
 
 import hashlib
 import hmac
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -54,7 +55,8 @@ async def _serialize_phone(db: AsyncSession, phone: str) -> None:
 
 
 async def start_verification(
-    db: AsyncSession, *, purpose: str, phone: str, user_id: int | None = None, ip: str | None
+    db: AsyncSession, *, purpose: str, phone: str, user_id: int | None = None, ip: str | None,
+    demo_code: str | None = None,
 ) -> int:
     """인증번호를 만들어 문자로 보내고 verification_id를 돌려준다. 트랜잭션을 직접 열므로 트랜잭션 밖에서 부른다.
 
@@ -63,7 +65,9 @@ async def start_verification(
     """
     if ip is not None:
         verification_ip_limiter.acquire(ip)
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    if demo_code is not None and (purpose != "NEW_DEVICE" or not re.fullmatch(r"\d{6}", demo_code)):
+        raise ValueError("시연 코드는 새 기기 인증에만 사용할 수 있습니다.")
+    code = demo_code if demo_code is not None else f"{secrets.randbelow(1_000_000):06d}"
     now = _now()
     async with db.begin():
         await _serialize_phone(db, phone)
@@ -88,7 +92,8 @@ async def start_verification(
         await db.flush()  # 해시에 verification_id가 들어가므로 먼저 id를 받는다
         row.code_hash = _code_hash(row.verification_id, code)
     # 커밋한 뒤 보낸다: 보냈는데 행이 없는(확인할 수 없는) 인증번호가 생기지 않게
-    await send_sms(phone, f"[AvengersBank] 인증번호 {code} (10분 안에 입력). 타인에게 알려 주지 마세요.")
+    if demo_code is None:
+        await send_sms(phone, f"[AvengersBank] 인증번호 {code} (10분 안에 입력). 타인에게 알려 주지 마세요.")
     return row.verification_id
 
 

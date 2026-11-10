@@ -20,6 +20,7 @@ from avengers_bank.core.responses import SuccessResponse, error_responses
 from avengers_bank.domains.users.schemas import (
     DeviceChallenge,
     DeviceChallengeSend,
+    DeviceCodeSendResponse,
     DeviceLogin,
     DeviceResponse,
     LoginOk,
@@ -35,7 +36,6 @@ from avengers_bank.domains.users.schemas import (
 )
 from avengers_bank.domains.users import withdrawal
 from avengers_bank.domains.users.service import Session, user_service
-from avengers_bank.domains.verification.router import SendResponse
 from avengers_bank.domains.verification.service import CODE_TTL
 
 router = APIRouter(prefix="/users", tags=["users"], responses=error_responses(422))
@@ -95,15 +95,22 @@ async def login(
 
 @router.post(
     "/login/device/send",
-    response_model=SuccessResponse[SendResponse],
+    response_model=SuccessResponse[DeviceCodeSendResponse],
+    response_model_exclude_none=True,
     responses=error_responses(401, 429),
 )
-async def login_device_send(data: DeviceChallengeSend, request: Request, db: Annotated[AsyncSession, Depends(get_db)]):
+async def login_device_send(
+    data: DeviceChallengeSend, request: Request, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+):
     # send-for-me와 같은 응답·같은 발송 한도(번호당·IP당). 로그인 전이라 액세스 토큰 대신 challenge_token으로 본인을 확인한다
-    verification_id = await user_service.login_device_send(db, data.challenge_token, _ip(request))
-    return SuccessResponse[SendResponse](
-        data=SendResponse(verification_id=verification_id, expires_in=int(CODE_TTL.total_seconds())),
-        message="인증번호를 보냈습니다.",
+    verification_id, demo = await user_service.login_device_send(db, data.challenge_token, _ip(request))
+    _no_store(response)
+    return SuccessResponse[DeviceCodeSendResponse](
+        data=DeviceCodeSendResponse(
+            verification_id=verification_id, expires_in=int(CODE_TTL.total_seconds()),
+            delivery="demo" if demo else None,
+        ),
+        message="시연용 인증번호를 입력해 주세요." if demo else "인증번호를 보냈습니다.",
     )
 
 
