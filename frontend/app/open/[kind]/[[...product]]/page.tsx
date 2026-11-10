@@ -8,6 +8,7 @@ import { Button, Field, MoneyField, Shell } from "@/components/ui";
 import { AccountSummary, ApiError, TermsSet, api, termsHref, won } from "@/lib/api";
 import { heldSecrets, openDraftKey } from "@/lib/open-draft";
 import { useFreshOnLeave } from "@/lib/fresh";
+import { productDescription, productName } from "@/lib/product-display";
 
 // 상품 가입(계좌 개설·카드 발급) 화면 하나로 다섯 종류를 처리한다. /open/{kind}/{상품 id(선택)}
 const KINDS = {
@@ -254,8 +255,8 @@ function Open() {
                 className="mt-1 accent-coral"
               />
               <span>
-                <span className="block font-medium">{p.name}</span>
-                <span className="block text-sm text-slate">{p.description}</span>
+                <span className="block font-medium">{productName(conf.type, p.name)}</span>
+                <span className="block text-sm text-slate">{productDescription(conf.type, p.description)}</span>
                 {p.interest_rate && <span className="block text-sm font-medium text-coral">연 {Number(p.interest_rate)}%</span>}
                 {kind === "deposit" && p.min_amount != null && (
                   <span className="block text-sm text-slate tabular-nums">최소 가입 {won(p.min_amount)}</span>

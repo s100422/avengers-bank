@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Suspense } from "react";
 import { AssistantGate } from "@/components/assistant/Assistant";
+import "./design/spider/spider-design.css";
 import "./globals.css";
 
 // 국내 금융 앱에서 흔히 쓰는 한글 UI 서체. 가변 폰트 하나로 모든 굵기를 쓴다.
@@ -13,7 +14,7 @@ const pretendard = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "스파이디뱅킹",
+  title: "SpiderBank",
   description: "AvengersBank 데모",
 };
 

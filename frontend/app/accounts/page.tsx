@@ -9,6 +9,7 @@ import { AssetSummaryCard } from "@/components/home/AssetSummaryCard";
 import { Skeleton } from "@/components/home/bits";
 import { useHomeData } from "@/components/home/useHomeData";
 import { ErrorText, Shell } from "@/components/ui";
+import { SpiderMascot } from "@/components/SpiderMascot";
 import { AccountSummary, RecentRecipient, api, won } from "@/lib/api";
 import { accountKey, toggle } from "@/lib/home-prefs";
 import { useFreshOnLeave } from "@/lib/fresh";
@@ -56,6 +57,16 @@ function Home() {
 
   return (
     <div className="space-y-4">
+      <section className="relative isolate flex min-h-32 items-center justify-between overflow-hidden rounded-3xl border border-[#f4d9cd] bg-gradient-to-br from-paper via-paper to-coral-soft/70 px-5 py-4 shadow-[0_14px_36px_rgba(153,61,34,0.06)]">
+        <div className="relative z-10 max-w-[62%]">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-coral">SpiderBank · Home</p>
+          <h2 className="mt-1 text-lg font-bold leading-snug tracking-tight">오늘도 가볍게,<br />금융을 한눈에</h2>
+          <p className="mt-1 text-xs text-slate">필요한 금융을 편하게 확인해봐.</p>
+        </div>
+        <div className="absolute right-4 grid size-24 place-items-center rounded-full bg-coral-soft/60">
+          <SpiderMascot className="size-[4.5rem] text-coral" />
+        </div>
+      </section>
       <h1 className="sr-only">홈</h1>
       <ErrorText message={error} />
 

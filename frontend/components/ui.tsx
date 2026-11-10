@@ -5,12 +5,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { SESSION_KEY, expireSession, expiring, logout, refreshSession, session } from "@/lib/api";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { SpiderMascot } from "@/components/SpiderMascot";
 
 export function Brand() {
   return (
     <Link href="/accounts" className="flex items-center gap-2 text-[17px] font-bold">
-      <span className="seal size-7 text-[11px] tracking-tight">SP</span>
-      스파이디뱅킹
+      <SpiderMascot className="size-8 shrink-0 text-coral" />
+      <span><span className="font-bold">Spider</span><span className="font-normal">Bank</span></span>
     </Link>
   );
 }

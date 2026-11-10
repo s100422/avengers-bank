@@ -69,7 +69,7 @@ function Login() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center px-4">
+    <main className="mx-auto my-5 flex min-h-[34rem] w-full max-w-md flex-col justify-center rounded-[28px] border border-line bg-paper/85 px-6 py-8 shadow-[0_20px_60px_rgba(153,61,34,0.08)] backdrop-blur sm:px-8">
       <Brand />
       <h1 className="mt-8 text-2xl font-semibold">로그인</h1>
       {reason === "expired" && (

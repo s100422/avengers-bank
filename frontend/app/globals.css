@@ -26,7 +26,9 @@
 }
 
 body {
-  background: var(--porcelain);
+  background-color: var(--porcelain);
+  background-image: radial-gradient(ellipse at 86% 2%, color-mix(in srgb, var(--coral) 7%, transparent), transparent 38%);
+  background-attachment: fixed;
   color: var(--ink);
   letter-spacing: -0.01em; /* Pretendard는 살짝 좁혀야 한글이 단단해 보인다 */
 }
