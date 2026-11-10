@@ -1,5 +1,16 @@
 # 설계 변경 기록
 
+## C-118. 돈 관리 탭: 소비 분류·예상 지출·정기 거래 (2026-11-11, 진행 중)
+
+**문제:** 거래내역은 볼 수 있지만 이번 달 얼마나 쓸지, 평소보다 많은지, 어디에 썼는지를 알려주는 화면이 없었다. 설계는 `docs/money_management/화면구성.md`·`상세화면설계.md`.
+
+**0단계(공통 계약):**
+- `domains/money_management/domain.py`: 카테고리 13종 enum(`ETC`=확인했지만 맞는 항목 없음, `UNCLASSIFIED`=근거 부족·확인 필요, `TRANSFER`는 거래 type으로만 정해 LLM 선택지에서 뺌), 분석용 거래 `Txn`, 소비 집계 규칙. 소비는 카드 사용내역(결제한 달)과 본인 이동이 아닌 이체 출금만 센다. 계좌의 `CARD_PAYMENT`(체크카드 내역과 같은 거래)와 `CARD_BILL_PAYMENT`(이미 센 신용카드 구매의 대금)는 소비에서 뺀다.
+- DB 4개 테이블(마이그레이션 `a6b7c8d9e0f1`): `merchant_categories`(가맹점 이름 → 카테고리 캐시, 이름만 보고 정하므로 사용자 공유), `money_category_rules`(사용자 규칙 "이 결제처에 앞으로 적용"), `money_transaction_overrides`(거래 한 건의 분류 수정·일회성 표시, 원본이 세 테이블이라 `(source, source_id)`로 가리킴), `money_recurring_items`(정기 거래 ACTIVE/EXCLUDED/DISMISSED). 원본 거래는 바꾸지 않는다.
+- API 스키마 `schemas.py`와 프론트 타입 `frontend/lib/money.ts`. 라우터 `/money` 등록(엔드포인트는 2단계).
+
+---
+
 ## C-117. 찜한 상품을 서버에 저장하고 홈·AI 비서에서 보기 (2026-11-11, 로컬 적용)
 
 **문제:** 상품 화면(예적금·입출금·카드)의 하트로 찜할 수 있었지만 찜 목록을 모아 보는 곳이 없었다. 찜은 브라우저 `localStorage`(`avengers_bank_fav_products:{user_id}`)에만 있어서 기기 간 공유가 안 되고, 서버에서 도는 AI 비서는 찜한 상품을 알 수 없었다.

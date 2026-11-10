@@ -29,6 +29,7 @@ from avengers_bank.domains.cards.models import (  # noqa: F401
 )
 from avengers_bank.domains.products.models import AccountProduct, CardProduct  # noqa: F401
 import avengers_bank.domains.interbank.models  # noqa: F401
+import avengers_bank.domains.money_management.models  # noqa: F401
 import avengers_bank.domains.transfers.models  # noqa: F401
 import avengers_bank.domains.terms.models  # noqa: F401,E402
 from avengers_bank.domains.users.models import User  # noqa: F401

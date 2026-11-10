@@ -19,6 +19,7 @@ from avengers_bank.domains.interbank.receiver import HubRequestError, SignRespon
 from avengers_bank.domains.interbank.receiver import router as interbank_receiver_router
 from avengers_bank.domains.interbank.router import router as interbank_router
 from avengers_bank.domains.interbank.worker import run_forever as interbank_worker
+from avengers_bank.domains.money_management.router import router as money_router
 from avengers_bank.domains.notifications.router import router as notification_router
 from avengers_bank.domains.products.router import router as product_router
 from avengers_bank.domains.recovery.router import router as recovery_router
@@ -68,6 +69,7 @@ app.include_router(agent_router)
 app.include_router(terms_router)
 app.include_router(verification_router)
 app.include_router(recovery_router)
+app.include_router(money_router)
 if get_settings().enable_dev_endpoints:
     app.include_router(dev_router)
     app.include_router(verification_dev_router)  # 문자함 읽기, 로그인 잠금 해제

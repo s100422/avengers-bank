@@ -22,6 +22,7 @@ import avengers_bank.domains.agent.models  # noqa: F401
 import avengers_bank.domains.cards.models  # noqa: F401
 import avengers_bank.domains.products.models  # noqa: F401
 import avengers_bank.domains.interbank.models  # noqa: F401
+import avengers_bank.domains.money_management.models  # noqa: F401
 import avengers_bank.domains.transfers.models  # noqa: F401
 import avengers_bank.domains.terms.models  # noqa: F401
 from avengers_bank.core.database import Base, engine
