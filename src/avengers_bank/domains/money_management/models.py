@@ -20,6 +20,8 @@ class MerchantCategory(Base):
     merchant_key: Mapped[str] = mapped_column(String(100), primary_key=True)
     category: Mapped[str] = mapped_column(String(20), nullable=False)
     reason: Mapped[str | None] = mapped_column(String(200))
+    # 분류할 때 쓴 지침 버전(classification.PROMPT_VERSION). 지금 버전과 다르면 다시 분류한다 (C-119)
+    prompt_version: Mapped[int] = mapped_column(SmallInteger, server_default="1", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

@@ -20,6 +20,9 @@ from avengers_bank.domains.money_management.domain import (
 
 logger = logging.getLogger(__name__)
 
+# 분류 지침(SYSTEM_PROMPT·FEW_SHOT·카테고리) 버전. 지침을 바꾸면 올린다: 저장된 분류 중 옛 버전은 다시 분류된다.
+# 1: 첫 지침, 2: 배달 앱 → 외식, 잡화점 → 뷰티·생활 (C-118)
+PROMPT_VERSION = 2
 BATCH_SIZE = 50
 REASON_MAX = 60
 KEY_MAX = 100

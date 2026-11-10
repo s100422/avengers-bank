@@ -81,6 +81,58 @@ async def test_spending_counts_each_purchase_once(client, world, monkeypatch):
     assert len(calls) == 1  # 한 번 분류한 가맹점은 저장된 값을 쓴다
 
 
+async def test_prompt_version_change_reclassifies_stored_merchants(client, world, monkeypatch):
+    """지침 버전이 바뀌면 저장된 분류를 다시 하고, 같은 버전이면 다시 묻지 않는다 (C-119)."""
+    from sqlalchemy import select
+
+    from avengers_bank.domains.money_management.classification import PROMPT_VERSION
+    from avengers_bank.domains.money_management.models import MerchantCategory
+
+    tony = world["tony"]
+    await pay(client, tony, "credit", 20_000, "배달의민족")
+    await pay(client, tony, "credit", 5_000, "스타벅스 강남역점")
+    async with SessionLocal() as db, db.begin():  # 옛 지침이 남긴 틀린 분류, 지금 지침이 남긴 분류
+        db.add_all([
+            MerchantCategory(merchant_key="배달의민족", category="ONLINE", reason="옛 지침", prompt_version=PROMPT_VERSION - 1),
+            MerchantCategory(merchant_key="스타벅스", category="CAFE", reason="지금 지침", prompt_version=PROMPT_VERSION),
+        ])
+
+    asked = []
+
+    async def fake_classify(names, client_):
+        asked.append(sorted(names))
+        return {"배달의민족": (Category.DINING, "음식 배달 앱")}
+
+    monkeypatch.setattr(money_service_module, "classify_merchants", fake_classify)
+    app.dependency_overrides[optional_model_client] = lambda: object()
+    cats = {c["category"]: c["actual"] for c in (await summary(client, tony))["categories"]}
+    assert cats == {"DINING": 20_000, "CAFE": 5_000}
+    assert asked == [["배달의민족"]]  # 지금 버전으로 저장된 스타벅스는 다시 묻지 않는다
+
+    async with SessionLocal() as db:
+        row = await db.scalar(select(MerchantCategory).where(MerchantCategory.merchant_key == "배달의민족"))
+        assert (row.category, row.prompt_version) == ("DINING", PROMPT_VERSION)
+
+    await summary(client, tony)
+    assert len(asked) == 1  # 새 버전으로 덮은 뒤에는 다시 묻지 않는다
+
+
+async def test_older_server_does_not_overwrite_newer_classification(client, world):
+    """배포 중 옛 지침 서버가 같은 가맹점을 저장해도 새 버전 분류를 덮지 않는다."""
+    from sqlalchemy import select
+
+    from avengers_bank.domains.money_management import repository
+    from avengers_bank.domains.money_management.models import MerchantCategory
+
+    async with SessionLocal() as db, db.begin():
+        db.add(MerchantCategory(merchant_key="요기요", category="DINING", reason="새 지침", prompt_version=99))
+    async with SessionLocal() as db, db.begin():
+        await repository.money_repository.save_categories(db, {"요기요": (Category.ONLINE, "옛 지침")})
+    async with SessionLocal() as db:
+        row = await db.scalar(select(MerchantCategory).where(MerchantCategory.merchant_key == "요기요"))
+        assert (row.category, row.prompt_version) == ("DINING", 99)
+
+
 async def test_without_ai_key_merchants_stay_unclassified(client, world):
     await pay(client, world["tony"], "credit", 5_000, "어딘가 상점")
     data = await summary(client, world["tony"])

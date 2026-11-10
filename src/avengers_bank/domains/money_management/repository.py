@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from avengers_bank.domains.accounts.kinds import INTERBANK_IN, INTERBANK_OUT, KI
 from avengers_bank.domains.accounts.models import CheckingAccount, CheckingAccountHistory
 from avengers_bank.domains.agent.tools.common import to_kst
 from avengers_bank.domains.cards.models import CreditCard, CreditCardBill, CreditCardHistory, DebitCard, DebitCardHistory
-from avengers_bank.domains.money_management.classification import merchant_key
+from avengers_bank.domains.money_management.classification import PROMPT_VERSION, merchant_key
 from avengers_bank.domains.money_management.domain import (
     INCOME_CHECKING_TYPES,
     SPENDING_CHECKING_TYPES,
@@ -119,19 +119,29 @@ class MoneyRepository:
         return await db.scalar(select(CategoryRule).where(CategoryRule.user_id == user_id, CategoryRule.merchant_key == key))
 
     async def cached_categories(self, db: AsyncSession, keys: set[str]) -> dict[str, Category]:
+        """지금 지침 버전으로 분류한 것만. 옛 버전은 없는 것으로 보고 다시 분류한다."""
         if not keys:
             return {}
-        rows = await db.scalars(select(MerchantCategory).where(MerchantCategory.merchant_key.in_(keys)))
+        rows = await db.scalars(select(MerchantCategory).where(
+            MerchantCategory.merchant_key.in_(keys), MerchantCategory.prompt_version == PROMPT_VERSION,
+        ))
         return {r.merchant_key: Category(r.category) for r in rows}
 
     async def save_categories(self, db: AsyncSession, found: dict[str, tuple[Category, str]]) -> None:
-        """동시에 같은 가맹점을 분류해도 먼저 저장된 값을 둔다 (이름만 보고 정한 값이라 어느 쪽이든 같다)."""
+        """옛 버전 행은 새 분류로 덮는다. 같거나 새 버전 행은 두어서, 배포 중 옛 서버가 새 분류를 덮지 못하게 한다."""
         if not found:
             return
         insert = pg_insert if db.bind.dialect.name == "postgresql" else sqlite_insert
-        await db.execute(insert(MerchantCategory).values([
-            {"merchant_key": k, "category": c.value, "reason": r[:200]} for k, (c, r) in found.items()
-        ]).on_conflict_do_nothing(index_elements=["merchant_key"]))
+        stmt = insert(MerchantCategory).values([
+            {"merchant_key": k, "category": c.value, "reason": r[:200], "prompt_version": PROMPT_VERSION}
+            for k, (c, r) in found.items()
+        ])
+        await db.execute(stmt.on_conflict_do_update(
+            index_elements=["merchant_key"],
+            set_={"category": stmt.excluded.category, "reason": stmt.excluded.reason,
+                  "prompt_version": stmt.excluded.prompt_version, "created_at": func.now()},
+            where=MerchantCategory.prompt_version < stmt.excluded.prompt_version,
+        ))
 
     async def recurring_items(self, db: AsyncSession, user_id: int) -> list[RecurringItem]:
         return list(await db.scalars(
