@@ -15,7 +15,7 @@
 
 ### 토큰 쿠키 전환 + 기기 등록 (C-096)
 - 갱신 토큰은 `httpOnly; Secure; SameSite=Strict; Path=/api/users` 쿠키(`refresh_token`), JSON 본문에 없음. `refresh`·`logout`은 본문 없이 쿠키만 읽고 **`Origin` 필수**(없거나 목록 밖이면 403 `CSRF_ORIGIN`). 액세스 토큰은 프론트 **메모리**에만, `localStorage`(`avengers_bank_session`)에는 `session_expires_at`만. 새로고침하면 쿠키로 조용히 갱신.
-- 프론트는 Next.js `rewrites`로 `/api/*`를 FastAPI에 프록시한다(`next.config.ts`, 서버 환경변수 `API_ORIGIN`, 기본 `http://127.0.0.1:8000`). **프론트와 API를 같이 띄워야 하고, 프론트 환경변수 `NEXT_PUBLIC_API_BASE_URL`은 없어졌다.**
+- 프론트는 Next.js `rewrites`로 `/api/*`를 FastAPI에 프록시한다(`next.config.ts`, 서버 환경변수 `API_ORIGIN`, 기본 `http://127.0.0.1:8000`). **프론트와 API를 같이 띄워야 하고, 프론트 환경변수 `NEXT_PUBLIC_API_BASE_URL`은 없어졌다.** 운영 서버에서는 Caddy가 `/api/*`를 API로 직접 보내고 화면은 `web` 컨테이너(C-110, [DEPLOY.md](DEPLOY.md))가 낸다. 로컬에서 서버 API를 쓰려면 `API_ORIGIN=https://<DOMAIN>/api`.
 - 기기 등록(B1): 새 기기 로그인 = 비밀번호 → `DEVICE_VERIFICATION_REQUIRED` 챌린지 → `POST /users/login/device/send` → 문자 인증(`/verification/phone/verify`) → `POST /users/login/device`. 통과하면 1년짜리 `device_token` 쿠키(서버엔 SHA-256)가 생긴다. 실패 카운터는 **등록 기기 / 새 기기 채널을 따로** 센다(각 5회 연속 오류 → 잠금). 내 정보에 기기 목록·해제. 비밀번호 재설정(복구)·탈퇴는 기기 전부 해제, 비밀번호 변경은 유지. 최종 API 계약은 DESIGN_CHANGES C-096 "구현에서 정해진 세부".
 - 설정(`core/config.py`): `cookie_secure`(기본 True), `refresh_cookie_path`(`/api/users`), `device_cookie_days`(365). 테스트는 `conftest.py`에서 `COOKIE_SECURE=false`, `REFRESH_COOKIE_PATH=/users`.
 - 브라우저로 확인한 것: 새 기기 인증 로그인, `document.cookie` 비어 있음, 새로고침 뒤 자동 갱신, 로그아웃 뒤 갱신 401, 같은 브라우저 재로그인은 인증번호 없이 통과, 기기 목록 표시.

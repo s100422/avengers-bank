@@ -8,7 +8,7 @@
 | 초기 설계에서 무엇이 달라졌나 | **1부** |
 | 지금 어디까지 구현됐고 어떻게 확인했나 | **2부** |
 | 앞으로 무엇을 만들고 무엇을 정해야 하나 | **3부**(요약)와 [NEXT_STEPS.md](NEXT_STEPS.md)(현재 목록) |
-| 하나하나의 이유·변경 전후·검증 | **4부** (C-001 ~ C-109) |
+| 하나하나의 이유·변경 전후·검증 | **4부** (C-001 ~ C-110) |
 | 처음 코드 리뷰 9개 항목은 어떻게 됐나 | 부록 A |
 | 시간순 전체 목록, 작성 규칙, 템플릿 | 부록 B, 작성 규칙 |
 
@@ -4941,6 +4941,7 @@ START → call_model ─┬─ 도구 호출 없음 ─────────�
 | C-107 | 2026-11-09 | 화면 / API / DB 스키마 | 이체 화면을 4단계(받는 사람 선택 → 직접 입력 → 금액 → 확인·비밀번호·완료)로 재구성, 최근·자주 쓰는·내 계좌 목록과 별표(자주 쓰는 계좌 저장), 우리 은행 수취 조회 | 적용 (로컬 브라우저로 전 과정 확인) |
 | C-108 | 2026-11-09 | 화면 / DB 데이터 | 거래내역의 상대 이름을 사람 이름(실명)·가맹점만 쓰고 은행 이름은 뺀다, 이체 화면이 다른 화면에서 돌아올 때 지난 이체의 완료 화면이 남던 버그 수정 | 적용 (2026-11-10 운영 서버 배포 완료) |
 | C-109 | 2026-11-09 | 화면 / 보안 | 화면을 떠났다 돌아오면 이전 상태(완료 화면·열린 확인 창·입력한 비밀번호·인증 증표)가 남던 문제를 모든 화면에서 조사해 고침, 로그아웃 때 가입 임시 입력 지우기 | 적용 |
+| C-110 | 2026-11-10 | 배포 / 화면 | 프론트(Next.js)를 같은 서버에 배포: web 컨테이너, Caddy 주소 나누기(`/api`·`/interbank`는 API, 나머지는 화면), 운영 빌드가 실패하던 문제를 앱 전체 Suspense로 해결 | 적용 |
 
 분류: `문서` · `DB 스키마` · `API` · `보안` · `동시성` · `구조` · `테스트`
 상태: `적용` · `되돌림` · `보류`
@@ -5181,4 +5182,47 @@ START → call_model ─┬─ 도구 호출 없음 ─────────�
 - 거래내역 필터를 유지하고 싶으면 필터 상태만 따로 분리해야 한다.
 - 약관 전문 화면은 한 번 불러온 약관을 다시 보일 때 새로고침하지 않는다(약관이 바뀌는 일이 드물어 그대로 둠).
 - `useParams` Suspense 경고는 별도로 정리하면 좋다.
+
+### C-110. 프론트를 서버에 배포 (web 컨테이너 + Caddy 주소 나누기)
+
+- **날짜:** 2026-11-10
+- **분류:** 배포 / 화면
+- **상태:** 적용 (서버에서 화면·`/api`·허브 경로 응답 확인)
+- **바뀐 파일:**
+  - `frontend/Dockerfile`, `frontend/.dockerignore` (새 파일), `frontend/next.config.ts` (`output: "standalone"`), `frontend/app/layout.tsx`
+  - `docker-compose.prod.yml` (`web` 서비스), `deploy/Caddyfile`
+  - 서버 `.env.prod`: `CORS_ORIGINS`
+  - `docs/DEPLOY.md` 등 문서
+
+#### 변경 전
+- 서버에는 API(`api`)와 Caddy만 있었고 화면은 내 PC의 `npm run dev`로만 떴다. Caddy는 모든 요청을 `api:8000`으로 보냈다. `.env.prod`의 `CORS_ORIGIN`은 오타라 무시되고 있었다.
+- `next build`(운영 빌드)를 한 번도 해 본 적이 없었고, 해 보니 실패했다: 개발 서버가 잡지 못한 프리렌더 검사 오류(`Date.now()`를 렌더링 중 쓰는 `components/verify.tsx`, `components/ui.tsx`, `assistant/TransferCard.tsx`, `new Date()`를 렌더링 중 쓰는 가입 화면, `useParams`를 Suspense 밖에서 쓰는 동적 화면들).
+
+#### 변경 후
+- `web` 컨테이너(Next.js standalone, 이미지 313MB, 실행 메모리 약 50MB)를 추가했고, Caddy가 주소로 나눈다:
+  - `/interbank/*`, `/health`, `/docs`, `/openapi.json`, `/redoc` → `api:8000` (허브가 부르는 타행 이체 API가 화면으로 새지 않게 맨 앞)
+  - `/api/*` → 앞의 `/api`를 떼고 `api:8000` (화면과 같은 출처라 쿠키가 자사 쿠키)
+  - 나머지 → `web:3000`
+- 운영 빌드 오류는 `app/layout.tsx`에서 `{children}` 전체를 `<Suspense fallback={null}>`로 감싸 해결했다(로그인한 사용자만 쓰는 화면이라 미리 그려 둘 내용이 없고, 프로젝트가 이미 `usePathname`·`useParams`에 쓰던 방식이다).
+- `.env.prod`에 `CORS_ORIGINS=https://<DOMAIN>,http://localhost:5173`을 넣고 오타 항목은 지웠다.
+
+#### 이유
+- 서버 주소 하나로 화면과 API를 모두 쓸 수 있게 하려는 것(시연·공유).
+- 재현(주소 나누기): 모든 요청을 화면으로 보내면 허브가 부르는 `/interbank/*`가 화면의 404로 가서 타행 이체 받기가 멈춘다. 그래서 허브 경로를 맨 앞에서 API로 보낸다.
+- 재현(CORS): 로그인 갱신·로그아웃은 요청의 `Origin`이 `CORS_ORIGINS`에 있어야 통과한다. 서버 주소가 없으면 새 화면에서 로그인 유지가 안 된다.
+
+#### 영향 범위
+- **옛 직접 API 주소가 닫혔다**: `https://<DOMAIN>/transfers/recent` 같은 경로는 이제 화면이 받아 404다. API는 `https://<DOMAIN>/api/...`. 로컬 개발 프론트가 서버 API를 쓸 때의 `API_ORIGIN`에 `/api`를 붙여야 한다.
+- 허브 등록 정보(`base_url=https://<DOMAIN>/interbank`)는 그대로고, 배포 후 `/interbank/inquiry`가 서명된 401을 주는 것으로 확인했다.
+- 앱 전체가 Suspense 안에서 그려져 첫 화면이 아주 짧게 비어 보일 수 있다(서버가 미리 만들어 둔 화면 틀이 없다).
+- 서버 메모리(1GB)에서 `web` 빌드가 통과했고(스왑 사용), 실행 메모리는 `api`·`web`·Caddy 합쳐 여유가 있다.
+
+#### 검증
+- 로컬: `npm run build` 통과, 이미지를 직접 띄워 `/login`·`/accounts`·`/transfer` 200.
+- 서버: `/login`·`/accounts`·`/transfer`·`/me` 200(제목 `스파이디뱅킹`), `/api/health`·`/health`·`/docs` 정상, `/api/transfers/recent` 로그인 없이 401, `/api/users/login`이 API까지 가서 `INVALID_CREDENTIALS`, `/interbank/inquiry` 서명된 401, 브라우저로 HTTPS 로그인 화면 렌더링 확인.
+- 서버 주소에서 시험 계정으로 로그인해 이체까지 해 보는 확인은 하지 않았다.
+
+#### 팀 논의 포인트
+- 새 기기 로그인·가입 인증번호가 운영에서는 문자로 가지 않고 서버 로그에만 남는다(`SMS_SENDER=dev`). 서버 주소로 직접 접속한 사용자는 이 인증을 통과할 수 없다.
+- 서버 주소(`sslip.io`)가 EC2 IP에 묶여 있어 IP가 바뀌면 주소·허브 `base_url`·`CORS_ORIGINS`를 모두 바꿔야 한다. 도메인을 사면 한 번에 해결된다.
 

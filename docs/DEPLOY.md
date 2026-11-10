@@ -11,7 +11,8 @@
 flowchart LR
     U[브라우저] -- "HTTPS 443" --> C
     subgraph EC2 ["EC2 (Ubuntu, Docker Compose)"]
-        C[Caddy<br/>인증서 자동 발급] -- "8000 (내부망)" --> A[API 컨테이너<br/>FastAPI]
+        C[Caddy<br/>인증서 자동 발급] -- "/api/*, /interbank/*, /health, /docs<br/>8000 (내부망)" --> A[API 컨테이너<br/>FastAPI]
+        C -- "그 밖의 주소<br/>3000 (내부망)" --> W[web 컨테이너<br/>Next.js]
     end
     A -- "5432 (EC2에서만)" --> R[(RDS<br/>PostgreSQL 17)]
     G[GitHub 저장소] -. "git clone / pull" .-> EC2
@@ -54,7 +55,7 @@ DOMAIN=<IP의 점을 하이픈으로>.sslip.io
 DATABASE_URL=postgresql+psycopg://<마스터 사용자>:<비밀번호>@<RDS 엔드포인트>:5432/avengers_bank
 JWT_SECRET_KEY=<python3 -c "import secrets; print(secrets.token_urlsafe(48))" 결과>
 ENABLE_DEV_ENDPOINTS=false
-# CORS_ORIGINS는 프론트를 배포하면 그 주소를 넣는다
+# CORS_ORIGINS는 프론트 주소(https://<DOMAIN>)를 넣는다. 프론트를 배포한 뒤의 값은 아래 "프론트 배포" 절
 ```
 
 ## 다시 접속할 때
@@ -127,9 +128,32 @@ $D -v $PWD/docs:/app/docs:ro api python -m avengers_bank.domains.terms.indexing 
 
 ### 현재 주소와 등록 정보
 
-- API: `https://<탄력적 IP의 점을 하이픈으로>.sslip.io` (프론트는 서버에 배포하지 않았다. 로컬 프론트를 `API_ORIGIN=<위 주소> npm run dev -- -p 5173`로 붙여 쓴다. CORS 기본 허용이 `localhost:5173`이라 포트를 맞춘다)
+- 화면과 API 모두 `https://<탄력적 IP의 점을 하이픈으로>.sslip.io` 한 주소다(화면은 서버에 배포했다, 아래 "프론트 배포"). 로컬 프론트로 서버 API를 쓰려면 `API_ORIGIN=<위 주소>/api npm run dev -- -p 5173`(끝에 `/api`)로 붙이고 포트를 5173에 맞춘다.
 - 허브에는 은행 코드 `903`(SpiderBank)으로 등록돼 있고 `base_url`은 위 주소 뒤에 `/interbank`다.
-- `.env.prod`의 `CORS_ORIGIN`은 코드가 읽는 이름(`CORS_ORIGINS`)과 달라 지금은 무시된다. 프론트를 배포할 때 바로잡는다.
+- `.env.prod`의 `CORS_ORIGIN`은 코드가 읽는 이름(`CORS_ORIGINS`)과 달라 무시되고 있었다. 프론트 배포 때 지우고 `CORS_ORIGINS=https://<DOMAIN>,http://localhost:5173`으로 바로잡았다.
+
+## 프론트 배포 (2026-11-10, C-110)
+
+화면(Next.js)도 같은 서버에 올렸다. 컨테이너가 하나 늘어(`web`) Caddy 뒤에 `api`, `web` 둘이 있다.
+
+- **이미지**: `frontend/Dockerfile`(실행에 필요한 파일만 담는 `output: "standalone"`). 이미지 313MB, 실행 메모리 약 50MB. 메모리 1GB 서버에서도 빌드가 됐다(스왑 사용).
+- **주소 나누기**(`deploy/Caddyfile`): `/interbank/*`(허브가 부르는 타행 이체), `/health`, `/docs`, `/openapi.json`, `/redoc`은 API로 바로 간다. `/api/*`는 앞의 `/api`를 떼고 API로 간다(화면과 같은 출처라 갱신 토큰 쿠키가 자사 쿠키가 된다). 나머지는 모두 화면.
+- **옛 직접 API 주소는 닫혔다**: 예전에는 `https://<DOMAIN>/transfers/recent`처럼 API를 바로 불렀지만 이제 `https://<DOMAIN>/api/transfers/recent`다(앞 경로는 화면이 받아 404). 로컬 개발용 `API_ORIGIN`도 끝에 `/api`를 붙인다.
+- **로그인 쿠키**: 브라우저 경로가 `/api/users`로 같고 HTTPS라 `Secure` 쿠키가 동작한다. 갱신·로그아웃의 출처 검사가 `CORS_ORIGINS`에 서버 주소가 있어야 통과하므로 `.env.prod`에 `https://<DOMAIN>`을 넣었다.
+- **운영 빌드 조건**: `next build`는 개발 서버보다 엄격해서(캐시 컴포넌트의 프리렌더 검사) 렌더링 중 `Date.now()`·`useParams`를 쓰는 화면이 있으면 실패한다. 그래서 `app/layout.tsx`에서 화면 전체를 `Suspense`로 감쌌다. 새 화면을 만들 때 로컬에서 `npm run build`로 먼저 확인한다.
+
+올리는 명령(전체 배포와 같고 `web`이 추가됐다):
+
+```bash
+cd ~/avengers-bank && git pull origin main
+C="docker compose -f docker-compose.prod.yml --env-file .env.prod"
+$C build            # api와 web. 서버 메모리가 모자라면 web만 따로: $C build web
+$C run --rm api alembic upgrade head
+$C up -d
+$C restart caddy    # Caddyfile을 바꿨을 때(파일을 붙여 쓰는 방식이라 자동 반영되지 않는다)
+```
+
+바꾼 뒤에는 **허브 경로가 API에 닿는지** 먼저 본다: `curl -i -X POST https://<DOMAIN>/interbank/inquiry -d '{}'`가 `401 SIGNATURE_INVALID`와 `X-Response-Signature` 헤더를 주면 정상(이 경로가 화면으로 새면 타행 이체 받기가 멈춘다).
 
 ## 겪은 문제
 
