@@ -76,7 +76,7 @@ uv run python -m avengers_bank.domains.terms.indexing
 | 청크 | `## [id]` 조항 단위. 긴 조항만 문단 경계로 나눔(표·목록 항목은 자르지 않음), 앞에 "문서 제목 > 조항 제목" | 실제 문서는 조항이 최대 약 250자라 거의 조항 1개 = 청크 1개 |
 | 검색 범위 | 서버가 정한 버전 집합(현재 적용 집합 또는 가입 당시 동의 기록)만 | 상품·버전 필터를 먼저 적용 |
 | 순위 | pgvector `<=>` 코사인(정확 검색) + 0.15 × 한국어 글자 bigram 겹침(조항 ID·제목 일치는 1) | 문서가 작아 근사 인덱스 없이 정확 검색 |
-| 근거 기준 | 벡터 유사도 ≥ `TERMS_MIN_SCORE`(0.6) | `docs/TERMS_EVAL.md`의 임계값 스윕. 점수는 정답 확률이 아니다 |
+| 근거 기준 | 벡터 유사도 ≥ `TERMS_MIN_SCORE`(0.6) | `scripts/eval_terms.py`의 임계값 스윕. 점수는 정답 확률이 아니다 |
 
 `gemini-embedding-2`도 시험했다(검색 품질 같음). 다만 0.6에서 근거 없는 질문을 거르지 못해서(0.65 필요) 001을 유지했다.
 
@@ -89,11 +89,11 @@ uv run python -m avengers_bank.domains.terms.indexing
 ## 평가
 
 ```bash
-uv run python scripts/eval_terms.py --out docs/TERMS_EVAL.md
+uv run python scripts/eval_terms.py --out <보고서 파일>.md
 ```
 
 - `docs/terms/evaluation.json`(27문항)을 **초안 문서 그대로** DB 없이 평가한다. `--fake`는 API 없이 파이프라인만 확인한다(의미 검색이 아니라 점수는 의미 없음).
-- 2026-11-07 실제 실행(gemini-embedding-001·768, top_k 3, 임계값 0.6): hit@1 23/24, hit@3 24/24, 다른 상품·버전 섞임 0, 근거 부족 1/1 구분, 답할 수 있는 질문을 잘못 거절 0, 27/27. 자세한 표는 `docs/TERMS_EVAL.md`.
+- 2026-11-07 실제 실행(gemini-embedding-001·768, top_k 3, 임계값 0.6): hit@1 23/24, hit@3 24/24, 다른 상품·버전 섞임 0, 근거 부족 1/1 구분, 답할 수 있는 질문을 잘못 거절 0, 27/27. 자세한 표는 평가 스크립트를 다시 돌려 보고서로 만든다(DESIGN_CHANGES C-075에도 요약이 있다).
 - 이 평가는 **검색**만 잰다. 모델 답변 품질은 아래 수동 확인뿐이다.
 
 ## API

@@ -13,13 +13,11 @@
 | [docs/DEPLOY.md](docs/DEPLOY.md) | AWS 배포 흐름(EC2 + RDS + Caddy), 다시 접속·코드 업데이트 방법, 겪은 문제 |
 | [docs/INTERBANK.md](docs/INTERBANK.md) | ClearingHub 연동 가이드: 타행 이체 보내기·받기, 환경변수, 허브 등록, 확인 작업 |
 | [docs/AGENT.md](docs/AGENT.md) | AI 금융 비서: 실행 방법, 환경변수, Tool 목록, 이체 확인 흐름, 보안 |
-| [docs/ACCOUNT_RECOVERY_RESEARCH.md](docs/ACCOUNT_RECOVERY_RESEARCH.md) | 계정 복구 조사: 국내 은행·규정·NIST·OWASP |
 | [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) | 회고록(작성 중): 기술 선택과 이유(예: nginx 대신 Caddy), 배운 점 |
 | [docs/인수인계.md](docs/인수인계.md) | 프로젝트를 이어받거나 리뷰하는 사람용 요약: 현재 상태, 초기 설계에서 바뀐 것, 코드 규칙, 정해야 할 것 |
 | [docs/DESIGN_CHANGES.md](docs/DESIGN_CHANGES.md) | 설계 변경 기록(C-001~): 변경 전·후, 이유, 영향, 검증 |
 | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) | 다음 할 일·정할 것(단계별 선택지·추천·상태) |
-| [docs/HANDOFF.md](docs/HANDOFF.md) | 다음 세션이 이어서 작업하기 위한 메모: 현재 상태, 개발 환경, 일하는 방식 |
-| [docs/TERMS_RAG.md](docs/TERMS_RAG.md) · [docs/TERMS_EVAL.md](docs/TERMS_EVAL.md) | 약관 발행·색인·검색 운영, 검색 평가 |
+| [docs/TERMS_RAG.md](docs/TERMS_RAG.md) | 약관 발행·색인·검색 운영 |
 
 ## 시작하기
 
