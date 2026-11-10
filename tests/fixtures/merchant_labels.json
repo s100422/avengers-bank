@@ -18,6 +18,8 @@
     {"name": "세븐일레븐", "expected": "MART"},
     {"name": "올리브영 강남본점", "expected": "BEAUTY"},
     {"name": "다이소 역삼점", "expected": "BEAUTY"},
+    {"name": "요기요", "expected": "DINING"},
+    {"name": "쿠팡이츠", "expected": "DINING"},
     {"name": "쿠팡", "expected": "ONLINE"},
     {"name": "11번가", "expected": "ONLINE"},
     {"name": "G마켓", "expected": "ONLINE"},

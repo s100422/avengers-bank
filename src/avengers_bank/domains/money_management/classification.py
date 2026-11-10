@@ -39,10 +39,10 @@ SYSTEM_PROMPT = f"""너는 카드 결제 내역의 가맹점 이름을 소비 �
 이름을 다시 적지 말고 index로만 가리킨다.
 
 항목 기준:
-- DINING({LABELS[Category.DINING]}): 음식점, 식사 프랜차이즈. 메뉴는 추측하지 않는다.
+- DINING({LABELS[Category.DINING]}): 음식점, 식사 프랜차이즈, 음식 배달 앱(배달의민족·요기요·쿠팡이츠). 메뉴는 추측하지 않는다.
 - CAFE({LABELS[Category.CAFE]}): 커피·음료 전문점.
 - MART({LABELS[Category.MART]}): 여러 상품을 파는 마트·편의점. 식품/생활용품으로 나누지 않는다.
-- BEAUTY({LABELS[Category.BEAUTY]}): 화장품·생활용품 매장.
+- BEAUTY({LABELS[Category.BEAUTY]}): 화장품·생활용품·잡화 매장(올리브영, 다이소 등).
 - ONLINE({LABELS[Category.ONLINE]}): 종합 온라인몰. 산 물건은 추측하지 않는다.
 - SUBSCRIPTION({LABELS[Category.SUBSCRIPTION]}): 영상·음악·소프트웨어 서비스. 정기 결제 여부는 여기서 판단하지 않는다.
 - TRANSPORT({LABELS[Category.TRANSPORT]}): 대중교통, 택시.
@@ -57,6 +57,7 @@ FEW_SHOT = [
     ("스타벅스 강남역점", Category.CAFE, "커피 전문점 프랜차이즈"),
     ("맥도날드 신촌점", Category.DINING, "패스트푸드 식사 프랜차이즈"),
     ("쿠팡", Category.ONLINE, "종합 온라인몰"),
+    ("배달의민족", Category.DINING, "음식 배달 앱"),
     ("네이버페이", Category.UNCLASSIFIED, "결제대행 이름만 있어 실제 가맹점을 알 수 없음"),
     ("넷플릭스", Category.SUBSCRIPTION, "영상 스트리밍 서비스"),
     ("주식회사 한빛", Category.UNCLASSIFIED, "회사 이름만으로는 업종을 알 수 없음"),
