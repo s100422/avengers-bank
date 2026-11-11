@@ -71,7 +71,8 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          MonthArgs, get_recurring_and_schedule),
     Tool("prepare_transfer", "이체 초안만 만든다(실제 이체 아님). 출금 계좌·수취 계좌·잔액·한도를 서버가 검증하고, "
          "사용자가 화면의 확인 카드에서 직접 승인해야 실행된다. 출금·받는 계좌는 사용자가 말한 이름(별칭·상품명)이나 번호 끝 4자리로 적고, 서버가 찾는다(id 불필요). "
-         "받는 계좌가 본인 계좌면 to_account, 다른 사람 계좌면 to_account_num(전체 번호) 중 하나만 쓴다.",
+         "받는 계좌가 본인 계좌면 to_account, 다른 사람 계좌면 to_account_num(전체 번호) 중 하나만 쓴다. "
+         "다른 은행 계좌면 to_bank에 은행 이름이나 코드를 함께 넣는다(타행 이체, 서버가 은행·받는 분 이름을 확인한다).",
          PrepareTransferArgs, prepare_transfer),
     Tool("prepare_open_account", "예금·적금 가입 화면을 미리 채우는 카드를 만든다(가입하지 않는다). 사용자가 말한 상품 이름·금액·만기·납입일·출금 계좌를 "
          "서버가 검증하고, 사용자가 카드의 버튼으로 가입 화면에서 이어 가면 약관 동의와 계좌 비밀번호는 화면에서 직접 한다. "

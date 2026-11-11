@@ -268,6 +268,7 @@ export type TransferAction = {
   amount: number;
   expected_balance_after: number;
   expires_at: string;
+  to_bank_name?: string | null; // 타행 이체면 받는 은행 이름 (C-125)
 };
 
 // 예·적금 가입 화면을 미리 채우는 카드. 가입은 하지 않는다 (약관 동의·계좌 비밀번호는 가입 화면에서 직접)
@@ -337,6 +338,8 @@ export type AgentTransferResult = {
   recipient_name: string;
   amount: number;
   balance_after: number;
+  to_bank_name?: string | null;
+  transfer_status?: "COMPLETED" | "PENDING" | null; // 타행 이체만. PENDING = 출금됐고 상대 은행 결과 확인 중
 };
 
 export const agent = {

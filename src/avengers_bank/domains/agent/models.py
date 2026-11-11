@@ -62,7 +62,8 @@ class TransferDraft(Base):
     from_checking_account_id: Mapped[int] = mapped_column(
         ForeignKey("checking_accounts.checking_account_id"), nullable=False
     )
-    to_account_num: Mapped[str] = mapped_column(String(20), nullable=False)
+    to_account_num: Mapped[str] = mapped_column(String(50), nullable=False)  # 타행 계좌번호는 최대 50자 (SPEC 3.3)
+    to_bank: Mapped[str | None] = mapped_column(String(3))  # 타행 이체면 받는 은행 코드, 우리 은행이면 NULL (C-125)
     recipient_name: Mapped[str] = mapped_column(String(50), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(10), default="PENDING", nullable=False)

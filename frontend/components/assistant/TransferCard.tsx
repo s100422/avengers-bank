@@ -18,6 +18,7 @@ export function TransferCard({
 }) {
   const router = useRouter();
   const [state, setState] = useState<"pending" | "busy" | "done" | "cancelled">("pending");
+  const [processing, setProcessing] = useState(false); // 타행 이체가 접수됐지만 상대 은행 결과를 확인 중
   const [error, setError] = useState<unknown>(null);
   const [password, setPassword] = useState(""); // 출금 계좌 비밀번호. 보낸 뒤 바로 비운다
   const passwordId = useId();
@@ -38,7 +39,13 @@ export function TransferCard({
         const r = await agent.confirm(action.draft_id, password);
         setPassword("");
         setState("done");
-        onDone(`${r.recipient_name}님께 ${won(r.amount)}을 보냈어요. 최종 잔액은 ${won(r.balance_after)}입니다.`);
+        const to = r.to_bank_name ? `${r.to_bank_name} ${r.recipient_name}` : r.recipient_name;
+        setProcessing(r.transfer_status === "PENDING");
+        onDone(
+          r.transfer_status === "PENDING"
+            ? `${to}님께 ${won(r.amount)} 이체를 접수했어요. 출금은 됐고 상대 은행 결과를 확인하고 있어요. 다시 보내지 마세요. 현재 잔액은 ${won(r.balance_after)}입니다.`
+            : `${to}님께 ${won(r.amount)}을 보냈어요. 최종 잔액은 ${won(r.balance_after)}입니다.`,
+        );
         window.dispatchEvent(new Event(ACCOUNTS_CHANGED));
         router.refresh();
       } else {
@@ -53,6 +60,7 @@ export function TransferCard({
 
   const rows: [string, string][] = [
     ["출금 계좌", `${action.from_account_name} ${action.from_account_num_masked}`],
+    ...(action.to_bank_name ? [["받는 은행", action.to_bank_name] as [string, string]] : []),
     ["받는 분", action.recipient_name],
     ["받는 계좌", action.to_account_num_masked],
     ["이체 금액", won(action.amount)],
@@ -63,7 +71,7 @@ export function TransferCard({
 
   return (
     <div role="group" aria-label="이체 확인" className="rounded-2xl border border-coral/40 bg-paper p-4">
-      <p className="font-semibold">이체 확인</p>
+      <p className="font-semibold">{action.to_bank_name ? "타행 이체 확인" : "이체 확인"}</p>
       <dl className="mt-3 space-y-1.5 text-sm">
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-3">
@@ -77,7 +85,7 @@ export function TransferCard({
         <MoneyErrorText error={error} />
       </div>
       {closed ? (
-        <p className="mt-3 text-sm font-medium text-slate">{state === "done" ? "이체를 완료했어요." : "이체를 취소했어요."}</p>
+        <p className="mt-3 text-sm font-medium text-slate">{state === "done" ? (processing ? "이체를 접수했어요. 상대 은행 결과를 확인하고 있어요." : "이체를 완료했어요.") : "이체를 취소했어요."}</p>
       ) : (
         <>
           {expired && <p className="mt-3 text-sm text-seal">확인 시간이 지났어요. 다시 요청해 주세요.</p>}

@@ -1,5 +1,6 @@
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from avengers_bank.core.exceptions import ConflictException, NotFoundException
 from avengers_bank.core.timezone import today_kst
 from avengers_bank.domains.accounts.kinds import KINDS as ACCOUNT_KINDS
 from avengers_bank.domains.accounts.password import check_account_password
+from avengers_bank.domains.accounts.service import account_service
 from avengers_bank.domains.agent.graph import EMPTY_TEXT, RECURSION_LIMIT, AgentContext, agent_graph
 from avengers_bank.domains.agent.model_client import AssistantTurn, ModelClient, ModelReply, Turn, UserTurn
 from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, TransferDraft
@@ -26,6 +28,8 @@ from avengers_bank.domains.agent.schemas import (
 )
 from avengers_bank.domains.agent.tools.common import as_utc, mask_num
 from avengers_bank.domains.agent.tools.terms import request_sources
+from avengers_bank.domains.interbank.schemas import InterbankSend
+from avengers_bank.domains.interbank.service import interbank_service
 from avengers_bank.domains.terms.search import Passage
 from avengers_bank.domains.transfers.schemas import TransferTarget
 from avengers_bank.domains.transfers.service import transfer_service
@@ -129,6 +133,8 @@ class AgentService:
                 await agent_repository.transition_pending(db, draft_id, user.user_id, "EXPIRED", now)
         if expired:
             raise ConflictException(code="DRAFT_EXPIRED", message="이체 확인 시간이 지났습니다. 다시 요청해 주세요.")
+        if draft.to_bank:
+            return await self._confirm_interbank(db, draft, account_password, user, now)
 
         # 보내는 계좌 비밀번호는 초안이 아직 PENDING일 때만, 이체 트랜잭션 전에 따로 확인·커밋한다
         # (틀린 횟수가 롤백되지 않게, password.py). 틀려도 초안은 PENDING으로 남아 다시 입력할 수 있다
@@ -154,6 +160,30 @@ class AgentService:
             draft_id=draft_id, from_account_num_masked=mask_num(result.from_account_num),
             to_account_num_masked=mask_num(result.to_account_num), recipient_name=draft.recipient_name,
             amount=result.amount, balance_after=result.balance_after,
+        )
+
+    async def _confirm_interbank(
+        self, db: AsyncSession, draft: TransferDraft, account_password: str, user: UserResponse, now: datetime
+    ) -> DraftConfirmResponse:
+        """타행 초안: 기존 타행 이체 서비스가 비밀번호·잔액·한도 확인, 출금, 허브 송금을 모두 한다 (C-125).
+
+        초안에서 만든 같은 요청 ID를 쓰므로 확인을 두 번 눌러도(동시에·재시도로) 송금은 한 번만 된다.
+        허브 결과를 모르면 돈은 출금된 채 PENDING으로 남고, 확인 작업(worker)이 마무리한다.
+        """
+        result = await interbank_service.send(db, InterbankSend(
+            to_bank=draft.to_bank, to_account=draft.to_account_num, from_checking_account_id=draft.from_checking_account_id,
+            amount=draft.amount, account_password=account_password,
+            request_id=uuid.uuid5(uuid.NAMESPACE_URL, f"agent-transfer-draft:{draft.draft_id}"),
+        ), user)
+        async with db.begin():
+            # 송금이 접수된 뒤라 만료 여부는 보지 않는다(이미 출금됨). 동시 확인으로 먼저 바뀌었어도 같은 송금이다
+            await agent_repository.transition_pending(db, draft.draft_id, user.user_id, "EXECUTED", now)
+            sender = await account_service.get_owned(db, ACCOUNT_KINDS["checking"], draft.from_checking_account_id, user)
+        return DraftConfirmResponse(
+            draft_id=draft.draft_id, from_account_num_masked=mask_num(sender.account_num),
+            to_account_num_masked=mask_num(result.to_account), recipient_name=result.holder_name or draft.recipient_name,
+            amount=result.amount, balance_after=result.balance_after, to_bank_name=result.to_bank_name,
+            transfer_status=result.status,
         )
 
     async def cancel_draft(self, db: AsyncSession, draft_id: str, user: UserResponse) -> DraftCancelResponse:

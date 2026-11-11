@@ -24,6 +24,7 @@ class TransferAction(BaseModel):
     amount: int
     expected_balance_after: int
     expires_at: datetime
+    to_bank_name: str | None = None  # 타행 이체면 받는 은행 이름. None = 우리 은행 (C-125)
 
 
 class SummaryRow(BaseModel):
@@ -120,6 +121,9 @@ class DraftConfirmResponse(BaseModel):
     recipient_name: str
     amount: int
     balance_after: int
+    to_bank_name: str | None = None
+    # 타행 이체만: COMPLETED 또는 PENDING(허브 결과 확인 중, 돈은 이미 출금됨). 우리 은행 이체는 항상 즉시 완료라 None
+    transfer_status: Literal["COMPLETED", "PENDING"] | None = None
 
 
 class DraftCancelResponse(BaseModel):
