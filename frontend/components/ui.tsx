@@ -95,7 +95,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <div className="md:pl-60">
-        <div className="mx-auto w-full max-w-xl px-4 pb-28 md:px-10 md:pt-10 md:pb-16">
+        <div className="mx-auto w-full max-w-xl px-4 pb-40 md:px-10 md:pt-10 md:pb-24">
           <header className="flex items-center justify-between gap-3 py-5 md:justify-end md:pt-0">
             <span className="md:hidden">
               <Brand />

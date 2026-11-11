@@ -200,12 +200,13 @@ function Assistant() {
           aria-label="AI 금융 비서 열기"
           aria-haspopup="dialog"
           onClick={() => setOpen(true)}
-          className="fixed right-4 bottom-24 z-20 flex min-h-11 items-center gap-1.5 rounded-full bg-coral px-3.5 text-sm font-semibold text-paper shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral md:right-8 md:bottom-8"
+          className="fixed right-4 bottom-24 z-20 flex size-12 items-center justify-center gap-1.5 rounded-full bg-coral text-sm font-semibold text-paper shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral md:right-8 md:bottom-8 xl:h-auto xl:min-h-11 xl:w-auto xl:px-3.5"
         >
-          <svg viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.8]" aria-hidden>
+          <svg viewBox="0 0 24 24" className="size-5 fill-none stroke-current stroke-[1.8] xl:size-4" aria-hidden>
             <path d="M5 5h14v10H9l-4 4z" strokeLinejoin="round" />
           </svg>
-          AI 금융 비서
+          {/* 좁은 화면에서는 아이콘만: 글자까지 보이면 목록의 금액을 가린다. 내용 옆에 여백이 생기는 xl부터 글자를 보인다 */}
+          <span className="hidden xl:inline">AI 금융 비서</span>
         </button>
       )}
 
