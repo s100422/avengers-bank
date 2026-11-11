@@ -1,6 +1,6 @@
 """AI 금융 비서 대화·이체 초안 (C-070).
 
-Tool의 원본 결과는 저장하지 않는다. 메시지에는 답변 글, 호출한 Tool 이름과 성공 여부, 이체 확인 action만 남긴다.
+Tool 원본은 저장하지 않는다. 메시지에는 답변, 호출 기록, 출처, 카드 표시값만 남긴다.
 """
 
 from datetime import datetime
@@ -36,7 +36,7 @@ class AgentMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # [{"name": "get_my_accounts", "ok": true}, ...] — 결과 값은 남기지 않는다
     tool_calls: Mapped[list | None] = mapped_column(JSON)
-    action: Mapped[dict | None] = mapped_column(JSON)  # 이체 확인 action (마스킹된 값만)
+    action: Mapped[dict | None] = mapped_column(JSON)  # 이체·가입 카드 또는 조회 리포트의 표시값
     citations: Mapped[list | None] = mapped_column(JSON)  # 서버가 검증한 약관 출처 (C-075)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

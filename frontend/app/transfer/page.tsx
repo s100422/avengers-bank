@@ -445,7 +445,7 @@ function Transfer() {
     const sent = own?.amount ?? inter?.amount ?? 0;
     const remain = own?.balance_after ?? inter?.balance_after ?? 0;
     return (
-      <section className="mt-10 text-center">
+      <section className="daily-card mt-10 p-6 text-center">
         <span className="seal stamp size-20 text-lg">{pending ? "처리 중" : failed ? "실패" : "완료"}</span>
         <h1 className="mt-6 text-2xl font-semibold">{pending ? "이체를 처리하고 있습니다" : failed ? "이체에 실패했습니다" : "이체됐습니다!"}</h1>
         <p className="mt-3 text-3xl font-semibold tabular-nums">{won(sent)}</p>
@@ -471,7 +471,7 @@ function Transfer() {
   // 2단계: 계좌번호 직접 입력
   if (step === 2) {
     return (
-      <section className="mt-2">
+      <section className="daily-card mt-2 p-5 sm:p-7">
         <Back
           onClick={() => {
             setError(null);
@@ -521,7 +521,7 @@ function Transfer() {
     const key = (k: string) =>
       setAmount((a) => (k === "<" ? Math.floor(a / 10) : Math.min(MAX, Number(String(a === 0 ? "" : a) + k))));
     return (
-      <section className="mt-2">
+      <section className="daily-card mt-2 p-5 sm:p-7">
         <Back onClick={() => setStep(1)} />
         {recoveryError && <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-coral-soft p-3 text-sm"><span>{recoveryError}</span>{legacyRequest ? <button type="button" onClick={startAfterLegacyReview} className="shrink-0 underline">내역 확인 후 새 이체</button> : <button type="button" onClick={retryRecovery} className="shrink-0 underline">결과 다시 확인</button>}</div>}
         {recoveringRequest && !legacyRequest && <p role="status" className="mt-3 text-sm text-slate">이전 이체 결과를 확인하고 있습니다…</p>}
@@ -599,7 +599,7 @@ function Transfer() {
             모바일은 아래에서 올라오는 시트, PC(md 이상)는 화면 가운데 창 */}
         {sheet &&
           createPortal(
-          <div className="fixed inset-0 z-50 flex items-end bg-ink/40 md:items-center md:justify-center md:p-4 md:pl-60" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-50 flex items-end bg-ink/40 md:items-center md:justify-center md:p-4" role="dialog" aria-modal="true">
             <div className="mx-auto w-full max-w-md rounded-t-2xl bg-paper p-5 pb-8 md:rounded-2xl">
               <div className="flex justify-end">
                 <button type="button" aria-label="닫기" onClick={() => setSheet(null)} className="-mr-2 flex size-11 items-center justify-center text-slate">
@@ -661,7 +661,7 @@ function Transfer() {
   const empty = (t: string) => <li className="py-10 text-center text-sm text-slate">{t}</li>;
 
   return (
-    <section className="mt-4">
+    <section className="daily-card mt-4 p-5 sm:p-7">
       <h1 className="text-2xl font-semibold">누구에게 보낼까요?</h1>
       {error !== null && <p role="alert" className="mt-2 text-sm text-seal">{(error as Error).message}</p>}
       <button

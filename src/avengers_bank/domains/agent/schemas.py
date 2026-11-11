@@ -31,6 +31,35 @@ class SummaryRow(BaseModel):
     value: str
 
 
+class ReportRow(BaseModel):
+    label: str
+    value: str
+    detail: str | None = None
+    bar_amount: int | None = None
+
+
+class ReportSection(BaseModel):
+    title: str
+    rows: list[ReportRow]
+
+
+class FinancialReport(BaseModel):
+    title: str
+    captured_at: datetime
+    metrics: list[SummaryRow] = Field(default_factory=list)
+    sections: list[ReportSection] = Field(default_factory=list)
+    badge: str | None = None
+    badge_tone: Literal["mint", "coral", "neutral"] = "neutral"
+    note: str | None = None
+
+
+class ReportSnapshot(BaseModel):
+    """조회 당시의 카드 표시값을 기존 메시지 JSON에 저장한다."""
+
+    type: Literal["FINANCIAL_REPORT"] = "FINANCIAL_REPORT"
+    reports: list[FinancialReport]
+
+
 class OpenAccountAction(BaseModel):
     """예·적금 가입 화면을 미리 채워 여는 카드 (C-103). 가입은 하지 않는다. 약관 동의와 계좌 비밀번호는 가입 화면에서 직접 한다."""
 
@@ -64,6 +93,7 @@ class ChatResponse(BaseModel):
     answer: str
     action: AssistantAction | None = None
     citations: list[Citation] = []
+    reports: list[FinancialReport] = Field(default_factory=list)
 
 
 class MessageItem(BaseModel):
@@ -72,6 +102,7 @@ class MessageItem(BaseModel):
     content: str
     action: AssistantAction | None = None
     citations: list[Citation] = []
+    reports: list[FinancialReport] = Field(default_factory=list)
     created_at: datetime
 
 

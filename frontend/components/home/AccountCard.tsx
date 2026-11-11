@@ -20,7 +20,7 @@ export function AccountCard({
 }) {
   const name = a.nickname ?? `${KIND[a.account_type]} 계좌`;
   return (
-    <article className="flex h-full flex-col rounded-3xl bg-paper p-5">
+    <article className="daily-card flex h-full flex-col p-5 sm:p-6">
       {/* 1. 이름 (상세로 이동) */}
       <Link href={`/accounts/${a.account_type}/${a.account_id}`} className="flex min-h-11 items-center gap-1.5 font-semibold">
         <span className="truncate">{name}</span>
@@ -76,7 +76,7 @@ export function AccountCard({
       {a.account_type === "checking" && (
         <Link
           href="/transfer"
-          className="mt-4 flex min-h-11 items-center justify-center rounded-xl border border-coral font-medium text-coral"
+          className="mt-4 flex min-h-11 items-center justify-center rounded-xl border border-coral/30 bg-coral-soft/40 font-semibold text-coral hover:bg-coral-soft"
         >
           이체
         </Link>

@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
+import { DailyBanner } from "@/components/DailyDesign";
 import { SpiderMascot } from "@/components/SpiderMascot";
 
 const styles = new Proxy({} as Record<string, string>, {
@@ -46,9 +48,17 @@ export default function SpiderDesignPreview() {
         <span className={styles.previewTag}>DESIGN CONCEPTS · 01</span>
       </header>
 
+      <section aria-labelledby="applied-banner" className="mx-auto mt-7 max-w-5xl">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h1 id="applied-banner" className="text-sm font-bold">적용된 홈 배너</h1>
+          <Link href="/accounts" className="rounded-full bg-paper px-3 py-2 text-sm font-semibold text-coral">홈으로 가기 →</Link>
+        </div>
+        <DailyBanner />
+      </section>
+
       <section className={styles.intro} id="top">
         <p className={styles.eyebrow}>SpiderBank · Home</p>
-        <h1>어떤 거미가<br />우리 은행의 얼굴일까?</h1>
+        <h2>어떤 거미가<br />우리 은행의 얼굴일까?</h2>
         <p className={styles.lead}>세 가지 분위기의 홈 화면을 비교해보고, 마음에 드는 방향을 골라줘.</p>
       </section>
 

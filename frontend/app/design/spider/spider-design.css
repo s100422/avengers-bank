@@ -63,7 +63,8 @@
 .spiderPreviewPage .intro, .spiderPreviewPage .choices, .spiderPreviewPage .showcase, .spiderPreviewPage .footer { width: min(1120px, 100%); margin-left: auto; margin-right: auto; }
 .spiderPreviewPage .intro { padding: 70px 0 29px; }
 .spiderPreviewPage .intro .spiderPreviewPage .eyebrow { margin: 0 0 15px; }
-.spiderPreviewPage .intro h1 { margin: 0; font-size: clamp(36px, 5vw, 58px); line-height: 1.07; letter-spacing: -.065em; }
+.spiderPreviewPage .intro h2 { margin: 0; font-size: clamp(36px, 5vw, 58px); line-height: 1.07; letter-spacing: -.065em; }
+.spiderPreviewPage .daily-banner-home { --ink: #1f1a17; --line: #f3dfd5; color: var(--ink); }
 .spiderPreviewPage .lead { margin: 17px 0 0; color: var(--muted); font-size: 15px; }
 
 .spiderPreviewPage .choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }

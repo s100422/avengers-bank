@@ -294,7 +294,30 @@ export type Citation = {
   url: string;
 };
 
-export type AgentReply = { conversation_id: number; answer: string; action: AssistantAction | null; citations?: Citation[] };
+export type ReportRow = {
+  label: string;
+  value: string;
+  detail: string | null;
+  bar_amount: number | null;
+};
+
+export type FinancialReport = {
+  title: string;
+  captured_at: string;
+  metrics: { label: string; value: string }[];
+  sections: { title: string; rows: ReportRow[] }[];
+  badge: string | null;
+  badge_tone: "mint" | "coral" | "neutral";
+  note: string | null;
+};
+
+export type AgentReply = {
+  conversation_id: number;
+  answer: string;
+  action: AssistantAction | null;
+  citations?: Citation[];
+  reports?: FinancialReport[];
+};
 
 export type AgentMessage = {
   message_id: number;
@@ -302,6 +325,7 @@ export type AgentMessage = {
   content: string;
   action: AssistantAction | null;
   citations: Citation[];
+  reports?: FinancialReport[];
   created_at: string;
 };
 

@@ -94,5 +94,10 @@ async def test_tool_call_through_agent_loop(client, world, fake):  # noqa: F811
     f = fake(tool("get_spending_analysis"), answer)
     r = await client.post("/agent/chat", json={"message": "이번 달 소비 왜 늘었어?"}, headers=world["tony"])
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["answer"] == "지금까지 505,000원 썼어요."
+    body = r.json()["data"]
+    assert body["answer"] == "지금까지 505,000원 썼어요."
+    (report,) = body["reports"]
+    assert report["metrics"][0] == {"label": "지금까지 쓴 돈", "value": "505,000원"}
+    rows = report["sections"][0]["rows"]
+    assert rows[0]["bar_amount"] == max(row["bar_amount"] for row in rows)
     assert f.tool_result(1)[1] is False and "get_spending_analysis" in f.systems[0]

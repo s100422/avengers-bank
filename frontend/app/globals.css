@@ -62,23 +62,28 @@ body {
   }
 }
 
-/* AI 금융 비서가 열리면 넓은 화면에서는 패널 폭만큼 화면을 왼쪽으로 민다 (좁으면 패널이 전체 화면) */
-@media (min-width: 64rem) {
-  body[data-assistant-open] {
-    padding-right: var(--assistant-w, 340px);
-  }
+body[data-assistant-open] {
+  padding-inline-end: var(--assistant-w, 340px);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  body:not([data-assistant-resizing]) {
-    transition: padding-right 200ms ease-out;
-  }
+body[data-assistant-modal] {
+  overflow: hidden;
 }
 
 /* 폭을 끄는 동안 글자가 선택되지 않게 한다 */
 body[data-assistant-resizing] {
   user-select: none;
   cursor: col-resize;
+}
+
+.assistant-report { container-type: inline-size; }
+.assistant-report-totals { display: grid; gap: 12px; }
+@container (min-width: 16rem) {
+  .assistant-report-totals-paired { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .assistant-report-totals-paired > :last-child {
+    border-inline-start: 1px solid var(--line);
+    padding-inline-start: 12px;
+  }
 }
 
 /* AI 금융 비서: 메시지가 살짝 떠오르며 나타나고, 답변을 기다리는 동안 점 세 개가 통통 튄다 */
@@ -118,4 +123,91 @@ body[data-assistant-resizing] {
     opacity: 1;
     transform: translateY(-3px);
   }
+}
+
+
+/* Friendly Daily: shared surfaces for home, money and products. */
+:root { --porcelain: #fff6f1; --line: #f3dfd5; --coral-soft: #ffebe3; }
+.daily-main { min-width: 0; }
+.daily-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--paper);
+  box-shadow: 0 3px 0 rgba(204,126,106,.045), 0 8px 24px rgba(90,48,35,.035);
+}
+.daily-banner {
+  position: relative; isolation: isolate; overflow: hidden;
+  min-height: 182px; padding: 26px;
+  border: 1px solid var(--line); border-radius: 24px;
+  background: linear-gradient(115deg, #fff 28%, #fff0e9 100%);
+  box-shadow: 0 5px 18px rgba(153,61,34,.035);
+}
+.daily-banner::after {
+  content: ""; position: absolute; z-index: -1;
+  width: 300px; height: 150px; right: -70px; bottom: -94px;
+  border-radius: 50%; background: #fbd6c7;
+  box-shadow: -60px -25px 0 10px #fff1ea; transform: rotate(-12deg);
+}
+.daily-banner-home {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 38%);
+  align-items: center;
+  gap: clamp(8px, 2vw, 20px);
+  padding: clamp(16px, 3vw, 30px);
+}
+.daily-banner-home::after {
+  width: 56%;
+  height: 72%;
+  right: -6%;
+  bottom: -45%;
+}
+.daily-banner-copy { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+.daily-banner-art {
+  position: relative;
+  justify-self: end;
+  width: 100%;
+  max-width: 350px;
+  aspect-ratio: 1.6;
+}
+.daily-banner-money { background: linear-gradient(115deg, #fff 35%, #f4effc); }
+.daily-banner-money::after { background: #e8dff5; box-shadow: -60px -25px 0 10px #f5effa; }
+.daily-banner-orbit {
+  position: absolute; right: 34px; top: 40px; width: 92px; height: 92px;
+  border: 14px solid #ffdfd1; border-radius: 50%; opacity: .6;
+}
+.daily-banner-money .daily-banner-orbit { border-color: #e1d6ef; }
+.daily-assets { position: relative; overflow: hidden; }
+.daily-assets::after {
+  content: ""; pointer-events: none; position: absolute;
+  width: 240px; height: 95px; right: -50px; bottom: -65px;
+  border-radius: 50%; background: #e4f2e9; box-shadow: -80px 12px 0 10px #eef7f1;
+}
+.daily-shortcuts { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.daily-shortcut {
+  display: flex; align-items: center; justify-content: center; flex-direction: column;
+  gap: 10px; min-height: 100px; border: 2px solid white; border-radius: 20px;
+  box-shadow: 0 3px 8px #7b3e2410;
+}
+.daily-shortcut span { color: var(--ink); }
+.daily-tone-rose { color: #d83c2b; background: #fff0eb; }
+.daily-tone-mint { color: #317b60; background: #eaf7f0; }
+.daily-tone-lilac { color: #7560b5; background: #f2edfc; }
+.daily-tone-gold { color: #98641e; background: #fff3df; }
+.daily-forecast { background: linear-gradient(135deg,white 60%,#fff3ed); }
+.daily-money-overview, .daily-money-details { display: grid; gap: 20px; align-items: start; }
+.daily-money-overview > .daily-card { height: 100%; }
+.daily-money-details > section > div > h2,
+.daily-money-details > section > h2 { color: var(--ink); font-weight: 700; }
+.daily-home :is(a,button):focus-visible,
+.daily-money :is(a,button):focus-visible,
+.daily-nav a:focus-visible { outline: 2px solid var(--coral); outline-offset: 4px; }
+@media (min-width: 768px) {
+  .daily-money-overview, .daily-money-details { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .daily-shortcut { min-height: 112px; }
+  .daily-banner { padding: 30px; }
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .daily-shortcut { transition: transform .18s ease, box-shadow .18s ease; }
+  .daily-shortcut:hover { transform: translateY(-2px); box-shadow: 0 6px 16px #7b3e2415; }
 }

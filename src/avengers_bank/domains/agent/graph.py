@@ -30,7 +30,8 @@ from avengers_bank.domains.agent.model_client import (
     ToolSpec,
     Turn,
 )
-from avengers_bank.domains.agent.schemas import OpenAccountAction, TransferAction
+from avengers_bank.domains.agent.reports import report_from_tool
+from avengers_bank.domains.agent.schemas import FinancialReport, OpenAccountAction, TransferAction
 from avengers_bank.domains.agent.tools import TOOLS, run_tool
 from avengers_bank.domains.users.schemas import UserResponse
 
@@ -61,6 +62,7 @@ class AgentState(TypedDict, total=False):
     model_calls: int
     tool_log: list[dict]  # [{"name", "ok"}] — 결과 값은 남기지 않는다
     action: TransferAction | OpenAccountAction | None  # prepare_transfer·prepare_open_account가 만든 카드
+    reports: list[FinancialReport]
     answer: str
 
 
@@ -86,16 +88,24 @@ def after_model(state: AgentState) -> str:
 async def run_tools(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
     reply = state["reply"]
     tool_log, action, results = list(state["tool_log"]), state.get("action"), []
+    reports = list(state.get("reports", []))
     for call in reply.tool_calls:
         outcome = await run_tool(call.name, call.arguments, runtime.context.user)
         tool_log.append({"name": call.name if call.name in TOOLS else "unknown", "ok": outcome.ok})
         if isinstance(outcome.result, (TransferAction, OpenAccountAction)):
             action = outcome.result
+        elif outcome.ok:
+            report = report_from_tool(outcome.result)
+            if report is not None:
+                values = report.model_dump(exclude={"captured_at"})
+                reports = [item for item in reports if item.model_dump(exclude={"captured_at"}) != values]
+                reports.append(report)
         results.append(ToolResult(call.id, outcome.content, not outcome.ok))
     return {
         "turns": [*state["turns"], AssistantTurn(reply), ToolResultsTurn(results)],
         "tool_log": tool_log,
         "action": action,
+        "reports": reports,
     }
 
 
@@ -109,7 +119,7 @@ async def finish(state: AgentState) -> dict:
 
 async def limit(state: AgentState, runtime: Runtime[AgentContext]) -> dict:
     logger.warning("agent 호출 상한 도달 (user_id=%s)", runtime.context.user.user_id)
-    return {"answer": LIMIT_TEXT}
+    return {"answer": LIMIT_TEXT, "reports": []}
 
 
 def _build():

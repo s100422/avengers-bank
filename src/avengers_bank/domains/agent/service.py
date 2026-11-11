@@ -15,13 +15,14 @@ from avengers_bank.domains.agent.models import AgentConversation, AgentMessage, 
 from avengers_bank.domains.agent.prompts import build_system_prompt
 from avengers_bank.domains.agent.repository import agent_repository
 from avengers_bank.domains.agent.schemas import (
+    AssistantAction,
     ChatRequest,
     Citation,
     ChatResponse,
     DraftCancelResponse,
     DraftConfirmResponse,
     MessageItem,
-    TransferAction,
+    ReportSnapshot,
 )
 from avengers_bank.domains.agent.tools.common import as_utc, mask_num
 from avengers_bank.domains.agent.tools.terms import request_sources
@@ -57,8 +58,11 @@ class AgentService:
         )
         answer, action = final["answer"], final["action"]
         answer, citations = extract_citations(answer, request_sources.get())
-        conversation_id = await self._save(data, user, answer, final["tool_log"], action, citations)
-        return ChatResponse(conversation_id=conversation_id, answer=answer, action=action, citations=citations)
+        # 이체나 가입이 필요한 답변은 해당 확인 카드가 우선이다.
+        reports = final.get("reports", [])[-4:][::-1] if action is None else []
+        saved_card = ReportSnapshot(reports=reports) if reports else action
+        conversation_id = await self._save(data, user, answer, final["tool_log"], saved_card, citations)
+        return ChatResponse(conversation_id=conversation_id, answer=answer, action=action, citations=citations, reports=reports)
 
     async def _history(self, conversation_id: int | None, user: UserResponse) -> list[Turn]:
         if conversation_id is None:
@@ -79,7 +83,8 @@ class AgentService:
         return conversation
 
     async def _save(
-        self, data: ChatRequest, user: UserResponse, answer: str, tool_log: list[dict], action: TransferAction | None,
+        self, data: ChatRequest, user: UserResponse, answer: str, tool_log: list[dict],
+        action: AssistantAction | ReportSnapshot | None,
         citations: list[Citation],
     ) -> int:
         async with SessionLocal() as db, db.begin():
@@ -98,13 +103,18 @@ class AgentService:
 
     async def list_messages(self, db: AsyncSession, conversation_id: int, user: UserResponse) -> list[MessageItem]:
         await self._owned_conversation(db, conversation_id, user)
-        return [
-            MessageItem(
-                message_id=m.agent_message_id, role=m.role, content=m.content, action=m.action,
-                citations=m.citations or [], created_at=m.created_at,
-            )
-            for m in await agent_repository.find_messages(db, conversation_id)
-        ]
+        messages = []
+        for message in await agent_repository.find_messages(db, conversation_id):
+            action = message.action
+            reports = []
+            if action and action.get("type") == "FINANCIAL_REPORT":
+                reports = ReportSnapshot.model_validate(action).reports
+                action = None
+            messages.append(MessageItem(
+                message_id=message.agent_message_id, role=message.role, content=message.content, action=action,
+                citations=message.citations or [], created_at=message.created_at, reports=reports,
+            ))
+        return messages
 
     # ── 이체 초안 확인·취소 (사용자가 화면에서 직접 누른다. Tool로 등록하지 않는다) ──
 

@@ -130,6 +130,15 @@ async def test_accounts_tool_answer_and_saved_conversation(client, world, fake):
     full = world["a"]["account_num"]
     assert item["account_num_masked"] == f"{full[:3]}-***-**{full[-4:]}" and full not in json.dumps(data)
 
+    (report,) = body["reports"]
+    assert report["title"] == "내 계좌 잔액"
+    assert report["sections"][0]["rows"][0]["value"] == "1,000,000원"
+    assert full not in json.dumps(report)
+    history = await client.get(f"/agent/conversations/{body['conversation_id']}/messages", headers=world["tony"])
+    assert history.status_code == 200
+    saved_reply = history.json()["data"][-1]
+    assert saved_reply["reports"] == [report] and saved_reply["action"] is None
+
     async with SessionLocal() as db:
         rows = list(await db.scalars(select(AgentMessage).order_by(AgentMessage.agent_message_id)))
     assert [(r.role, r.conversation_id) for r in rows] == [("user", body["conversation_id"]), ("assistant", body["conversation_id"])]
@@ -178,7 +187,7 @@ async def add_credit_card(client, headers):
     return r.json()["data"]
 
 
-async def test_financial_summary_is_computed_by_backend(client, world):
+async def test_financial_summary_is_computed_by_backend(client, world, fake):
     tony = world["tony"]
     assert (await open_deposit(client, tony, 200_000, from_id=1)).status_code == 201
     card = await add_credit_card(client, tony)
@@ -192,6 +201,14 @@ async def test_financial_summary_is_computed_by_backend(client, world):
     assert s.next_card_payment_date is not None  # 청구서는 없지만 미결제액이 있어 다음 결제일
     (m,) = s.maturities
     assert (m.balance, m.days_left) == (200_000, 365)
+
+    fake(tool("get_financial_summary"), tool("get_card_payment_status"), ModelReply("자산과 카드 결제를 조회했어요."))
+    reply = (await chat(client, tony, "자산이랑 카드값을 같이 보여줘")).json()["data"]
+    card_report, assets_report = reply["reports"]
+    assert card_report["title"] == "카드 결제 현황"
+    assert card_report["metrics"][1]["value"] == "300,000원"
+    assert assets_report["metrics"][0]["value"] == "1,000,000원"
+    assert assets_report["sections"][1]["rows"][0]["detail"] == f"만기 {m.maturity_date.isoformat()}"
 
 
 async def test_transaction_history_filters(client, world):

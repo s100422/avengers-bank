@@ -7,11 +7,11 @@ import type { CategorySpend, Forecast, Pace, PaceStatus, ScheduledItem } from "@
 import { PaceBars } from "./PaceChart";
 import { STATUS_LABEL, dayLabel, manwon, pct } from "./format";
 
-const card = "block rounded-3xl bg-paper p-5";
+const card = "daily-card block p-5 sm:p-6";
 const q = (month: string) => `?month=${month}`;
 
 export function StatusChip({ status }: { status: PaceStatus }) {
-  const tone = { HIGHER: "bg-coral-soft text-coral", NORMAL: "bg-porcelain text-ink", LOWER: "bg-porcelain text-ink", UNKNOWN: "bg-porcelain text-slate" }[status];
+  const tone = { HIGHER: "bg-coral-soft text-coral", NORMAL: "bg-porcelain text-ink", LOWER: "bg-[#e5f4eb] text-[#317354]", UNKNOWN: "bg-porcelain text-slate" }[status];
   return <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>{STATUS_LABEL[status]}</span>;
 }
 
@@ -36,12 +36,12 @@ export function ForecastCard({ month, forecast: f }: { month: string; forecast: 
       : same ? `${basis}과 비슷했어요` : `${basis}보다 ${pct(r)}% ${r > 0 ? "많았어요" : "적었어요"}`;
   }
   return (
-    <Link href={`/money/analysis${q(month)}#forecast`} className={card}>
+    <Link href={`/money/analysis${q(month)}#forecast`} className={`${card} daily-forecast`}>
       <div className="flex items-center justify-between">
         <h2 className="text-sm text-slate">{f.is_current_month ? "이번 달 예상 지출" : "이 달 지출"}</h2>
         <Chevron />
       </div>
-      <p className="mt-1 flex items-center gap-2 text-3xl font-bold tracking-tight tabular-nums">
+      <p className="mt-3 flex flex-wrap items-center gap-2 text-3xl font-bold tracking-tight tabular-nums">
         {f.is_current_month && <span className="rounded-full bg-coral-soft px-2 py-0.5 text-xs font-semibold text-coral">예상</span>}
         {f.is_current_month ? `약 ${manwon(f.projected_total)}` : won(f.actual_to_date)}
       </p>
@@ -89,7 +89,7 @@ export function PaceCard({ month, pace, current }: { month: string; pace: Pace; 
 export function UpcomingCard({ month, items, total }: { month: string; items: ScheduledItem[]; total: number }) {
   return (
     <section className={card}>
-      <h2 className="text-sm text-slate">다가오는 입출금</h2>
+      <h2 className="text-sm font-bold text-ink">다가오는 입출금</h2>
       {items.length === 0 ? (
         <p className="mt-3 text-sm text-slate">이번 달 남은 입출금 일정이 없어요.</p>
       ) : (
@@ -133,7 +133,7 @@ function CategoryRow({ c, month, max, usualLabel }: { c: CategorySpend; month: s
     : null;
   return (
     <li>
-      <Link href={`/money/categories/${c.category}${q(month)}`} className="block min-h-11 px-5 py-3.5">
+      <Link href={`/money/categories/${c.category}${q(month)}`} className="daily-category-row block min-h-11 py-4">
         <div className="flex items-baseline justify-between gap-3">
           <p className="flex min-w-0 flex-wrap items-center gap-2 font-semibold">
             {c.label}
@@ -141,9 +141,9 @@ function CategoryRow({ c, month, max, usualLabel }: { c: CategorySpend; month: s
           </p>
           <p className="shrink-0 font-semibold tabular-nums">{won(c.actual)}</p>
         </div>
-        <div aria-hidden className="relative mt-2 h-2.5 rounded-sm bg-porcelain">
+        <div aria-hidden className="relative mt-2 h-2.5 rounded-full bg-porcelain">
           <div
-            className={`h-2.5 rounded-r-[4px] ${higher ? "bg-coral" : "bg-slate"} ${c.actual > 0 ? "min-w-[2px]" : ""}`}
+            className={`h-2.5 rounded-full ${higher ? "bg-coral" : "bg-slate"} ${c.actual > 0 ? "min-w-[2px]" : ""}`}
             style={{ width: `${(c.actual / max) * 100}%` }}
           />
           {usual !== null && usual > 0 && (
@@ -168,19 +168,19 @@ export function CategoryList({ month, items, current }: { month: string; items: 
   const unused = rest.filter((c) => c.status !== "HIGHER" && c.actual === 0);
   const max = Math.max(1, ...rest.map((c) => Math.max(c.actual, c.baseline_to_date ?? 0)));
   const hasUsual = rest.some((c) => c.baseline_to_date !== null);
-  const list = "mt-2 divide-y divide-line rounded-3xl bg-paper";
+  const list = "mt-2 divide-y divide-line/60";
   const row = (c: CategorySpend) => <CategoryRow key={c.category} c={c} month={month} max={max} usualLabel={usualLabel} />;
 
   if (items.length === 0) {
     return (
-      <section>
+      <section className="daily-card p-5 sm:p-6">
         <h2 className="text-sm text-slate">항목별 소비</h2>
         <p className="mt-3 rounded-3xl bg-paper p-5 text-sm text-slate">이 달 소비 내역이 없어요.</p>
       </section>
     );
   }
   return (
-    <section>
+    <section className="daily-card p-5 sm:p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <h2 className="text-sm text-slate">항목별 소비</h2>
         {hasUsual && (
@@ -235,7 +235,7 @@ export function CategoryList({ month, items, current }: { month: string; items: 
 // ⑥ 반복 거래 관리 진입
 export function RecurringEntry({ reviewCount }: { reviewCount: number }) {
   return (
-    <Link href="/money/recurring" className="flex min-h-11 items-center justify-between gap-3 rounded-2xl bg-paper px-5 py-4">
+    <Link href="/money/recurring" className="flex min-h-11 items-center justify-between gap-3 daily-card px-5 py-4">
       <div>
         <p className="font-semibold">반복 거래 관리</p>
         <p className="text-sm text-slate">

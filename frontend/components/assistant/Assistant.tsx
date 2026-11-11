@@ -2,16 +2,26 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { ASSISTANT_ASK, AssistantAction, Citation, agent, session, termsHref } from "@/lib/api";
+import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { SpiderMascot } from "@/components/SpiderMascot";
+import { ASSISTANT_ASK, type AssistantAction, type Citation, type FinancialReport, agent, session, termsHref } from "@/lib/api";
 import type { AssistantAsk } from "@/lib/ask-assistant";
+import { FinancialReportCard } from "./FinancialReportCard";
 import { OpenAccountCard } from "./OpenAccountCard";
 import { RichText } from "./RichText";
 import { TransferCard } from "./TransferCard";
 
-type Msg = { id: number; role: "user" | "ai"; text: string; action?: AssistantAction; citations?: Citation[] };
+type Msg = {
+  id: number;
+  role: "user" | "ai";
+  text: string;
+  action?: AssistantAction;
+  citations?: Citation[];
+  reports?: FinancialReport[];
+};
 
-const SUGGESTIONS = ["내 자산 요약해 줘", "최근 거래내역 알려줘", "다음 카드값을 낼 수 있어?", "내 예·적금 만기 알려줘"];
+const SPENDING_QUESTION = "이번 달 소비 요약해줘";
+const SUGGESTIONS = [SPENDING_QUESTION, "내 자산 요약해 줘", "최근 거래내역 알려줘", "다음 카드값을 낼 수 있어?", "내 예·적금 만기 알려줘"];
 
 // 루트 레이아웃에 한 번 붙는다: 화면을 옮겨도 대화가 남는다.
 // 토큰이 없거나 로그인·회원가입 화면이면 그리지 않는다(언마운트되므로 로그아웃하면 대화도 지워진다).
@@ -46,13 +56,19 @@ const convo = {
   },
 };
 
-// 넓은 화면에서 패널 폭(px). 왼쪽 가장자리를 끌거나 ←→ 키로 바꾸고, 이 브라우저에 기억한다
-const WIDTH_KEY = "avengers_bank_assistant_width";
-const DEFAULT_W = 340;
-const MIN_W = 300;
-const MAX_W = 720;
-// 왼쪽 메뉴(240px)와 본문 최소 폭(320px)은 남긴다
-const clampWidth = (w: number) => Math.round(Math.max(MIN_W, Math.min(w, MAX_W, window.innerWidth - 560)));
+const WIDTH_KEY = "spiderbank_assistant_width";
+const MIN_W = 340;
+const MAX_W = 480;
+const SPLIT_AT = 1120;
+const MIN_PAGE_W = 760;
+
+function subscribeToViewport(update: () => void) {
+  window.addEventListener("resize", update);
+  return () => window.removeEventListener("resize", update);
+}
+
+const readViewport = () => window.innerWidth;
+const serverViewport = () => 0;
 
 function Assistant() {
   const [open, setOpen] = useState(false);
@@ -62,24 +78,32 @@ function Assistant() {
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<{ text: string; error: string } | null>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const latestReportRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
-  const [width, setWidth] = useState(DEFAULT_W);
+  const [preferredWidth, setPreferredWidth] = useState<number | null>(null);
   const [resizing, setResizing] = useState(false);
   const restored = useRef(false);
+  const viewport = useSyncExternalStore(subscribeToViewport, readViewport, serverViewport);
+  const split = viewport >= SPLIT_AT;
+  const maxWidth = split ? Math.min(MAX_W, viewport - MIN_PAGE_W) : MAX_W;
+  const clampWidth = (value: number) => Math.round(Math.max(MIN_W, Math.min(maxWidth, value)));
+  const width = clampWidth(preferredWidth ?? viewport * 0.3);
 
   useEffect(() => {
     try {
       const saved = Number(localStorage.getItem(WIDTH_KEY));
       // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage는 마운트 뒤에만 읽을 수 있다
-      if (saved) setWidth(clampWidth(saved));
+      if (saved >= MIN_W && saved <= MAX_W) setPreferredWidth(saved);
     } catch {}
   }, []);
 
   function resizeTo(w: number) {
     const next = clampWidth(w);
-    setWidth(next);
+    setPreferredWidth(next);
     try {
       localStorage.setItem(WIDTH_KEY, String(next));
     } catch {}
@@ -105,6 +129,7 @@ function Assistant() {
                 role: m.role === "user" ? "user" : "ai",
                 text: m.content,
                 citations: m.citations,
+                reports: m.reports,
                 action: m.action?.type === "OPEN_ACCOUNT" ? m.action : undefined, // 가입 카드는 링크일 뿐이라 다시 그려도 안전하다
               })),
         );
@@ -117,26 +142,44 @@ function Assistant() {
   // 열면 입력창으로, 닫으면 여는 버튼으로 포커스를 옮긴다
   useEffect(() => {
     if (open) inputRef.current?.focus();
-    else if (wasOpen.current) launcherRef.current?.focus();
+    else if (wasOpen.current) {
+      const previous = returnFocusRef.current;
+      (previous?.isConnected ? previous : launcherRef.current)?.focus();
+    }
     wasOpen.current = open;
   }, [open]);
 
-  // 넓은 화면에서 본문을 패널 폭만큼 밀어낸다 (globals.css). 로그아웃으로 사라질 때도 지운다
   useEffect(() => {
-    document.body.toggleAttribute("data-assistant-open", open);
-    document.body.toggleAttribute("data-assistant-resizing", resizing);
-    // 나중에 창을 줄여도 본문 자리가 남도록 CSS에서도 한 번 더 제한한다
-    document.body.style.setProperty("--assistant-w", `clamp(${MIN_W}px, ${width}px, 100vw - 560px)`);
+    if (open && !split && !panelRef.current?.contains(document.activeElement)) {
+      inputRef.current?.focus();
+    }
+  }, [open, split]);
+
+  // 좁은 창의 겹침 패널은 본문 스크롤과 키보드 탐색을 잠근다.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const page = document.getElementById("bank-page");
+    document.body.toggleAttribute("data-assistant-open", split);
+    document.body.toggleAttribute("data-assistant-modal", !split);
+    document.body.toggleAttribute("data-assistant-resizing", split && resizing);
+    document.body.style.setProperty("--assistant-w", `${width}px`);
+    if (page) page.inert = !split;
     return () => {
       document.body.removeAttribute("data-assistant-open");
+      document.body.removeAttribute("data-assistant-modal");
       document.body.removeAttribute("data-assistant-resizing");
       document.body.style.removeProperty("--assistant-w");
+      if (page) page.inert = false;
     };
-  }, [open, width, resizing]);
+  }, [open, split, width, resizing]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, sending, failed]);
+    if (!sending && !failed && latestReportRef.current) {
+      latestReportRef.current.scrollIntoView({ block: "start" });
+    } else {
+      endRef.current?.scrollIntoView({ block: "end" });
+    }
+  }, [open, messages, sending, failed]);
 
   const add = (m: Omit<Msg, "id">) => setMessages((ms) => [...ms, { ...m, id: nextId++ }]);
 
@@ -153,12 +196,44 @@ function Assistant() {
       const r = await agent.chat(text, conversationId);
       setConversationId(r.conversation_id);
       convo.set(r.conversation_id);
-      add({ role: "ai", text: r.answer, action: r.action ?? undefined, citations: r.citations });
+      add({
+        role: "ai",
+        text: r.answer,
+        action: r.action ?? undefined,
+        citations: r.citations,
+        reports: r.reports,
+      });
     } catch (e) {
       // 로그인 만료(401)는 api()가 세션을 지우고 로그인 화면으로 보낸다
       setFailed({ text, error: (e as Error).message });
     } finally {
       setSending(false);
+    }
+  }
+
+  function showAssistant() {
+    if (open) return;
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setOpen(true);
+  }
+
+  function handlePanelKey(e: KeyboardEvent<HTMLElement>) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    }
+    if (e.key !== "Tab" || split) return;
+    const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(
+      'a[href], button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
+    )).filter((element) => element.getClientRects().length && element.tabIndex >= 0);
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (e.shiftKey && e.target === first) {
+      e.preventDefault();
+      last?.focus();
+    } else if (!e.shiftKey && e.target === last) {
+      e.preventDefault();
+      first?.focus();
     }
   }
 
@@ -168,10 +243,11 @@ function Assistant() {
   useEffect(() => {
     const onAsk = (e: Event) => {
       const detail = (e as CustomEvent<string | AssistantAsk>).detail;
-      setOpen(true);
-      if (typeof detail === "string") setInput(detail.slice(0, 1000));
-      else if (typeof detail?.text === "string") {
-        const text = detail.text.slice(0, 1000);
+      showAssistant();
+      if (typeof detail === "string") {
+        setInput(detail.slice(0, 1000));
+      } else if (typeof detail?.text === "string") {
+        const text = detail.text.slice(0, 1000).trim();
         if (sending) setInput(text);
         else send(text);
       }
@@ -199,7 +275,7 @@ function Assistant() {
           type="button"
           aria-label="AI 금융 비서 열기"
           aria-haspopup="dialog"
-          onClick={() => setOpen(true)}
+          onClick={showAssistant}
           className="fixed right-4 bottom-24 z-20 flex size-12 items-center justify-center gap-1.5 rounded-full bg-coral text-sm font-semibold text-paper shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral md:right-8 md:bottom-8 xl:h-auto xl:min-h-11 xl:w-auto xl:px-3.5"
         >
           <svg viewBox="0 0 24 24" className="size-5 fill-none stroke-current stroke-[1.8] xl:size-4" aria-hidden>
@@ -210,31 +286,36 @@ function Assistant() {
         </button>
       )}
 
+      {open && !split && <div aria-hidden="true" className="fixed inset-0 z-30 hidden bg-ink/20 md:block" onClick={() => setOpen(false)} />}
       {open && (
         <section
+          ref={panelRef}
           role="dialog"
+          aria-modal={split ? undefined : true}
           aria-label="AI 금융 비서"
-          onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-          className="fixed inset-0 z-30 flex flex-col bg-porcelain text-sm lg:left-auto lg:w-(--assistant-w) lg:border-l lg:border-line"
+          onKeyDown={handlePanelKey}
+          className="fixed inset-0 z-40 flex flex-col bg-porcelain text-sm md:left-auto md:w-(--assistant-w) md:border-l md:border-line"
         >
-          <div
+          {split && <div
             role="separator"
             aria-orientation="vertical"
             aria-label="AI 금융 비서 폭 조절"
             aria-valuenow={width}
             aria-valuemin={MIN_W}
-            aria-valuemax={MAX_W}
+            aria-valuemax={maxWidth}
             tabIndex={0}
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId);
               setResizing(true);
             }}
-            onPointerMove={(e) => resizing && setWidth(clampWidth(window.innerWidth - e.clientX))}
+            onPointerMove={(e) => {
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) setPreferredWidth(clampWidth(window.innerWidth - e.clientX));
+            }}
             onPointerUp={(e) => {
               e.currentTarget.releasePointerCapture(e.pointerId);
-              setResizing(false);
               resizeTo(window.innerWidth - e.clientX);
             }}
+            onLostPointerCapture={() => setResizing(false)}
             onKeyDown={(e) => {
               // 패널이 오른쪽에 붙어 있어서 ←는 넓히기, →는 좁히기
               if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
@@ -248,10 +329,13 @@ function Assistant() {
               aria-hidden
               className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors group-hover:bg-coral group-focus-visible:bg-coral ${resizing ? "bg-coral" : "bg-transparent"}`}
             />
-          </div>
+          </div>}
           <header className="flex items-center gap-1 border-b border-line bg-paper px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
-            <h2 className="flex-1 px-1 text-base font-bold">AI 금융 비서</h2>
-            <button type="button" onClick={reset} aria-label="새 대화 시작" className="min-h-11 rounded-full px-3 text-sm text-slate hover:bg-coral-soft hover:text-ink">
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-1">
+              <SpiderMascot className="size-7 shrink-0 text-coral" />
+              <h2 className="text-base font-bold">AI 금융 비서</h2>
+            </div>
+            <button type="button" onClick={reset} disabled={sending} aria-label="새 대화 시작" className="min-h-11 shrink-0 rounded-full px-3 text-sm text-slate hover:bg-coral-soft hover:text-ink disabled:opacity-50">
               새 대화
             </button>
             <button type="button" onClick={() => setOpen(false)} aria-label="AI 금융 비서 닫기" className={iconBtn}>
@@ -261,7 +345,7 @@ function Assistant() {
             </button>
           </header>
 
-          <div aria-live="polite" className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+          <div aria-live="polite" className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
             {messages.length === 0 && (
               <div className="space-y-3">
                 <p className="text-slate">계좌·카드·이체를 물어보세요. 이체는 확인 카드에서 직접 눌러야 실행됩니다.</p>
@@ -284,16 +368,40 @@ function Assistant() {
 
             {messages.map((m) =>
               m.role === "user" ? (
-                <p key={m.id} className="msg-in ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm bg-coral px-3.5 py-2 whitespace-pre-wrap text-paper">
+                <p key={m.id} className="msg-in ml-auto w-fit max-w-[88%] rounded-2xl bg-coral-soft px-3.5 py-2.5 leading-relaxed wrap-anywhere whitespace-pre-wrap text-ink">
                   <span className="sr-only">나: </span>
                   {m.text}
                 </p>
               ) : (
-                <div key={m.id} className="msg-in max-w-[92%] space-y-2">
-                  <div className="w-fit rounded-2xl rounded-bl-sm border border-line bg-paper px-3.5 py-2.5">
-                    <span className="sr-only">AI 비서: </span>
-                    <RichText text={m.text} />
-                  </div>
+                <div
+                  key={m.id}
+                  ref={m.reports?.length && m === messages.at(-1) ? latestReportRef : undefined}
+                  className={`msg-in space-y-2 ${m.reports?.length ? "w-full" : "max-w-[94%]"}`}
+                >
+                  <span className="sr-only">AI 비서: </span>
+                  {m.reports?.length ? (
+                    <>
+                      <FinancialReportCard report={m.reports[0]} />
+                      {m.text.trim() && (
+                        <details className="rounded-2xl border border-line bg-paper px-4">
+                          <summary className="cursor-pointer py-3 font-semibold text-slate focus-visible:outline-coral">AI 설명 보기</summary>
+                          <div className="pb-4 wrap-anywhere"><RichText text={m.text} /></div>
+                        </details>
+                      )}
+                      {m.reports.length > 1 && (
+                        <details className="rounded-2xl border border-line bg-paper px-4">
+                          <summary className="cursor-pointer py-3 font-semibold text-slate focus-visible:outline-coral">함께 조회한 리포트 {m.reports.length - 1}개 보기</summary>
+                          <div className="space-y-3 pb-4">
+                            {m.reports.slice(1).map((report, index) => <FinancialReportCard key={index} report={report} />)}
+                          </div>
+                        </details>
+                      )}
+                    </>
+                  ) : (
+                    <div className="w-fit rounded-2xl border border-line bg-paper px-3.5 py-2.5 wrap-anywhere">
+                      <RichText text={m.text} />
+                    </div>
+                  )}
                   {!!m.citations?.length && (
                     <ul aria-label="근거 약관" className="flex flex-wrap gap-1.5">
                       {m.citations.map((c, i) => {
@@ -317,7 +425,7 @@ function Assistant() {
                   )}
                   {m.action?.type === "OPEN_ACCOUNT" && (
                     // 좁은 화면에서는 비서가 화면을 덮으므로, 가입 화면으로 가기 전에 닫는다
-                    <OpenAccountCard action={m.action} onGo={() => window.innerWidth < 1024 && setOpen(false)} />
+                    <OpenAccountCard action={m.action} onGo={() => !split && setOpen(false)} />
                   )}
                 </div>
               ),
@@ -372,16 +480,16 @@ function Assistant() {
                   send(input);
                 }
               }}
-              placeholder="무엇이든 물어보세요"
-              className="max-h-32 min-h-11 flex-1 resize-none rounded-xl border border-line px-3 py-2.5 outline-none focus:border-coral focus-visible:ring-2 focus-visible:ring-coral/20"
+              placeholder="돈 관리에 대해 물어보세요"
+              className="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-line px-3 py-2.5 outline-none focus:border-coral focus-visible:ring-2 focus-visible:ring-coral/20"
             />
             <button
               type="submit"
               disabled={sending || !input.trim()}
               aria-label="질문 보내기"
-              className="min-h-11 rounded-xl bg-coral px-4 font-medium text-paper disabled:opacity-50"
+              className="grid size-11 shrink-0 place-items-center rounded-xl bg-coral text-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-coral disabled:opacity-50"
             >
-              전송
+              <span aria-hidden="true" className="text-xl leading-none">↑</span>
             </button>
           </form>
         </section>

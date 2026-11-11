@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import { DailyBanner } from "@/components/DailyDesign";
 import { Skeleton } from "@/components/home/bits";
 import { CategoryList, ForecastCard, PaceCard, RecurringEntry, ReviewBanner, UpcomingCard } from "@/components/money/summary/sections";
 import { currentMonth, monthLabel, shiftMonth } from "@/components/money/summary/format";
@@ -32,7 +33,7 @@ function MoneyHome() {
   const go = (m: string) => router.replace(`/money?month=${m}`, { scroll: false });
 
   return (
-    <div className="space-y-4">
+    <div className="daily-money space-y-5">
       <MonthHeader month={month} canNext={month < now} onPrev={() => go(shiftMonth(month, -1))} onNext={() => go(shiftMonth(month, 1))} />
       {/* 월·재시도·재방문마다 새로 불러온다 */}
       <SummaryView key={`${month}-${tries}-${visit}`} month={month} onRetry={() => setTries((t) => t + 1)} />
@@ -105,21 +106,28 @@ function SummaryView({ month, onRetry }: { month: string; onRetry: () => void })
         </div>
       ) : (
         <>
-          <ForecastCard month={month} forecast={forecast} />
-          <PaceCard month={month} pace={pace} current={current} />
+          <DailyBanner money />
+          <div className="daily-money-overview">
+            <ForecastCard month={month} forecast={forecast} />
+            <PaceCard month={month} pace={pace} current={current} />
+          </div>
           <button
             type="button"
             onClick={() => askAssistant(higher ? `${label} 소비가 평소보다 왜 늘었는지 알려줘` : `${label} 소비를 요약해서 알려줘`)}
-            className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-line bg-paper text-sm font-medium text-coral hover:border-coral"
+            className="daily-ask flex min-h-12 w-full items-center justify-center gap-1.5 rounded-2xl border border-coral/20 bg-coral-soft/50 px-4 text-sm font-semibold text-coral hover:bg-coral-soft"
           >
             {higher ? "왜 늘었지?" : "이번 달 소비 물어보기"}
           </button>
         </>
       )}
 
-      <UpcomingCard month={month} items={data.upcoming.slice(0, 3)} total={data.upcoming_total} />
-      {!empty && <CategoryList month={month} items={data.categories} current={current} />}
-      <RecurringEntry reviewCount={data.review_count} />
+      <div className={empty ? "" : "daily-money-details"}>
+        <div className="grid min-w-0 gap-3">
+          <UpcomingCard month={month} items={data.upcoming.slice(0, 3)} total={data.upcoming_total} />
+          <RecurringEntry reviewCount={data.review_count} />
+        </div>
+        {!empty && <CategoryList month={month} items={data.categories} current={current} />}
+      </div>
     </>
   );
 }

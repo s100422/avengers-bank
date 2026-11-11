@@ -14,7 +14,7 @@ export function AssetSummaryCard({
   onToggle: () => void;
 }) {
   return (
-    <section aria-labelledby="asset-title" className="rounded-3xl bg-paper p-6">
+    <section aria-labelledby="asset-title" className="daily-card daily-assets p-6 sm:p-8">
       <div className="flex items-center justify-between gap-2">
         <h2 id="asset-title" className="font-semibold">
           내 자산 현황

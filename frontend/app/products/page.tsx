@@ -425,7 +425,7 @@ function Catalog({
           const fav = favs.includes(favoriteKey(p.type, p.product_id));
           return (
             <li key={`${p.type}-${p.product_id}`} className="relative">
-              <Link href={href(p)} className="block h-full rounded-3xl border border-line bg-paper p-6 pr-16 hover:border-coral">
+              <Link href={href(p)} className="daily-card block h-full p-6 pr-16 hover:border-coral">
                 <span className="block text-xl font-bold">{productName(p.type, p.name)}</span>
                 <span className="mt-1 block text-slate">{productDescription(p.type, p.description)}</span>
                 <span className="mt-4 block">

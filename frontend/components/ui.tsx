@@ -48,12 +48,9 @@ function Nav() {
   return (
     <nav
       aria-label="주 메뉴"
-      className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)] md:inset-y-0 md:right-auto md:w-60 md:border-t-0 md:border-r md:px-4 md:py-6"
+      className="daily-nav fixed inset-x-0 bottom-0 z-10 border-t border-line bg-paper pb-[env(safe-area-inset-bottom)] md:static md:mb-7 md:rounded-2xl md:border md:p-1.5"
     >
-      <div className="mb-8 hidden px-3 md:block">
-        <Brand />
-      </div>
-      <ul className="grid grid-cols-4 md:grid-cols-1 md:gap-1">
+      <ul className="grid grid-cols-4 gap-1">
         {TABS.map((t) => {
           const on = t.href === active;
           return (
@@ -61,8 +58,8 @@ function Nav() {
               <Link
                 href={t.href}
                 aria-current={on ? "page" : undefined}
-                className={`flex flex-col items-center gap-0.5 py-2 text-xs md:flex-row md:gap-3 md:rounded-xl md:px-3 md:py-2.5 md:text-[15px] ${
-                  on ? "font-semibold text-coral md:bg-coral-soft" : "text-slate hover:text-ink"
+                className={`flex flex-col items-center gap-0.5 py-2 text-xs md:flex-row md:justify-center md:gap-2 md:rounded-xl md:px-3 md:py-3 md:text-sm ${
+                  on ? "font-semibold text-coral md:bg-coral-soft/70" : "text-slate hover:text-ink"
                 }`}
               >
                 <svg viewBox="0 0 24 24" className={icon} aria-hidden>
@@ -79,9 +76,11 @@ function Nav() {
 }
 
 // 로그인이 필요한 화면의 틀. 갱신 토큰이 없으면 로그인으로 보낸다.
-// 모든 화면이 같은 폭(max-w-xl)으로 가운데에 놓인다. 화면마다 폭이 달라 UI가 흔들리던 것을 막기 위해 하나로 맞췄다.
+// 요약 화면은 넓게, 입력·상세 화면은 읽기 편한 폭으로 중앙 정렬한다.
 export function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const path = usePathname();
+  const overview = ["/accounts", "/money", "/products"].includes(path);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -94,10 +93,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   if (!ready) return null;
   return (
     <>
-      <div className="md:pl-60">
-        <div className="mx-auto w-full max-w-xl px-4 pb-40 md:px-10 md:pt-10 md:pb-24">
-          <header className="flex items-center justify-between gap-3 py-5 md:justify-end md:pt-0">
-            <span className="md:hidden">
+      <div className="daily-shell">
+        <div className="mx-auto w-full max-w-5xl px-4 pb-40 sm:px-6 md:pt-3 md:pb-24">
+          <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-5 sm:py-6">
+            <span>
               <Brand />
             </span>
             <div className="flex items-center gap-1"><NotificationBell />
@@ -108,10 +107,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </Link>
               <SessionTimer /></div>
           </header>
-          {children}
+          <Nav />
+          <main className={overview ? "daily-main" : "daily-main mx-auto max-w-xl"}>{children}</main>
         </div>
       </div>
-      <Nav />
     </>
   );
 }
