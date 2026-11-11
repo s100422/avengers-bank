@@ -1,0 +1,223 @@
+.transfer-stamp-page {
+  width: min(100% - 2rem, 72rem);
+  margin-inline: auto;
+  padding-block: 2rem 3rem;
+}
+
+.transfer-stamp-brand {
+  display: flex;
+  align-items: center;
+  gap: .625rem;
+  font-size: 1.125rem;
+}
+
+.transfer-stamp-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block: 2rem 1.5rem;
+}
+
+.transfer-stamp-intro h1 {
+  margin: 0 0 .25rem;
+  font-size: clamp(1.65rem, 3vw, 2.25rem);
+  font-weight: 750;
+}
+
+.transfer-stamp-intro p, .transfer-stamp-caption p, .transfer-stamp-sample { color: var(--slate); }
+
+.transfer-stamp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+}
+
+.transfer-stamp-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 1rem;
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 1.5rem;
+  background: var(--paper);
+  box-shadow: 0 3px 0 rgb(206 129 108 / 5%), 0 8px 24px rgb(90 48 35 / 4%);
+}
+
+.transfer-stamp-caption { min-height: 5.4rem; }
+.transfer-stamp-caption h2 { margin: 0 0 .375rem; font-size: 1.15rem; font-weight: 750; }
+.transfer-stamp-caption p { font-size: .9rem; line-height: 1.55; word-break: keep-all; }
+
+.transfer-stamp-preview {
+  overflow: hidden;
+  padding: .75rem .5rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 1.15rem;
+  background: linear-gradient(180deg, var(--porcelain), var(--paper) 75%);
+  text-align: center;
+}
+
+.transfer-stamp-stage {
+  display: grid;
+  width: min(100%, 20rem);
+  margin-inline: auto;
+  place-items: center;
+  color: var(--seal);
+}
+
+.transfer-stamp-stage > * { grid-area: 1 / 1; }
+
+.transfer-stamp-scene {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 300 / 134;
+  overflow: hidden;
+}
+
+.transfer-stamp-launch, .transfer-stamp-web, .transfer-stamp-spark {
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transfer-stamp-launch {
+  stroke-width: 2.8;
+  stroke-dasharray: 100;
+  opacity: 0;
+  animation: transfer-stamp-launch-thread calc(var(--stamp-impact) + 80ms) cubic-bezier(.28, .55, .56, 1) both;
+}
+
+.transfer-stamp-web {
+  stroke-width: 1.4;
+  opacity: 0;
+  transform-origin: center;
+  animation: transfer-stamp-weave-thread 280ms ease-out calc(var(--stamp-impact) - 155ms) both;
+}
+
+.transfer-stamp-spark {
+  stroke-width: 1.8;
+  opacity: 0;
+  transform-origin: center;
+  animation: transfer-stamp-thread-spark 240ms ease-out var(--stamp-impact) both;
+}
+
+.transfer-stamp-seal {
+  --seal-tilt: -9deg;
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: clamp(3.875rem, 7vw, 5.25rem);
+  aspect-ratio: 1;
+  border: 3px solid currentColor;
+  border-radius: .4rem;
+  background: color-mix(in srgb, var(--paper) 94%, var(--seal));
+  font-size: clamp(1.125rem, 2.2vw, 1.5rem);
+  font-weight: 850;
+  letter-spacing: .045em;
+  line-height: 1;
+  transform: rotate(var(--seal-tilt));
+  animation: transfer-stamp-press 250ms linear calc(var(--stamp-impact) - 95ms) both;
+}
+
+.transfer-stamp-seal::before {
+  position: absolute;
+  inset: .24rem;
+  border: 1px solid currentColor;
+  border-radius: inherit;
+  opacity: .48;
+  content: "";
+}
+
+[data-stamp="wide"] .transfer-stamp-seal {
+  --seal-tilt: 2deg;
+  inline-size: clamp(5rem, 11vw, 6.75rem);
+  aspect-ratio: 1.7;
+}
+
+[data-stamp="weave"] .transfer-stamp-seal {
+  --seal-tilt: -5deg;
+  inline-size: clamp(5.5rem, 11vw, 7.25rem);
+  border: 0;
+  background: transparent;
+  font-size: clamp(1rem, 2vw, 1.3rem);
+}
+
+[data-stamp="weave"] .transfer-stamp-seal::before { content: none; }
+
+.transfer-stamp-web-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.transfer-stamp-web-rim {
+  fill: color-mix(in srgb, var(--paper) 94%, var(--seal));
+  stroke-width: 2.7;
+}
+
+.transfer-stamp-web-threads { stroke-width: 1.5; opacity: .7; }
+
+.transfer-stamp-web-hub {
+  fill: color-mix(in srgb, var(--paper) 94%, var(--seal));
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.transfer-stamp-seal-label { position: relative; }
+
+.transfer-stamp-complete { margin: .125rem 0 .25rem; font-weight: 700; }
+.transfer-stamp-amount { margin: 0; font-size: 1.5rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.transfer-stamp-sample { margin: .125rem 0 0; font-size: .75rem; }
+
+.transfer-stamp-replay {
+  min-height: 2.75rem;
+  padding: .5rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: .8rem;
+  background: var(--paper);
+  color: var(--seal);
+  cursor: pointer;
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+.transfer-stamp-replay:hover { background: var(--coral-soft); }
+.transfer-stamp-replay:focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
+
+@keyframes transfer-stamp-launch-thread {
+  0% { opacity: 0; stroke-dashoffset: 100; }
+  14% { opacity: .95; }
+  76% { opacity: .95; stroke-dashoffset: 0; }
+  100% { opacity: 0; stroke-dashoffset: 0; }
+}
+
+@keyframes transfer-stamp-weave-thread {
+  0% { opacity: 0; transform: scale(.15); }
+  30% { opacity: .45; transform: scale(1); }
+  65% { opacity: .32; transform: scale(1); }
+  100% { opacity: 0; transform: scale(.75); }
+}
+
+@keyframes transfer-stamp-thread-spark {
+  0% { opacity: 0; transform: scale(.72); }
+  24% { opacity: .85; }
+  100% { opacity: 0; transform: scale(1.18); }
+}
+
+@keyframes transfer-stamp-press {
+  0% { opacity: 0; transform: translateY(-.8rem) rotate(var(--seal-tilt)) scale(1.48); }
+  18% { opacity: .55; }
+  38% { opacity: 1; transform: rotate(var(--seal-tilt)) scale(.92); }
+  64% { transform: rotate(var(--seal-tilt)) scale(1.04); }
+  100% { opacity: 1; transform: rotate(var(--seal-tilt)) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transfer-stamp-seal, .transfer-stamp-launch, .transfer-stamp-web, .transfer-stamp-spark { animation: none; }
+}
