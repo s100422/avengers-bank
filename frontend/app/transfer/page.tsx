@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AccountPasswordField, MoneyErrorText } from "@/components/account-password";
 import { Button, Shell } from "@/components/ui";
+import { TransferStamp } from "@/components/TransferStamp";
 import {
   AccountSummary,
   ApiError,
@@ -446,7 +447,11 @@ function Transfer() {
     const remain = own?.balance_after ?? inter?.balance_after ?? 0;
     return (
       <section className="daily-card mt-10 p-6 text-center">
-        <span className="seal stamp size-20 text-lg">{pending ? "처리 중" : failed ? "실패" : "완료"}</span>
+        {pending || failed ? (
+          <span className="seal stamp size-20 text-lg">{pending ? "처리 중" : "실패"}</span>
+        ) : (
+          <TransferStamp />
+        )}
         <h1 className="mt-6 text-2xl font-semibold">{pending ? "이체를 처리하고 있습니다" : failed ? "이체에 실패했습니다" : "이체됐습니다!"}</h1>
         <p className="mt-3 text-3xl font-semibold tabular-nums">{won(sent)}</p>
         <p className="mt-2 text-slate tabular-nums">
