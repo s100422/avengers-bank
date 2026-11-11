@@ -8,6 +8,7 @@ import { askAssistant } from "@/lib/ask-assistant";
 import { money, type CategorySpend, type Summary } from "@/lib/money";
 import { BackLink, Chip, baselinePeriod, Empty, LoadState, MonthNav, card, monthLabel, outlineBtn, useLoad, useMonth, withMonth } from "@/components/money/detail/common";
 import { ScheduleRow } from "@/components/money/detail/ScheduleRow";
+import { WeeklyBars } from "@/components/money/summary/PaceChart";
 import { TxnList } from "@/components/money/detail/TxnRow";
 
 export default function AnalysisPage() {
@@ -128,6 +129,9 @@ function AnalysisBody({ s, month }: { s: Summary; month: string }) {
             ? "비교할 지난 기록이 없어요."
             : `${s.pace.today_day}일까지 평소 같은 시점보다 ${pct(s.pace.diff_rate)} ${s.pace.diff_rate >= 0 ? "많이" : "적게"} 썼어요.`}
         </p>
+
+        <h3 className="mt-6 text-sm text-slate">주별 소비 (이번 달 vs 평소)</h3>
+        <WeeklyBars pace={s.pace} />
 
         {higher.length > 0 && <CategoryLinks title="평소보다 늘어난 항목" items={higher} month={month} />}
         {lower.length > 0 && <CategoryLinks title="평소보다 줄어든 항목" items={lower} month={month} />}

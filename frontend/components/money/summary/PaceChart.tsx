@@ -1,57 +1,126 @@
+import { won } from "@/lib/api";
 import type { Pace } from "@/lib/money";
 import { manwon } from "./format";
 
-const W = 300;
-const H = 120;
-const PAD = { l: 4, r: 4, t: 8, b: 18 };
+// 평소(기준) 막대 색. 이번 달은 coral. 색만으로 구분하지 않게 모든 막대에 글자 라벨을 붙인다
+const USUAL = "#8c8079";
 
-// 누적 소비 그래프 (차트 라이브러리 없이 직접 그린다). 실선 = 실제, 점선 = 예상, 회색 = 평소
-export function PaceChart({ pace }: { pace: Pace }) {
-  const { actual_cumulative: actual, projected_cumulative: projected, baseline_cumulative: baseline, days_in_month: n } = pace;
-  const max = Math.max(1, ...actual, ...projected, ...(baseline ?? []));
-  const x = (day: number) => PAD.l + ((day - 1) / Math.max(1, n - 1)) * (W - PAD.l - PAD.r);
-  const y = (v: number) => H - PAD.b - (v / max) * (H - PAD.t - PAD.b);
-  const path = (pts: [number, number][]) => pts.map(([d, v], i) => `${i ? "L" : "M"}${x(d).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-
-  const actualPts = actual.map((v, i) => [i + 1, v] as [number, number]);
-  // 예상선은 마지막 실제 점에서 이어 그린다
-  const projPts: [number, number][] = [
-    ...actualPts.slice(-1),
-    ...projected.map((v, i) => [actual.length + i + 1, v] as [number, number]),
+// 요약 탭: 오늘까지 쓴 돈 vs 평소 같은 시점, 가로 막대 2줄 (같은 눈금)
+export function PaceBars({ pace, current }: { pace: Pace; current: boolean }) {
+  const day = pace.today_day;
+  const actual = pace.actual_cumulative[day - 1] ?? 0;
+  const usual = pace.baseline_cumulative ? pace.baseline_cumulative[day - 1] ?? 0 : null;
+  const max = Math.max(1, actual, usual ?? 0);
+  const rows = [
+    { label: current ? "이번 달 · 오늘까지" : "이 달", value: actual, color: "var(--coral)" },
+    ...(usual === null ? [] : [{ label: current ? "평소 같은 시점" : "평소", value: usual, color: USUAL }]),
   ];
-  const basePts = baseline?.map((v, i) => [i + 1, v] as [number, number]);
-
-  const lastActual = actual.at(-1) ?? 0;
-  const label =
-    `누적 소비 그래프. ${pace.today_day}일까지 실제 ${manwon(lastActual)}` +
-    (projected.length ? `, 월말 예상 ${manwon(projected.at(-1)!)}` : "") +
-    (baseline ? `, 평소 같은 시점 ${manwon(baseline[Math.max(0, actual.length - 1)] ?? 0)}, 평소 월말 ${manwon(baseline.at(-1) ?? 0)}` : "");
-
   return (
-    <figure className="mt-3">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} className="h-auto w-full">
-        <line x1={PAD.l} x2={W - PAD.r} y1={H - PAD.b} y2={H - PAD.b} className="stroke-line" strokeWidth={1} />
-        {basePts && <path d={path(basePts)} fill="none" className="stroke-slate/40" strokeWidth={2} strokeLinejoin="round" />}
-        {projPts.length > 1 && (
-          <path d={path(projPts)} fill="none" className="stroke-coral" strokeWidth={2} strokeDasharray="4 4" strokeLinejoin="round" />
+    <dl className="mt-4 space-y-3">
+      {rows.map((r) => (
+        <div key={r.label}>
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <dt className="text-slate">{r.label}</dt>
+            <dd className="font-semibold tabular-nums">{won(r.value)}</dd>
+          </div>
+          <div aria-hidden className="mt-1 h-3 rounded-sm bg-porcelain">
+            <div className="h-3 min-w-[2px] rounded-r-[4px]" style={{ width: `${(r.value / max) * 100}%`, background: r.color }} />
+          </div>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+type Week = { label: string; actual: number; projected: number; usual: number | null };
+
+// 누적 배열에서 주별(1~7일, 8~14일 …) 금액을 만든다. 오늘이 낀 주는 실제와 예상으로 나눈다
+export function weeks(pace: Pace): Week[] {
+  const n = pace.days_in_month;
+  const full = [...pace.actual_cumulative, ...pace.projected_cumulative];
+  const at = (arr: number[], d: number) => (d <= 0 ? 0 : arr[Math.min(d, arr.length) - 1] ?? 0);
+  const out: Week[] = [];
+  for (let start = 1; start <= n; start += 7) {
+    const end = Math.min(start + 6 > 28 ? n : start + 6, n); // 29일~말일은 한 묶음
+    const cut = Math.min(end, pace.today_day);
+    const actual = Math.max(0, at(pace.actual_cumulative, cut) - at(pace.actual_cumulative, start - 1));
+    const total = at(full, end) - at(full, start - 1);
+    out.push({
+      label: `${start}~${end}일`,
+      actual: start > pace.today_day ? 0 : actual,
+      projected: Math.max(0, total - (start > pace.today_day ? 0 : actual)),
+      usual: pace.baseline_cumulative ? at(pace.baseline_cumulative, end) - at(pace.baseline_cumulative, start - 1) : null,
+    });
+    if (end === n) break;
+  }
+  return out;
+}
+
+const BAR_H = 120;
+
+// 분석 상세: 주별로 이번 달(실제 + 예상)과 평소를 나란히. 언제부터 늘었는지 보인다
+export function WeeklyBars({ pace }: { pace: Pace }) {
+  const data = weeks(pace);
+  const max = Math.max(1, ...data.map((w) => Math.max(w.actual + w.projected, w.usual ?? 0)));
+  const h = (v: number) => Math.round((v / max) * BAR_H);
+  const hasProjected = data.some((w) => w.projected > 0);
+  const hasUsual = data.some((w) => w.usual !== null);
+  return (
+    <figure className="mt-3 rounded-2xl bg-paper p-4">
+      <div className="flex items-end gap-2" aria-hidden>
+        {data.map((w) => {
+          const total = w.actual + w.projected;
+          return (
+            <div key={w.label} className="flex min-w-0 flex-1 flex-col items-center">
+              <p className="mb-1 text-[11px] text-slate tabular-nums">{total > 0 ? manwon(total).replace(" 원", "") : ""}</p>
+              <div className="flex items-end gap-[2px]" style={{ height: BAR_H }}>
+                <div className="flex w-4 flex-col justify-end gap-[2px] sm:w-5" title={`${w.label} 이번 달: 실제 ${won(w.actual)}${w.projected ? `, 예상 약 ${won(w.projected)}` : ""}`}>
+                  {w.projected > 0 && (
+                    <div
+                      className="rounded-t-[4px] border border-dashed border-coral bg-coral-soft"
+                      style={{ height: Math.max(3, h(w.projected)) }}
+                    />
+                  )}
+                  {w.actual > 0 && (
+                    <div className={`bg-coral ${w.projected > 0 ? "" : "rounded-t-[4px]"}`} style={{ height: Math.max(2, h(w.actual)) }} />
+                  )}
+                </div>
+                {w.usual !== null && (
+                  <div
+                    className="w-4 rounded-t-[4px] sm:w-5"
+                    title={`${w.label} 평소: ${won(w.usual)}`}
+                    style={{ height: Math.max(w.usual > 0 ? 2 : 0, h(w.usual)), background: USUAL }}
+                  />
+                )}
+              </div>
+              <p className="mt-1 w-full truncate border-t border-line pt-1 text-center text-[11px] text-slate">{w.label}</p>
+            </div>
+          );
+        })}
+      </div>
+      <figcaption className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate">
+        <span className="flex items-center gap-1.5"><i className="inline-block size-2.5 rounded-[2px] bg-coral" />이번 달 실제</span>
+        {hasProjected && (
+          <span className="flex items-center gap-1.5"><i className="inline-block size-2.5 rounded-[2px] border border-dashed border-coral bg-coral-soft" />이번 달 예상</span>
         )}
-        {actualPts.length > 0 && (
-          <path d={path(actualPts)} fill="none" className="stroke-coral" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
+        {hasUsual && (
+          <span className="flex items-center gap-1.5"><i className="inline-block size-2.5 rounded-[2px]" style={{ background: USUAL }} />평소</span>
         )}
-        {actualPts.length > 0 && <circle cx={x(actual.length)} cy={y(lastActual)} r={3.5} className="fill-coral" />}
-        {[1, Math.ceil(n / 2), n].map((d) => (
-          <text key={d} x={x(d)} y={H - 4} textAnchor={d === 1 ? "start" : d === n ? "end" : "middle"} className="fill-slate text-[9px]">
-            {d}일
-          </text>
-        ))}
-      </svg>
-      <figcaption className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate" aria-hidden>
-        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-coral" />실제</span>
-        {projected.length > 0 && (
-          <span className="flex items-center gap-1.5"><span className="w-4 border-t-2 border-dashed border-coral" />예상</span>
-        )}
-        {baseline && <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-slate/40" />평소</span>}
       </figcaption>
+      {/* 화면 읽기 프로그램용 표 */}
+      <table className="sr-only">
+        <caption>주별 소비: 이번 달과 평소</caption>
+        <thead>
+          <tr><th scope="col">기간</th><th scope="col">이번 달 실제</th><th scope="col">이번 달 예상</th><th scope="col">평소</th></tr>
+        </thead>
+        <tbody>
+          {data.map((w) => (
+            <tr key={w.label}>
+              <th scope="row">{w.label}</th><td>{won(w.actual)}</td><td>{won(w.projected)}</td><td>{w.usual === null ? "없음" : won(w.usual)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </figure>
   );
 }

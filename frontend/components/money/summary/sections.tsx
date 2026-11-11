@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { won } from "@/lib/api";
 import type { CategorySpend, Forecast, Pace, PaceStatus, ScheduledItem } from "@/lib/money";
-import { PaceChart } from "./PaceChart";
+import { PaceBars } from "./PaceChart";
 import { STATUS_LABEL, dayLabel, manwon, pct } from "./format";
 
 const card = "block rounded-3xl bg-paper p-5";
@@ -75,10 +75,10 @@ export function PaceCard({ month, pace, current }: { month: string; pace: Pace; 
         </span>
       </div>
       <p className="mt-2 font-semibold">{sentence}</p>
-      <PaceChart pace={pace} />
+      <PaceBars pace={pace} current={current} />
       {current && r !== null && (
-        <p className="mt-2 text-xs text-slate">
-          현재 소비 속도는 같은 일자까지와 비교하고, 월말 예상은 지난 월평균과 비교해요.
+        <p className="mt-3 text-xs text-slate">
+          같은 날짜까지 쓴 돈끼리 비교해요. 주별 흐름과 월말 예상은 눌러서 볼 수 있어요.
         </p>
       )}
     </Link>
@@ -122,46 +122,111 @@ export function UpcomingCard({ month, items, total }: { month: string; items: Sc
   );
 }
 
-// ⑤ 항목별 소비 (서버가 정렬해 준 순서 그대로, 처음 5개)
+// 항목 한 줄: 이름·금액 + 막대. 막대 = 쓴 돈, 세로 눈금 = 평소 같은 시점. 모든 줄이 같은 눈금(max)을 쓴다
+function CategoryRow({ c, month, max, usualLabel }: { c: CategorySpend; month: string; max: number; usualLabel: string }) {
+  const higher = c.status === "HIGHER";
+  const usual = c.baseline_to_date;
+  const note =
+    usual === null ? null
+    : higher ? `${usualLabel} ${won(usual)}보다 ${won(c.actual - usual)} 많아요`
+    : c.status === "LOWER" ? `${usualLabel} ${won(usual)}보다 적어요`
+    : null;
+  return (
+    <li>
+      <Link href={`/money/categories/${c.category}${q(month)}`} className="block min-h-11 px-5 py-3.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="flex min-w-0 flex-wrap items-center gap-2 font-semibold">
+            {c.label}
+            {higher && <StatusChip status="HIGHER" />}
+          </p>
+          <p className="shrink-0 font-semibold tabular-nums">{won(c.actual)}</p>
+        </div>
+        <div aria-hidden className="relative mt-2 h-2.5 rounded-sm bg-porcelain">
+          <div
+            className={`h-2.5 rounded-r-[4px] ${higher ? "bg-coral" : "bg-slate"} ${c.actual > 0 ? "min-w-[2px]" : ""}`}
+            style={{ width: `${(c.actual / max) * 100}%` }}
+          />
+          {usual !== null && usual > 0 && (
+            <span className="absolute -top-1 h-[18px] w-[2px] rounded-full bg-ink ring-2 ring-paper" style={{ left: `calc(${(usual / max) * 100}% - 1px)` }} />
+          )}
+        </div>
+        {note && <p className="mt-1.5 text-xs text-slate tabular-nums">{note}</p>}
+      </Link>
+    </li>
+  );
+}
+
+// ⑤ 항목별 소비: 늘어난 항목을 먼저, 나머지는 금액 큰 순. 안 쓴 항목은 접고, 미분류는 '분류하기'로 따로 뺀다
 export function CategoryList({ month, items, current }: { month: string; items: CategorySpend[]; current: boolean }) {
   const [all, setAll] = useState(false);
-  const shown = all ? items : items.slice(0, 5);
+  const usualLabel = current ? "평소 같은 시점" : "평소";
+  const unclassified = items.find((c) => c.category === "UNCLASSIFIED" && c.actual > 0);
+  const rest = items.filter((c) => c.category !== "UNCLASSIFIED");
+  const byAmount = (a: CategorySpend, b: CategorySpend) => b.actual - a.actual;
+  const higher = rest.filter((c) => c.status === "HIGHER").sort(byAmount);
+  const others = rest.filter((c) => c.status !== "HIGHER" && c.actual > 0).sort(byAmount);
+  const unused = rest.filter((c) => c.status !== "HIGHER" && c.actual === 0);
+  const max = Math.max(1, ...rest.map((c) => Math.max(c.actual, c.baseline_to_date ?? 0)));
+  const hasUsual = rest.some((c) => c.baseline_to_date !== null);
+  const list = "mt-2 divide-y divide-line rounded-3xl bg-paper";
+  const row = (c: CategorySpend) => <CategoryRow key={c.category} c={c} month={month} max={max} usualLabel={usualLabel} />;
+
+  if (items.length === 0) {
+    return (
+      <section>
+        <h2 className="text-sm text-slate">항목별 소비</h2>
+        <p className="mt-3 rounded-3xl bg-paper p-5 text-sm text-slate">이 달 소비 내역이 없어요.</p>
+      </section>
+    );
+  }
   return (
     <section>
-      <h2 className="text-sm text-slate">항목별 소비</h2>
-      {items.length === 0 ? (
-        <p className="mt-3 rounded-3xl bg-paper p-5 text-sm text-slate">이 달 소비 내역이 없어요.</p>
-      ) : (
-        <ul className="mt-3 divide-y divide-line rounded-3xl bg-paper">
-          {shown.map((c) => (
-            <li key={c.category}>
-              <Link href={`/money/categories/${c.category}${q(month)}`} className="flex min-h-11 items-center justify-between gap-3 px-5 py-4">
-                <div className="min-w-0">
-                  <p className="flex flex-wrap items-center gap-2 font-semibold">
-                    {c.label}
-                    <StatusChip status={c.status} />
-                  </p>
-                  <p className="mt-1 text-sm text-slate tabular-nums">
-                    {current ? "오늘까지" : "이 달"} <span className="text-ink">{manwon(c.actual)}</span>
-                    {c.baseline_to_date !== null && ` / ${current ? "평소 같은 시점" : "평소"} ${manwon(c.baseline_to_date)}`}
-                  </p>
-                  {current && c.projected !== null && <p className="text-sm text-slate tabular-nums">이번 달 예상 약 {manwon(c.projected)}</p>}
-                </div>
-                <Chevron />
-              </Link>
-            </li>
-          ))}
-        </ul>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <h2 className="text-sm text-slate">항목별 소비</h2>
+        {hasUsual && (
+          <p className="flex items-center gap-1.5 text-xs text-slate">
+            막대 = {current ? "오늘까지 쓴 돈" : "이 달 쓴 돈"} ·
+            <i aria-hidden className="inline-block h-3 w-[2px] rounded-full bg-ink" /> = {usualLabel}
+          </p>
+        )}
+      </div>
+
+      {higher.length > 0 && (
+        <>
+          <h3 className="mt-3 text-sm font-semibold">평소보다 늘어난 항목</h3>
+          <ul className={list}>{higher.map(row)}</ul>
+        </>
       )}
-      {items.length > 5 && (
+      {(others.length > 0 || (all && unused.length > 0)) && (
+        <>
+          {higher.length > 0 && <h3 className="mt-5 text-sm font-semibold">그 밖의 항목</h3>}
+          <ul className={higher.length > 0 ? list : `${list} mt-3`}>
+            {others.map(row)}
+            {all && unused.map(row)}
+          </ul>
+        </>
+      )}
+      {unused.length > 0 && (
         <button
           type="button"
           onClick={() => setAll((v) => !v)}
           aria-expanded={all}
           className="mt-1 flex min-h-11 w-full items-center justify-center text-sm font-medium text-coral"
         >
-          {all ? "접기" : `더 보기 (${items.length - 5}개)`}
+          {all ? "접기" : `이번 달 쓰지 않은 항목 ${unused.length}개 보기`}
         </button>
+      )}
+
+      {unclassified && (
+        <Link
+          href={`/money/categories/UNCLASSIFIED${q(month)}`}
+          className="mt-3 flex min-h-11 items-center justify-between gap-3 rounded-2xl border border-line bg-paper px-5 py-3 text-sm"
+        >
+          <span>
+            분류가 필요한 거래 <span className="font-semibold tabular-nums">{won(unclassified.actual)}</span>
+          </span>
+          <span className="shrink-0 font-semibold text-coral">분류하기</span>
+        </Link>
       )}
     </section>
   );
