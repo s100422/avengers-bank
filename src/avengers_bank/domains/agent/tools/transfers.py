@@ -6,7 +6,7 @@ from pydantic import Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from avengers_bank.core.config import get_settings
-from avengers_bank.core.exceptions import BadRequestException, NotFoundException
+from avengers_bank.core.exceptions import ApiException, BadRequestException, NotFoundException
 from avengers_bank.domains.accounts.kinds import KINDS
 from avengers_bank.domains.accounts.repository import account_repository
 from avengers_bank.domains.accounts.schemas import Amount
@@ -137,6 +137,19 @@ async def _prepare_interbank(db: AsyncSession, user: UserResponse, args: Prepare
     )
 
 
+async def _maybe_other_bank(account_num: str) -> NotFoundException:
+    """은행을 말하지 않은 계좌번호가 우리 은행에 없을 때: 다른 은행 계좌일 수 있으니 어느 은행인지 되묻게 한다 (C-128)."""
+    try:
+        banks = ", ".join(f"{b.name}({b.bank_code})" for b in await interbank_service.banks())
+    except ApiException:  # 타행 이체가 꺼져 있거나 허브에 닿지 않으면 예전처럼 '계좌 없음'
+        return NotFoundException(code="ACCOUNT_NOT_FOUND", message="받는 계좌를 찾을 수 없습니다.")
+    return NotFoundException(
+        code="ACCOUNT_NOT_FOUND",
+        message=f"{get_settings().bank_name}에 {account_num} 계좌가 없습니다. 다른 은행 계좌일 수 있으니 사용자에게 어느 은행인지 물어보세요. "
+                f"보낼 수 있는 은행: {banks}. 은행을 알려 주면 to_bank에 넣어 다시 부르세요.",
+    )
+
+
 async def prepare_transfer(db: AsyncSession, user: UserResponse, args: PrepareTransferArgs) -> TransferAction:
     """이체 초안만 만든다. 돈은 움직이지 않는다 — 사용자가 화면에서 확인해야 /agent/transfers/{id}/confirm이 실행한다."""
     # 이름으로 계좌를 찾는 일은 서버가 한다 — 모델이 계좌 id를 짐작하거나 알고 있을 필요가 없다
@@ -151,7 +164,12 @@ async def prepare_transfer(db: AsyncSession, user: UserResponse, args: PrepareTr
         from_checking_account_id=from_id, to_account_num=to_num, amount=args.amount
     )
     # 소유권·받는 계좌·같은 계좌·잔액·1회/1일 한도를 기존 이체와 같은 코드로 검사한다
-    sender, receiver, recipient_name = await transfer_service.preview(db, data, user)
+    try:
+        sender, receiver, recipient_name = await transfer_service.preview(db, data, user)
+    except NotFoundException as e:
+        if e.code != "ACCOUNT_NOT_FOUND" or args.to_account_num is None:
+            raise
+        raise await _maybe_other_bank(args.to_account_num) from e
     async with db.begin():
         draft = TransferDraft(
             draft_id=secrets.token_urlsafe(32), user_id=user.user_id,

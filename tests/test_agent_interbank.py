@@ -1,7 +1,5 @@
 """AI 비서의 타행 이체 (C-125): 도구는 초안만, 송금은 사용자가 확인했을 때 기존 타행 이체 서비스가 한다."""
 
-import asyncio
-
 import httpx
 import pytest
 
@@ -62,12 +60,18 @@ async def test_confirm_sends_once_through_interbank_service(client, world, fake,
     assert len(hub.posts) == 1 and await balance(client, world["tony"], 1) == 950_000
 
 
-async def test_concurrent_confirms_send_once(client, world, fake, hub):
+async def test_retried_confirm_reuses_the_same_transfer(client, world, fake, hub):
+    """동시·재시도 확인이 두 번 보내지 않는 이유는 초안에서 만든 고정 요청 ID다.
+    SQLite는 동시 쓰기를 잠금 오류로 막아 경합을 재현할 수 없어서, 초안이 PENDING으로 남은 채 다시 확인되는 경우를 직접 만든다."""
+    from sqlalchemy import update
+
     action, _ = await prepare(client, world, fake)
     path = f"/agent/transfers/{action['draft_id']}/confirm"
-    responses = await asyncio.gather(*(client.post(path, headers=world["tony"]) for _ in range(3)))
-    assert any(r.status_code == 200 for r in responses)
-    assert all(r.status_code in (200, 409) for r in responses), [r.text for r in responses]
+    assert (await client.post(path, headers=world["tony"])).status_code == 200
+    async with SessionLocal() as db, db.begin():  # 상태 변경 전에 끊긴 첫 요청을 흉내 낸다
+        await db.execute(update(TransferDraft).where(TransferDraft.draft_id == action["draft_id"]).values(status="PENDING"))
+    again = await client.post(path, headers=world["tony"])
+    assert again.status_code == 200, again.text
     assert await balance(client, world["tony"], 1) == 950_000  # 출금은 한 번
     assert len({p["transfer_id"] for p in hub.posts}) == 1  # 허브에도 같은 거래 하나
 
@@ -108,3 +112,26 @@ async def test_to_bank_requires_full_account_number(client, world, fake, hub):
     await chat(client, world["tony"], "보내줘")
     result, is_error = f.tool_result(1)
     assert is_error and result["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+async def test_unknown_account_without_bank_asks_which_bank(client, world, fake, hub):
+    """은행을 말하지 않은 번호가 우리 은행에 없으면 '계좌 없음'으로 끝내지 않고 은행 목록과 함께 되묻게 한다 (C-128)."""
+    f = fake(tool("prepare_transfer", from_account="생활비 통장", to_account_num="110-900-000001", amount=50_000))
+    await chat(client, world["tony"], "110-900-000001로 5만원 보내줘")
+    result, is_error = f.tool_result(1)
+    assert is_error and result["error"]["code"] == "ACCOUNT_NOT_FOUND"
+    assert "어느 은행" in result["error"]["message"] and "SimBank(902)" in result["error"]["message"]
+
+
+async def test_unknown_account_when_interbank_unavailable_keeps_old_message(client, world, fake, monkeypatch):
+    from avengers_bank.core.exceptions import ApiException
+    from avengers_bank.domains.interbank.service import interbank_service
+
+    async def down():
+        raise ApiException(503, "INTERBANK_DISABLED", "꺼짐")
+
+    monkeypatch.setattr(interbank_service, "banks", down)
+    f = fake(tool("prepare_transfer", from_account="생활비 통장", to_account_num="110-900-000001", amount=50_000))
+    await chat(client, world["tony"], "보내줘")
+    result, is_error = f.tool_result(1)
+    assert is_error and result["error"]["message"] == "받는 계좌를 찾을 수 없습니다."
