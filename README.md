@@ -18,6 +18,7 @@
 | [docs/DESIGN_CHANGES.md](docs/DESIGN_CHANGES.md) | 설계 변경 기록(C-001~): 변경 전·후, 이유, 영향, 검증 |
 | [docs/NEXT_STEPS.md](docs/NEXT_STEPS.md) | 다음 할 일·정할 것(단계별 선택지·추천·상태) |
 | [docs/TERMS_RAG.md](docs/TERMS_RAG.md) | 약관 발행·색인·검색 운영 |
+| [docs/TEAM_GUIDELINES.md](docs/TEAM_GUIDELINES.md) | 팀 기획 가이드라인: 도메인 경계, 돈·보안 공통 규칙, AI 작업 규칙과 가드레일, 테스트, 문서 관리, 기획서 템플릿 |
 
 ## 시작하기
 
