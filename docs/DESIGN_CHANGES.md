@@ -1,6 +1,6 @@
 # 설계 변경 기록
 
-## C-125. AI 비서의 타행 이체 (2026-11-11, 로컬 적용)
+## C-125. AI 비서의 타행 이체 (2026-11-11, 배포 완료)
 
 **문제:** 운영 사이트의 AI 비서에서 다른 은행 계좌로 이체가 안 됐다. AI 이체 도구(`prepare_transfer`)는 우리 은행 계좌번호만 찾아서, 타행 계좌번호는 "계좌 없음"으로 끝났다. C-105 때 SPEC 6절("허브 호출을 LLM 에이전트의 도구로 주기"를 하지 말 것)에 따라 AI에는 타행을 연결하지 않았었다.
 
@@ -14,7 +14,7 @@
 
 **알고 감수:** 허브가 확정 실패(FAILED)로 답해 환불된 초안은 `PENDING`으로 남고, 다시 확인하면 같은 실패를 돌려준다(새로 요청하면 된다). 타행 이체 결과(PENDING → 완료)를 AI 대화에서 다시 알려 주지는 않는다(거래내역·이체 화면에서 확인).
 
-**검증:** 새 테스트 7건(`tests/test_agent_interbank.py`: 초안만 만들고 허브 송금 없음, 확인 시 한 번 송금, 동시 확인 3건에도 출금·허브 거래 1건, 타임아웃이면 PENDING·환불 없음, 확정 실패면 환불, 없는 은행 후보 안내·우리 은행 이름은 당행, `to_bank`만 있고 계좌번호 없으면 거절). 기존 `test_agent`·`test_interbank`·`test_agent_money`·`test_transfers`·`test_constraints` 93건 통과(SQLite). 로컬 DB에 `c8d9e0f1a2b3` 적용, `alembic check` 차이 없음. 프론트 타입 검사·eslint 통과.
+**검증:** 새 테스트 7건(`tests/test_agent_interbank.py`: 초안만 만들고 허브 송금 없음, 확인 시 한 번 송금, 동시 확인 3건에도 출금·허브 거래 1건, 타임아웃이면 PENDING·환불 없음, 확정 실패면 환불, 없는 은행 후보 안내·우리 은행 이름은 당행, `to_bank`만 있고 계좌번호 없으면 거절). 기존 `test_agent`·`test_interbank`·`test_agent_money`·`test_transfers`·`test_constraints` 93건 통과(SQLite). 로컬 DB에 `c8d9e0f1a2b3` 적용, `alembic check` 차이 없음. 프론트 타입 검사·eslint 통과. 운영: 서버를 `145920f`로 올리고(C-123·C-124 포함) API·웹 이미지 빌드, 운영 DB `c8d9e0f1a2b3` 적용, API → 웹 순으로 교체. 둘 다 healthy, 공개 `/health`·`/login`·`/money` 200, `/interbank/inquiry` 서명 붙은 401. 운영 허브 참가 은행 901 AvengersBank, 902 SimBank, 904 IronmanBank, 905 캡아메리카뱅크, 906 HarryPotterBank 확인. 실제 Gemini로 AI 타행 이체를 해 보지는 않았다.
 
 ---
 
